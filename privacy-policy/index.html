@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — ContextLens</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #37352f;
+      background: #fff;
+      line-height: 1.7;
+      padding: 60px 24px;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+    .meta { font-size: 13px; color: #9b9a97; margin-bottom: 40px; }
+    h2 { font-size: 16px; font-weight: 600; margin: 32px 0 8px; }
+    p { font-size: 15px; color: #4a4a4a; margin-bottom: 12px; }
+    ul { padding-left: 20px; margin-bottom: 12px; }
+    li { font-size: 15px; color: #4a4a4a; margin-bottom: 6px; }
+    a { color: #6366f1; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Privacy Policy</h1>
+    <p class="meta">ContextLens Chrome Extension &mdash; Last updated May 2026</p>
+
+    <p>
+      ContextLens is a Chrome extension that lets you highlight text on any webpage
+      and receive an AI-generated explanation. This policy explains what data is
+      handled and how.
+    </p>
+
+    <h2>Data stored on your device</h2>
+    <p>The following data is stored locally in your browser using Chrome's built-in
+    storage API (<code>chrome.storage.local</code>). It never leaves your device
+    except as described below.</p>
+    <ul>
+      <li><strong>Your highlights</strong> — the text you save and any context you add</li>
+      <li><strong>Your Anthropic API key</strong> — entered by you in Settings</li>
+      <li><strong>Your preferences</strong> — save trigger settings (bubble, context menu, screenshot shortcuts)</li>
+    </ul>
+
+    <h2>Data sent to third parties</h2>
+    <p>When you save a highlight or screenshot, the selected text and your optional
+    context note are sent directly to the <strong>Anthropic API</strong> using your
+    own API key. This is the only external request the extension makes.</p>
+    <ul>
+      <li>Anthropic's privacy policy applies to data sent to their API:
+        <a href="https://www.anthropic.com/privacy" target="_blank">anthropic.com/privacy</a>
+      </li>
+      <li>No other third party receives any data from this extension</li>
+    </ul>
+
+    <h2>Data we collect</h2>
+    <p>
+      <strong>None.</strong> The developer of ContextLens does not collect, receive,
+      store, or have access to any data you enter into the extension. There is no
+      analytics, no telemetry, no crash reporting, and no backend server.
+    </p>
+
+    <h2>Screenshots</h2>
+    <p>When you use the screenshot feature, the visible area of your current tab is
+    captured temporarily in memory to let you select a region. The selected region
+    is then sent to the Anthropic API for explanation. No screenshot data is stored
+    permanently on your device or transmitted anywhere other than Anthropic.</p>
+
+    <h2>Permissions</h2>
+    <p>The extension requests the following Chrome permissions:</p>
+    <ul>
+      <li><strong>storage</strong> — to save your highlights and settings locally</li>
+      <li><strong>tabs</strong> — to capture the visible tab for screenshots</li>
+      <li><strong>contextMenus</strong> — to add a "Save to ContextLens" right-click option</li>
+      <li><strong>host_permissions (&lt;all_urls&gt;)</strong> — to inject the save bubble on any webpage you visit</li>
+    </ul>
+
+    <h2>Children's privacy</h2>
+    <p>This extension does not knowingly collect data from anyone, including children.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes, the updated version will be posted at this URL with a
+    revised date.</p>
+
+    <h2>Contact</h2>
+    <p>Questions? Open an issue or reach out via the Chrome Web Store listing.</p>
+  </div>
+</body>
+</html>
