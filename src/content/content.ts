@@ -36,6 +36,12 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   });
 }
 
+function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
+  chrome.storage.local.get(["answer_immediate", "screenshot_triggers"], (result) => {
+    callback(Boolean(result.answer_immediate ?? result.screenshot_triggers?.immediate));
+  });
+}
+
 function createCameraButton() {
   if (cameraBtn) return;
   cameraBtn = document.createElement("div");
@@ -136,7 +142,8 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
 function showContextInput(x: number, y: number, selectedText: string) {
   removeWidget();
 
-  const left = Math.min(Math.max(x - 175, 8), window.innerWidth - 368);
+  const widgetWidth = Math.min(560, window.innerWidth - 24);
+  const left = Math.min(Math.max(x - widgetWidth / 2, 8), window.innerWidth - widgetWidth - 8);
   const top = Math.max(y - 110, 8);
 
   widget = document.createElement("div");
@@ -151,7 +158,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     border-radius: 10px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     z-index: 2147483647;
-    width: 360px;
+    width: ${widgetWidth}px;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     overflow: hidden;
   `
@@ -163,7 +170,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   preview.setAttribute(
     "style",
     `
-    font-size: 11px;
+    font-size: 13px;
     color: #6366f1;
     padding: 8px 12px 6px;
     border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -186,8 +193,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
     border: none;
     outline: none;
     color: #e2e8f0;
-    font-size: 13px;
-    padding: 10px 14px;
+    font-size: 18px;
+    padding: 14px 16px;
     box-sizing: border-box;
   `
   );
@@ -207,7 +214,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       border-radius: 10px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.4);
       z-index: 2147483647;
-      width: min(460px, calc(100vw - 24px));
+      width: ${widgetWidth}px;
       max-height: min(520px, calc(100vh - 48px));
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       overflow: hidden;
@@ -222,7 +229,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     styleExpandedWidget();
     const status = document.createElement("div");
     status.textContent = "Saving and analyzing…";
-    status.setAttribute("style", "color:#cbd5e1;font-size:15px;line-height:1.6;");
+    status.setAttribute("style", "color:#cbd5e1;font-size:16px;line-height:1.6;");
     widget.replaceChildren(status);
   }
 
@@ -231,7 +238,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     styleExpandedWidget();
     const message = document.createElement("div");
     message.textContent = error;
-    message.setAttribute("style", "color:#fecaca;font-size:15px;line-height:1.6;margin-bottom:12px;");
+    message.setAttribute("style", "color:#fecaca;font-size:16px;line-height:1.6;margin-bottom:12px;");
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Done";
     closeBtn.setAttribute("style", "background:#6366f1;color:#fff;border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;");
@@ -244,7 +251,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     styleExpandedWidget();
 
     const list = document.createElement("div");
-    list.setAttribute("style", "max-height:330px;overflow-y:auto;padding-right:4px;margin-bottom:12px;");
+    list.setAttribute("style", "max-height:350px;overflow-y:auto;padding-right:4px;margin-bottom:12px;");
 
     messages.forEach((message) => {
       const label = document.createElement("div");
@@ -255,7 +262,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       body.textContent = message.content;
       body.setAttribute("style", `
         color: ${message.role === "assistant" ? "#e2e8f0" : "#cbd5e1"};
-        font-size: ${message.role === "assistant" ? "15px" : "13px"};
+        font-size: ${message.role === "assistant" ? "16px" : "14px"};
         line-height: 1.65;
         margin-bottom: 12px;
         white-space: pre-wrap;
@@ -288,7 +295,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 7px;
       color: #e2e8f0;
-      font-size: 13px;
+      font-size: 14px;
       outline: none;
       padding: 8px 10px;
     `);
@@ -372,9 +379,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
       return;
     }
 
-    chrome.storage.local.get("screenshot_triggers", (result) => {
-      const triggers = result.screenshot_triggers ?? { immediate: false };
-      if (!triggers.immediate) {
+    getShowAnswerImmediately((immediate) => {
+      if (!immediate) {
         chrome.runtime.sendMessage(message);
         removeWidget();
         return;
@@ -388,8 +394,14 @@ function showContextInput(x: number, y: number, selectedText: string) {
   }
 
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") doSave();
-    if (e.key === "Escape") removeWidget();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doSave();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      removeWidget();
+    }
     e.stopPropagation();
   });
 
@@ -639,9 +651,8 @@ function showCropOverlay(screenshotDataUrl: string) {
       const croppedDataUrl = cropSelection();
       if (!croppedDataUrl) return;
 
-      chrome.storage.local.get("screenshot_triggers", (result) => {
-        const triggers = result.screenshot_triggers ?? { floatingButton: true, shortcut: true, immediate: false };
-        if (!triggers.immediate) {
+      getShowAnswerImmediately((immediate) => {
+        if (!immediate) {
           chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context } as Message);
           removeCropOverlay();
           return;

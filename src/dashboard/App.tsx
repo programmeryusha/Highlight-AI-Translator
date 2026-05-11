@@ -182,7 +182,7 @@ function CapturePreview({ capture }: { capture: Capture }) {
 
   return (
     <>
-      <p style={{ fontSize: 18, fontWeight: 600, color: "#2f2e2b", lineHeight: 1.65, margin: 0 }}>
+      <p style={{ fontSize: 21, fontWeight: 650, color: "#2f2e2b", lineHeight: 1.6, margin: 0 }}>
         {text}
       </p>
       {isLong && (
@@ -217,7 +217,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
               <div
                 key={c.id}
                 onClick={() => openChat(c.id)}
-                style={{ padding: "16px 0 20px", cursor: "pointer", maxWidth: 900 }}
+                style={{ padding: "18px 0 28px", cursor: "pointer", maxWidth: "100%" }}
               >
                 <CapturePreview capture={c} />
 
@@ -226,7 +226,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
                     <p style={{ fontSize: 12, color: "#8d8b86", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
                       Your question
                     </p>
-                    <p style={{ fontSize: 17, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 600 }}>
+                    <p style={{ fontSize: 18, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
                       {c.context}
                     </p>
                   </div>
@@ -243,7 +243,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
-                  <div style={{ fontSize: 17, color: "#4f4d49", margin: "12px 0 0", lineHeight: 1.75 }}>
+                  <div style={{ fontSize: 19, color: "#4f4d49", margin: "14px 0 0", lineHeight: 1.75 }}>
                     {renderMarkdown(c.explanation)}
                   </div>
                 )}
@@ -265,6 +265,8 @@ function HistoryView({ captures }: { captures: Capture[] }) {
   const nextDay = addDays(selectedDay, 1);
   const canGoNext = nextDay <= todayKey();
   const dockCalendar = windowWidth >= 1600;
+  const calendarGap = 92;
+  const calendarWidth = 300;
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -287,7 +289,12 @@ function HistoryView({ captures }: { captures: Capture[] }) {
 
   return (
     <div style={{ position: "relative", minHeight: 520 }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+      <div
+        style={{
+          maxWidth: dockCalendar ? `calc(100% - ${calendarWidth + calendarGap}px)` : 980,
+          margin: dockCalendar ? `0 ${calendarWidth + calendarGap}px 0 0` : "0 auto",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 28 }}>
           <button
             onClick={() => selectDay(previousDay)}
@@ -346,7 +353,7 @@ function HistoryView({ captures }: { captures: Capture[] }) {
           position: dockCalendar ? "absolute" : "static",
           top: dockCalendar ? 0 : undefined,
           right: dockCalendar ? 0 : undefined,
-          width: 300,
+          width: calendarWidth,
           margin: dockCalendar ? undefined : "36px auto 0",
         }}
       >
@@ -518,9 +525,12 @@ function SettingsView() {
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
-    chrome.storage.local.get(["save_triggers", "screenshot_triggers"], (r) => {
+    chrome.storage.local.get(["save_triggers", "screenshot_triggers", "answer_immediate"], (r) => {
       if (r.save_triggers) setTriggers(r.save_triggers);
-      if (r.screenshot_triggers) setScreenshotTriggers(r.screenshot_triggers);
+      if (r.screenshot_triggers || r.answer_immediate !== undefined) {
+        const saved = r.screenshot_triggers ?? { floatingButton: true, shortcut: true, immediate: false };
+        setScreenshotTriggers({ ...saved, immediate: Boolean(r.answer_immediate ?? saved.immediate) });
+      }
     });
   }, []);
 
@@ -533,7 +543,9 @@ function SettingsView() {
   function handleScreenshotTriggerChange(field: keyof ScreenshotTriggers, value: boolean) {
     const updated = { ...screenshotTriggers, [field]: value };
     setScreenshotTriggers(updated);
-    chrome.storage.local.set({ screenshot_triggers: updated });
+    const patch: Record<string, unknown> = { screenshot_triggers: updated };
+    if (field === "immediate") patch.answer_immediate = value;
+    chrome.storage.local.set(patch);
   }
 
   return (
@@ -555,13 +567,29 @@ function SettingsView() {
         ))}
       </div>
 
+      {/* Answer behavior */}
+      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Answer behavior</p>
+      <label style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start", marginBottom: 40 }}>
+        <input
+          type="checkbox"
+          checked={screenshotTriggers.immediate}
+          onChange={(e) => handleScreenshotTriggerChange("immediate", e.target.checked)}
+          style={{ marginTop: 3 }}
+        />
+        <div>
+          <p style={{ fontSize: 14, color: "#37352f", margin: 0 }}>Show answer immediately</p>
+          <p style={{ fontSize: 12, color: "#9b9a97", margin: "2px 0 0" }}>
+            Shows the AI answer in the popup after pressing Enter, then lets you ask follow-ups.
+          </p>
+        </div>
+      </label>
+
       {/* Screenshot triggers */}
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Screenshot trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {([
           { field: "floatingButton" as const, label: "Show camera button on pages", desc: "A camera button appears in the corner of every page." },
           { field: "shortcut" as const, label: "Keyboard shortcut", desc: "Set your shortcut at chrome://extensions/shortcuts." },
-          { field: "immediate" as const, label: "Show answer immediately", desc: "Displays the explanation in the popup instead of saving quietly." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
             <input type="checkbox" checked={screenshotTriggers[opt.field]} onChange={(e) => handleScreenshotTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
@@ -709,7 +737,7 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = view === "history" ? 1560 : 1100;
+  const contentMaxWidth = view === "history" ? 1800 : 1100;
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
