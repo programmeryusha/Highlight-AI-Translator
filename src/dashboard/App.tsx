@@ -83,11 +83,11 @@ function CapturePreview({ capture }: { capture: Capture }) {
 
   return (
     <>
-      <p style={{ fontSize: 17, fontWeight: 500, color: "#37352f", lineHeight: 1.6, margin: 0 }}>
+      <p style={{ fontSize: 18, fontWeight: 600, color: "#2f2e2b", lineHeight: 1.65, margin: 0 }}>
         {text}
       </p>
       {isLong && (
-        <p style={{ fontSize: 12, color: "#6366f1", margin: "5px 0 0", fontWeight: 600 }}>
+        <p style={{ fontSize: 14, color: "#6366f1", margin: "7px 0 0", fontWeight: 700 }}>
           Open full save
         </p>
       )}
@@ -118,28 +118,33 @@ function SavesView({ captures }: { captures: Capture[] }) {
               <div
                 key={c.id}
                 onClick={() => openChat(c.id)}
-                style={{ padding: "10px 0", cursor: "pointer" }}
+                style={{ padding: "16px 0 20px", cursor: "pointer", maxWidth: 900 }}
               >
                 <CapturePreview capture={c} />
 
                 {c.context && (
-                  <p style={{ fontSize: 14, color: "#9b9a97", margin: "3px 0 0" }}>
-                    ↳ {c.context}
-                  </p>
+                  <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0" }}>
+                    <p style={{ fontSize: 12, color: "#8d8b86", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                      Your note
+                    </p>
+                    <p style={{ fontSize: 17, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 600 }}>
+                      {c.context}
+                    </p>
+                  </div>
                 )}
 
                 {c.status === "pending" && (
-                  <p style={{ fontSize: 14, color: "#c7c6c3", margin: "5px 0 0", fontStyle: "italic" }}>
+                  <p style={{ fontSize: 16, color: "#8d8b86", margin: "10px 0 0", fontStyle: "italic" }}>
                     thinking…
                   </p>
                 )}
                 {c.status === "error" && (
-                  <p style={{ fontSize: 14, color: "#eb5757", margin: "5px 0 0" }}>
+                  <p style={{ fontSize: 16, color: "#eb5757", margin: "10px 0 0", lineHeight: 1.6 }}>
                     something went wrong — {c.errorMessage ?? "try again"}
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
-                  <p style={{ fontSize: 15, color: "#6b6b6b", margin: "5px 0 0", lineHeight: 1.7 }}>
+                  <p style={{ fontSize: 17, color: "#4f4d49", margin: "12px 0 0", lineHeight: 1.75 }}>
                     {c.explanation}
                   </p>
                 )}
