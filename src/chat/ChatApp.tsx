@@ -186,9 +186,14 @@ export default function ChatApp() {
             </button>
           )}
           {capture.context && (
-            <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 6 }}>
-              didn't understand: <em>{capture.context}</em>
-            </p>
+            <div style={{ borderTop: "1px solid #e3e2de", marginTop: 12, paddingTop: 12 }}>
+              <p style={{ fontSize: 12, color: "#9b9a97", fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Your note
+              </p>
+              <p style={{ fontSize: 15, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 500 }}>
+                {capture.context}
+              </p>
+            </div>
           )}
         </div>
         <div style={{ borderBottom: "1px solid #e3e2de", marginBottom: 0 }} />
