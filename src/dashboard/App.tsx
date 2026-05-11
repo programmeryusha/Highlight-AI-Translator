@@ -125,7 +125,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
                 {c.context && (
                   <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0" }}>
                     <p style={{ fontSize: 12, color: "#8d8b86", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
-                      Your note
+                      Your question
                     </p>
                     <p style={{ fontSize: 17, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 600 }}>
                       {c.context}
