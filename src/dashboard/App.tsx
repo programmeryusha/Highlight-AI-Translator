@@ -44,6 +44,18 @@ function renderMarkdown(text: string): React.ReactNode {
   return <>{nodes}</>;
 }
 
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(() => window.innerWidth);
+
+  useEffect(() => {
+    const update = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  return width;
+}
+
 function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -85,13 +97,32 @@ function addDays(key: string, amount: number): string {
   return dayKeyFromDate(date);
 }
 
-function lastThirtyDayKeys(): string[] {
-  const today = new Date();
-  return Array.from({ length: 30 }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() - (29 - index));
-    return dayKeyFromDate(date);
-  });
+function monthStartFromKey(key: string): Date {
+  const [year, month] = key.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+}
+
+function addMonths(key: string, amount: number): string {
+  const date = monthStartFromKey(key);
+  date.setMonth(date.getMonth() + amount);
+  return monthKeyFromDate(date);
+}
+
+function monthLabelFromKey(key: string): string {
+  return monthStartFromKey(key).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function calendarDayKeys(monthKey: string): (string | null)[] {
+  const start = monthStartFromKey(monthKey);
+  const year = start.getFullYear();
+  const month = start.getMonth();
+  const blanks = start.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, index) => dayKeyFromDate(new Date(year, month, index + 1)));
+  const cells: (string | null)[] = [...Array.from({ length: blanks }, () => null), ...days];
+
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
 }
 
 function dayLabel(iso: string): string {
@@ -226,20 +257,19 @@ function SavesView({ captures }: { captures: Capture[] }) {
 }
 
 function HistoryView({ captures }: { captures: Capture[] }) {
-  const days = lastThirtyDayKeys();
-  const firstDay = days[0];
-  const lastDay = days[days.length - 1];
+  const windowWidth = useWindowWidth();
   const [selectedDay, setSelectedDay] = useState(todayKey());
+  const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
   const previousDay = addDays(selectedDay, -1);
   const nextDay = addDays(selectedDay, 1);
-  const canGoPrevious = previousDay >= firstDay;
-  const canGoNext = nextDay <= lastDay;
+  const canGoNext = nextDay <= todayKey();
+  const dockCalendar = windowWidth >= 1600;
 
-  useEffect(() => {
-    if (selectedDay < firstDay) setSelectedDay(firstDay);
-    if (selectedDay > lastDay) setSelectedDay(lastDay);
-  }, [firstDay, lastDay, selectedDay]);
+  function selectDay(key: string) {
+    setSelectedDay(key);
+    setVisibleMonth(monthKeyFromDate(dateFromDayKey(key)));
+  }
 
   function selectedDayLabel() {
     if (selectedDay === todayKey()) return "Today";
@@ -256,21 +286,20 @@ function HistoryView({ captures }: { captures: Capture[] }) {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 48, alignItems: "start" }}>
-      <div>
+    <div style={{ position: "relative", minHeight: 520 }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 28 }}>
           <button
-            onClick={() => canGoPrevious && setSelectedDay(previousDay)}
-            disabled={!canGoPrevious}
+            onClick={() => selectDay(previousDay)}
             aria-label="Previous day"
             style={{
               width: 34,
               height: 34,
               borderRadius: 999,
               border: "1px solid #e3e2de",
-              background: canGoPrevious ? "#fff" : "#f7f6f3",
-              color: canGoPrevious ? "#37352f" : "#c7c6c3",
-              cursor: canGoPrevious ? "pointer" : "default",
+              background: "#fff",
+              color: "#37352f",
+              cursor: "pointer",
               fontSize: 18,
             }}
           >
@@ -285,7 +314,7 @@ function HistoryView({ captures }: { captures: Capture[] }) {
             </p>
           </div>
           <button
-            onClick={() => canGoNext && setSelectedDay(nextDay)}
+            onClick={() => canGoNext && selectDay(nextDay)}
             disabled={!canGoNext}
             aria-label="Next day"
             style={{
@@ -312,7 +341,23 @@ function HistoryView({ captures }: { captures: Capture[] }) {
         )}
       </div>
 
-      <MonthHeatMap captures={captures} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+      <div
+        style={{
+          position: dockCalendar ? "absolute" : "static",
+          top: dockCalendar ? 0 : undefined,
+          right: dockCalendar ? 0 : undefined,
+          width: 300,
+          margin: dockCalendar ? undefined : "36px auto 0",
+        }}
+      >
+        <MonthCalendar
+          captures={captures}
+          selectedDay={selectedDay}
+          visibleMonth={visibleMonth}
+          onVisibleMonthChange={setVisibleMonth}
+          onSelectDay={selectDay}
+        />
+      </div>
     </div>
   );
 }
@@ -531,10 +576,26 @@ function SettingsView() {
   );
 }
 
-function MonthHeatMap({ captures, selectedDay, onSelectDay }: { captures: Capture[]; selectedDay: string; onSelectDay: (day: string) => void }) {
+function MonthCalendar({
+  captures,
+  selectedDay,
+  visibleMonth,
+  onVisibleMonthChange,
+  onSelectDay,
+}: {
+  captures: Capture[];
+  selectedDay: string;
+  visibleMonth: string;
+  onVisibleMonthChange: (month: string) => void;
+  onSelectDay: (day: string) => void;
+}) {
   const counts = captureCountsByDay(captures);
-  const days = lastThirtyDayKeys();
-  const max = Math.max(1, ...days.map((day) => counts.get(day) ?? 0));
+  const days = calendarDayKeys(visibleMonth);
+  const realDays = days.filter((day): day is string => Boolean(day));
+  const max = Math.max(1, ...realDays.map((day) => counts.get(day) ?? 0));
+  const previousMonth = addMonths(visibleMonth, -1);
+  const nextMonth = addMonths(visibleMonth, 1);
+  const canGoNextMonth = nextMonth <= currentMonthKey();
 
   function colorFor(count: number) {
     if (count === 0) return "#f0efec";
@@ -543,30 +604,76 @@ function MonthHeatMap({ captures, selectedDay, onSelectDay }: { captures: Captur
   }
 
   return (
-    <div style={{ justifySelf: "end", width: 300 }}>
-      <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 12px" }}>
-        Last 30 days
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 44px)", gap: 8, width: "fit-content" }}>
-        {days.map((key) => {
+    <div style={{ width: 300 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <button
+          onClick={() => onVisibleMonthChange(previousMonth)}
+          aria-label="Previous month"
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            border: "1px solid #e3e2de",
+            background: "#fff",
+            color: "#37352f",
+            cursor: "pointer",
+            fontSize: 16,
+          }}
+        >
+          ‹
+        </button>
+        <p style={{ fontSize: 15, color: "#37352f", margin: 0, fontWeight: 700 }}>
+          {monthLabelFromKey(visibleMonth)}
+        </p>
+        <button
+          onClick={() => canGoNextMonth && onVisibleMonthChange(nextMonth)}
+          disabled={!canGoNextMonth}
+          aria-label="Next month"
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            border: "1px solid #e3e2de",
+            background: canGoNextMonth ? "#fff" : "#f7f6f3",
+            color: canGoNextMonth ? "#37352f" : "#c7c6c3",
+            cursor: canGoNextMonth ? "pointer" : "default",
+            fontSize: 16,
+          }}
+        >
+          ›
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, marginBottom: 8 }}>
+        {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
+          <span key={`${label}-${index}`} style={{ fontSize: 11, color: "#9b9a97", fontWeight: 700, textAlign: "center" }}>
+            {label}
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, width: "fit-content" }}>
+        {days.map((key, index) => {
+          if (!key) return <span key={`blank-${index}`} style={{ width: 34, height: 34 }} />;
+
           const count = counts.get(key) ?? 0;
           const date = dateFromDayKey(key);
           const isSelected = selectedDay === key;
+          const isFuture = key > todayKey();
           return (
             <button
               key={key}
               title={`${dayLabelFromKey(key)}: ${count} ${count === 1 ? "save" : "saves"}`}
-              onClick={() => onSelectDay(key)}
+              onClick={() => !isFuture && onSelectDay(key)}
+              disabled={isFuture}
               style={{
-                width: 44,
-                height: 42,
+                width: 34,
+                height: 34,
                 borderRadius: 8,
                 border: isSelected ? "2px solid #6366f1" : "1px solid #e3e2de",
-                background: colorFor(count),
-                color: count > 0 ? "#37352f" : "#9b9a97",
-                fontSize: 13,
+                background: isFuture ? "#fafafa" : colorFor(count),
+                color: isFuture ? "#d8d7d2" : count > 0 ? "#37352f" : "#9b9a97",
+                fontSize: 12,
                 fontWeight: isSelected ? 700 : 600,
-                cursor: "pointer",
+                cursor: isFuture ? "default" : "pointer",
                 padding: 0,
               }}
             >
@@ -602,6 +709,7 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
+  const contentMaxWidth = view === "history" ? 1560 : 1100;
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
@@ -641,7 +749,7 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 32px" }}>
+      <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: "32px 32px" }}>
         {view === "saves" && <SavesView captures={todayCaptures} />}
         {view === "history" && <HistoryView captures={captures} />}
         {view === "words" && <WordsView captures={captures} />}
