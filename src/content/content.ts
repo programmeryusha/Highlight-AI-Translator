@@ -1,9 +1,16 @@
 import type { ChatMessage, Message } from "../types";
 
-const contextLensGlobal = globalThis as typeof globalThis & { __contextLensContentLoaded?: boolean };
+const CONTENT_SCRIPT_VERSION = "2026-05-11-immediate-answer-v2";
+const contextLensGlobal = globalThis as typeof globalThis & {
+  __contextLensContentLoaded?: boolean;
+  __contextLensContentVersion?: string;
+  __contextLensCleanup?: () => void;
+};
 
-if (!contextLensGlobal.__contextLensContentLoaded) {
+if (contextLensGlobal.__contextLensContentVersion !== CONTENT_SCRIPT_VERSION) {
+  contextLensGlobal.__contextLensCleanup?.();
   contextLensGlobal.__contextLensContentLoaded = true;
+  contextLensGlobal.__contextLensContentVersion = CONTENT_SCRIPT_VERSION;
   initContextLensContentScript();
 }
 
@@ -11,6 +18,7 @@ function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let skipNextMouseup = false;
 let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
+const cleanupTasks: Array<() => void> = [];
 
 // Floating camera button
 let cameraBtn: HTMLElement | null = null;
@@ -38,7 +46,7 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
 
 function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
   chrome.storage.local.get(["answer_immediate", "screenshot_triggers"], (result) => {
-    callback(Boolean(result.answer_immediate ?? result.screenshot_triggers?.immediate));
+    callback(Boolean(result.answer_immediate || result.screenshot_triggers?.immediate));
   });
 }
 
@@ -88,9 +96,11 @@ function syncCameraButton() {
 
 syncCameraButton();
 
-chrome.storage.onChanged.addListener((changes) => {
+const storageChangeHandler = (changes: Record<string, chrome.storage.StorageChange>) => {
   if (changes.screenshot_triggers) syncCameraButton();
-});
+};
+chrome.storage.onChanged.addListener(storageChangeHandler);
+cleanupTasks.push(() => chrome.storage.onChanged.removeListener(storageChangeHandler));
 
 function removeWidget() {
   if (widgetOutsideHandler) {
@@ -798,7 +808,7 @@ function showCropOverlay(screenshotDataUrl: string) {
 }
 
 // Listen for context menu trigger from service worker
-chrome.runtime.onMessage.addListener((message) => {
+const runtimeMessageHandler = (message: Message) => {
   if (message.type === "SHOW_CONTEXT_INPUT") {
     const x = window.innerWidth / 2;
     const y = window.innerHeight / 2;
@@ -807,10 +817,12 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "SHOW_CROP_OVERLAY") {
     showCropOverlay(message.imageData);
   }
-});
+};
+chrome.runtime.onMessage.addListener(runtimeMessageHandler);
+cleanupTasks.push(() => chrome.runtime.onMessage.removeListener(runtimeMessageHandler));
 
 // Show Save bubble (or immediate context input) on text selection
-document.addEventListener("mouseup", (e) => {
+const documentMouseupHandler = (e: MouseEvent) => {
   if (skipNextMouseup) { skipNextMouseup = false; return; }
   setTimeout(() => {
     const selection = window.getSelection();
@@ -835,9 +847,20 @@ document.addEventListener("mouseup", (e) => {
       }
     }
   }, 10);
-});
+};
+document.addEventListener("mouseup", documentMouseupHandler);
+cleanupTasks.push(() => document.removeEventListener("mouseup", documentMouseupHandler));
 
-document.addEventListener("keydown", (e) => {
+const documentKeydownHandler = (e: KeyboardEvent) => {
   if (e.key === "Escape") { removeWidget(); removeCropOverlay(); }
-});
+};
+document.addEventListener("keydown", documentKeydownHandler);
+cleanupTasks.push(() => document.removeEventListener("keydown", documentKeydownHandler));
+
+contextLensGlobal.__contextLensCleanup = () => {
+  removeWidget();
+  removeCropOverlay();
+  removeCameraButton();
+  while (cleanupTasks.length) cleanupTasks.pop()?.();
+};
 }

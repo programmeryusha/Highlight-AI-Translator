@@ -529,7 +529,7 @@ function SettingsView() {
       if (r.save_triggers) setTriggers(r.save_triggers);
       if (r.screenshot_triggers || r.answer_immediate !== undefined) {
         const saved = r.screenshot_triggers ?? { floatingButton: true, shortcut: true, immediate: false };
-        setScreenshotTriggers({ ...saved, immediate: Boolean(r.answer_immediate ?? saved.immediate) });
+        setScreenshotTriggers({ ...saved, immediate: Boolean(r.answer_immediate || saved.immediate) });
       }
     });
   }, []);
@@ -738,6 +738,7 @@ export default function App() {
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
   const contentMaxWidth = view === "history" ? 1800 : 1100;
+  const contentPadding = view === "history" ? "32px 48px 32px 96px" : "32px";
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
@@ -777,7 +778,7 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: "32px 32px" }}>
+      <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: contentPadding }}>
         {view === "saves" && <SavesView captures={todayCaptures} />}
         {view === "history" && <HistoryView captures={captures} />}
         {view === "words" && <WordsView captures={captures} />}
