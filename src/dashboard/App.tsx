@@ -169,12 +169,15 @@ function HistoryView({ captures }: { captures: Capture[] }) {
     if (selectedDay && !keys.includes(selectedDay)) setSelectedDay(keys[0] ?? "");
   }, [keys.join("|"), selectedDay]);
 
-  if (keys.length === 0) {
-    return <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>No previous days yet. Tomorrow, today’s saves will move here.</p>;
-  }
-
   return (
     <div>
+      <div style={{ marginBottom: 32 }}>
+        <MonthHeatMap captures={captures} />
+      </div>
+      {keys.length === 0 ? (
+        <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8 }}>No previous days yet. Tomorrow, today’s saves will move here.</p>
+      ) : (
+        <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <p style={{ fontSize: 13, color: "#9b9a97", margin: 0 }}>{keys.length} saved {keys.length === 1 ? "day" : "days"}</p>
         <select
@@ -188,6 +191,8 @@ function HistoryView({ captures }: { captures: Capture[] }) {
         </select>
       </div>
       <SavesView captures={selectedCaptures} />
+        </>
+      )}
     </div>
   );
 }
@@ -376,7 +381,7 @@ function SettingsView() {
         {([
           { field: "floatingButton" as const, label: "Show camera button on pages", desc: "A camera button appears in the corner of every page." },
           { field: "shortcut" as const, label: "Keyboard shortcut", desc: "Set your shortcut at chrome://extensions/shortcuts." },
-          { field: "immediate" as const, label: "Show answer immediately", desc: "Displays the explanation in the screenshot window instead of saving quietly." },
+          { field: "immediate" as const, label: "Show answer immediately", desc: "Displays the explanation in the popup instead of saving quietly." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
             <input type="checkbox" checked={screenshotTriggers[opt.field]} onChange={(e) => handleScreenshotTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
@@ -405,11 +410,11 @@ function MonthHeatMap({ captures }: { captures: Capture[] }) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-      <span style={{ fontSize: 12, color: "#9b9a97", whiteSpace: "nowrap" }}>
-        {now.toLocaleDateString("en-US", { month: "short" })}
-      </span>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(16, 9px)", gap: 3 }}>
+    <div>
+      <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 10px" }}>
+        {now.toLocaleDateString("en-US", { month: "long" })} activity
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(16, 12px)", gap: 4, width: "fit-content" }}>
         {days.map((day) => {
           const key = dayKeyFromDate(new Date(now.getFullYear(), now.getMonth(), day));
           const count = counts.get(key) ?? 0;
@@ -417,7 +422,7 @@ function MonthHeatMap({ captures }: { captures: Capture[] }) {
             <span
               key={key}
               title={`${day}: ${count} ${count === 1 ? "save" : "saves"}`}
-              style={{ width: 9, height: 9, borderRadius: 2, background: colorFor(count), display: "block" }}
+              style={{ width: 12, height: 12, borderRadius: 3, background: colorFor(count), display: "block" }}
             />
           );
         })}
@@ -453,14 +458,13 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
       <div style={{ borderBottom: "1px solid #e3e2de" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "grid", gridTemplateColumns: "auto minmax(180px, 1fr) auto", gap: 24, alignItems: "center", minHeight: 64 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 64 }}>
           <span style={{ fontSize: 15, fontWeight: 600 }}>
             ContextLens
             {todayCaptures.length > 0 && (
               <span style={{ color: "#9b9a97", fontWeight: 400, marginLeft: 6, fontSize: 14 }}>{todayCaptures.length}</span>
             )}
           </span>
-          <MonthHeatMap captures={captures} />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
             <span style={{ fontSize: 13, color: "#37352f", whiteSpace: "nowrap" }}>
               {streak} day streak

@@ -163,7 +163,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // Handle messages from content script and crop page
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   if (message.type === "SAVE_HIGHLIGHT") {
-    void saveHighlight(message.text, message.url, message.title, message.context);
+    saveHighlight(message.text, message.url, message.title, message.context)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
   }
   if (message.type === "TAKE_SCREENSHOT") {
     void takeScreenshot();
@@ -289,7 +292,7 @@ async function askFollowup(captureId: string, question: string): Promise<{ reply
   return { reply, messages };
 }
 
-async function saveHighlight(text: string, url: string, title: string, context: string) {
+async function saveHighlight(text: string, url: string, title: string, context: string): Promise<{ captureId: string; explanation: string }> {
   const id = crypto.randomUUID();
   const capture: Capture = {
     id,
@@ -308,8 +311,10 @@ async function saveHighlight(text: string, url: string, title: string, context: 
     const explanation = await fetchExplanation(text, context);
     await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     await seedChat(id, explanation);
+    return { captureId: id, explanation };
   } catch (error) {
     console.error("ContextLens failed to explain highlight", error);
     await updateCapture(id, { status: "error", errorMessage: errorMessage(error) });
+    throw error;
   }
 }

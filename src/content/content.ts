@@ -10,6 +10,7 @@ if (!contextLensGlobal.__contextLensContentLoaded) {
 function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let skipNextMouseup = false;
+let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
 
 // Floating camera button
 let cameraBtn: HTMLElement | null = null;
@@ -86,6 +87,10 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 function removeWidget() {
+  if (widgetOutsideHandler) {
+    document.removeEventListener("mousedown", widgetOutsideHandler, true);
+    widgetOutsideHandler = null;
+  }
   if (widget) {
     widget.remove();
     widget = null;
@@ -187,17 +192,199 @@ function showContextInput(x: number, y: number, selectedText: string) {
   `
   );
 
-  function doSave() {
+  let submitted = false;
+
+  function styleExpandedWidget() {
+    if (!widget) return;
+    widget.setAttribute(
+      "style",
+      `
+      position: fixed;
+      left: ${left}px;
+      top: ${top}px;
+      background: rgba(30,30,40,0.96);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      z-index: 2147483647;
+      width: min(460px, calc(100vw - 24px));
+      max-height: min(520px, calc(100vh - 48px));
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      overflow: hidden;
+      box-sizing: border-box;
+      padding: 14px;
+    `
+    );
+  }
+
+  function renderLoading() {
+    if (!widget) return;
+    styleExpandedWidget();
+    const status = document.createElement("div");
+    status.textContent = "Saving and analyzing…";
+    status.setAttribute("style", "color:#cbd5e1;font-size:15px;line-height:1.6;");
+    widget.replaceChildren(status);
+  }
+
+  function renderError(error: string) {
+    if (!widget) return;
+    styleExpandedWidget();
+    const message = document.createElement("div");
+    message.textContent = error;
+    message.setAttribute("style", "color:#fecaca;font-size:15px;line-height:1.6;margin-bottom:12px;");
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Done";
+    closeBtn.setAttribute("style", "background:#6366f1;color:#fff;border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;");
+    closeBtn.addEventListener("click", removeWidget);
+    widget.replaceChildren(message, closeBtn);
+  }
+
+  function renderConversation(captureId: string, messages: ChatMessage[], loading = false) {
+    if (!widget) return;
+    styleExpandedWidget();
+
+    const list = document.createElement("div");
+    list.setAttribute("style", "max-height:330px;overflow-y:auto;padding-right:4px;margin-bottom:12px;");
+
+    messages.forEach((message) => {
+      const label = document.createElement("div");
+      label.textContent = message.role === "assistant" ? "AI" : "You";
+      label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:700;margin:0 0 4px;");
+
+      const body = document.createElement("div");
+      body.textContent = message.content;
+      body.setAttribute("style", `
+        color: ${message.role === "assistant" ? "#e2e8f0" : "#cbd5e1"};
+        font-size: ${message.role === "assistant" ? "15px" : "13px"};
+        line-height: 1.65;
+        margin-bottom: 12px;
+        white-space: pre-wrap;
+      `);
+
+      list.appendChild(label);
+      list.appendChild(body);
+    });
+
+    if (loading) {
+      const label = document.createElement("div");
+      label.textContent = "AI";
+      label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:700;margin:0 0 4px;");
+      const body = document.createElement("div");
+      body.textContent = "Thinking…";
+      body.setAttribute("style", "color:#94a3b8;font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;");
+      list.appendChild(label);
+      list.appendChild(body);
+    }
+
+    const followupInput = document.createElement("input");
+    followupInput.type = "text";
+    followupInput.dir = "auto";
+    followupInput.placeholder = "Ask a follow-up…";
+    followupInput.disabled = loading;
+    followupInput.setAttribute("style", `
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px;
+      color: #e2e8f0;
+      font-size: 13px;
+      outline: none;
+      padding: 8px 10px;
+    `);
+
+    const askBtn = document.createElement("button");
+    askBtn.textContent = "Ask";
+    askBtn.disabled = loading;
+    askBtn.setAttribute("style", `
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      padding: 8px 13px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      opacity: ${loading ? "0.55" : "1"};
+    `);
+
+    const doneBtn = document.createElement("button");
+    doneBtn.textContent = "Done";
+    doneBtn.setAttribute("style", `
+      background: rgba(255,255,255,0.08);
+      color: #e2e8f0;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    `);
+    doneBtn.addEventListener("click", removeWidget);
+
+    const row = document.createElement("div");
+    row.setAttribute("style", "display:flex;gap:8px;align-items:center;");
+    row.appendChild(followupInput);
+    row.appendChild(askBtn);
+    row.appendChild(doneBtn);
+
+    function askFollowup() {
+      const question = followupInput.value.trim();
+      if (!question || loading) return;
+      const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+      renderConversation(captureId, nextMessages, true);
+      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question })
+        .then((response) => renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
+        .catch((error) => renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
+    }
+
+    followupInput.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") askFollowup();
+      if (event.key === "Escape") removeWidget();
+    });
+    askBtn.addEventListener("click", askFollowup);
+
+    widget.replaceChildren(list, row);
+    list.scrollTop = list.scrollHeight;
+    setTimeout(() => followupInput.focus(), 50);
+  }
+
+  function doSave(closeAfterSave = false) {
+    if (submitted) {
+      if (closeAfterSave) removeWidget();
+      return;
+    }
+    submitted = true;
+    const context = input.value.trim();
     const message: Message = {
       type: "SAVE_HIGHLIGHT",
       text: selectedText,
       url: location.href,
       title: document.title,
-      context: input.value.trim(),
+      context,
     };
-    chrome.runtime.sendMessage(message);
-    removeWidget();
     window.getSelection()?.removeAllRanges();
+
+    if (closeAfterSave) {
+      chrome.runtime.sendMessage(message);
+      removeWidget();
+      return;
+    }
+
+    chrome.storage.local.get("screenshot_triggers", (result) => {
+      const triggers = result.screenshot_triggers ?? { immediate: false };
+      if (!triggers.immediate) {
+        chrome.runtime.sendMessage(message);
+        removeWidget();
+        return;
+      }
+
+      renderLoading();
+      sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
+        .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
+        .catch((error) => renderError(error.message));
+    });
   }
 
   input.addEventListener("keydown", (e) => {
@@ -210,7 +397,15 @@ function showContextInput(x: number, y: number, selectedText: string) {
   widget.appendChild(input);
   appendToPage(widget);
 
-  setTimeout(() => input.focus(), 50);
+  setTimeout(() => {
+    input.focus();
+    widgetOutsideHandler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!widget || widget.contains(target)) return;
+      doSave(true);
+    };
+    document.addEventListener("mousedown", widgetOutsideHandler, true);
+  }, 50);
 }
 
 // Crop overlay state
