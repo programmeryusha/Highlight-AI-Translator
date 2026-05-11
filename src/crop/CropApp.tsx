@@ -1,7 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
+import type { ChatMessage, Message } from "../types";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
+
+function sendRuntimeMessage<T>(message: Message): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      if (response?.error) {
+        reject(new Error(response.error));
+        return;
+      }
+      resolve(response as T);
+    });
+  });
+}
 
 export default function CropApp() {
   const [screenshot, setScreenshot] = useState<string | null>(null);
@@ -10,7 +28,10 @@ export default function CropApp() {
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [context, setContext] = useState("");
   const [immediate, setImmediate] = useState(false);
-  const [explanation, setExplanation] = useState("");
+  const [captureId, setCaptureId] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [followup, setFollowup] = useState("");
+  const [followupLoading, setFollowupLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -37,13 +58,12 @@ export default function CropApp() {
       ctx.drawImage(img, 0, 0);
 
       if (selection) {
-        ctx.fillStyle = "rgba(0,0,0,0.45)";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.clearRect(selection.x, selection.y, selection.w, selection.h);
-        ctx.drawImage(img, selection.x, selection.y, selection.w, selection.h, selection.x, selection.y, selection.w, selection.h);
-        ctx.strokeStyle = "#6366f1";
+        ctx.strokeStyle = "rgba(99,102,241,0.95)";
         ctx.lineWidth = 2;
         ctx.strokeRect(selection.x, selection.y, selection.w, selection.h);
+        ctx.strokeStyle = "rgba(255,255,255,0.85)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(selection.x + 2, selection.y + 2, Math.max(selection.w - 4, 0), Math.max(selection.h - 4, 0));
       }
     };
     img.src = screenshot;
@@ -81,8 +101,9 @@ export default function CropApp() {
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
-  async function submit() {
+  async function submit(contextOverride = context) {
     if (!selection || !screenshot) return;
+    const finalContext = contextOverride.trim();
     setStage("saving");
 
     // Crop image
@@ -97,39 +118,47 @@ export default function CropApp() {
     const croppedDataUrl = canvas.toDataURL("image/png");
 
     if (immediate) {
-      // Show inline result
-      const { anthropic_api_key: apiKey } = await chrome.storage.local.get("anthropic_api_key");
-      if (!apiKey) { setExplanation("Add your API key in Settings."); setStage("done"); return; }
-
-      const base64 = croppedDataUrl.split(",")[1];
-      const prompt = context
-        ? `The user doesn't understand "${context}" in this image. Explain it clearly in 1-3 sentences in English. Plain text only, no markdown.`
-        : "Explain what is shown in this image in 1-3 sentences in English. Be clear and concise. Plain text only, no markdown.";
-
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-          body: JSON.stringify({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 300,
-            messages: [{ role: "user", content: [
-              { type: "image", source: { type: "base64", media_type: "image/png", data: base64 } },
-              { type: "text", text: prompt },
-            ]}],
-          }),
+        const response = await sendRuntimeMessage<{ captureId: string; explanation: string }>({
+          type: "EXPLAIN_SCREENSHOT",
+          imageData: croppedDataUrl,
+          context: finalContext,
         });
-        const data = await res.json();
-        setExplanation(data.content?.[0]?.text?.trim().replace(/^#+\s*/gm, "") ?? "No response.");
-      } catch { setExplanation("Something went wrong."); }
+        setCaptureId(response.captureId);
+        setMessages([{ role: "assistant", content: response.explanation }]);
+      } catch (error) {
+        console.error("ContextLens failed to explain screenshot", error);
+        setMessages([{ role: "assistant", content: error instanceof Error ? error.message : "Something went wrong." }]);
+      }
 
-      // Also save to list in background
-      chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context });
       setStage("done");
     } else {
       // Save to list, close
-      chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context });
+      chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context: finalContext });
       window.close();
+    }
+  }
+
+  async function askFollowup() {
+    const question = followup.trim();
+    if (!question || !captureId || followupLoading) return;
+
+    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+    setMessages(nextMessages);
+    setFollowup("");
+    setFollowupLoading(true);
+
+    try {
+      const response = await sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+        type: "ASK_FOLLOWUP",
+        captureId,
+        question,
+      });
+      setMessages(response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
+    } catch (error) {
+      setMessages([...nextMessages, { role: "assistant", content: error instanceof Error ? error.message : "Something went wrong." }]);
+    } finally {
+      setFollowupLoading(false);
     }
   }
 
@@ -147,12 +176,6 @@ export default function CropApp() {
         style={{ width: "100%", height: "100%", objectFit: "contain", cursor: stage === "selecting" ? "crosshair" : "default" }}
       />
 
-      {stage === "selecting" && (
-        <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.75)", color: "#fff", padding: "8px 20px", borderRadius: 999, fontSize: 14, pointerEvents: "none" }}>
-          Drag to select a region · Esc to cancel
-        </div>
-      )}
-
       {stage === "context" && (
         <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "16px 20px", width: 400, boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
           <p style={{ color: "#6366f1", fontSize: 12, marginBottom: 8 }}>Region selected</p>
@@ -165,11 +188,11 @@ export default function CropApp() {
             style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#e2e8f0", fontSize: 14, padding: "6px 0", outline: "none", marginBottom: 12 }}
           />
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={submit} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              Save
+            <button onClick={() => window.close()} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#e2e8f0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              Cancel
             </button>
-            <button onClick={() => { setStage("selecting"); setSelection(null); }} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
-              Reselect
+            <button onClick={() => submit()} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              Save
             </button>
           </div>
         </div>
@@ -182,10 +205,35 @@ export default function CropApp() {
       )}
 
       {stage === "done" && (
-        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "20px 24px", width: 460, boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
-          <p style={{ color: "#e2e8f0", fontSize: 15, lineHeight: 1.7, marginBottom: 16 }}>{explanation}</p>
+        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "18px 20px", width: "min(520px, calc(100vw - 32px))", maxHeight: "min(620px, calc(100vh - 64px))", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", boxSizing: "border-box" }}>
+          <div style={{ maxHeight: 360, overflowY: "auto", paddingRight: 4, marginBottom: 14 }}>
+            {messages.map((message, index) => (
+              <div key={`${message.role}-${index}`} style={{ marginBottom: 14 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, margin: "0 0 3px" }}>{message.role === "assistant" ? "AI" : "You"}</p>
+                <p style={{ color: message.role === "assistant" ? "#e2e8f0" : "#cbd5e1", fontSize: message.role === "assistant" ? 15 : 13, lineHeight: 1.65, margin: 0, whiteSpace: "pre-wrap" }}>
+                  {message.content}
+                </p>
+              </div>
+            ))}
+            {followupLoading && (
+              <div style={{ color: "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking…</div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <input
+              value={followup}
+              onChange={(e) => setFollowup(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") askFollowup(); if (e.key === "Escape") window.close(); }}
+              placeholder="Ask a follow-up…"
+              disabled={!captureId || followupLoading}
+              style={{ flex: 1, minWidth: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#e2e8f0", fontSize: 13, outline: "none", padding: "8px 10px" }}
+            />
+            <button onClick={askFollowup} disabled={!captureId || followupLoading} style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading ? "pointer" : "default", opacity: captureId && !followupLoading ? 1 : 0.55 }}>
+              Ask
+            </button>
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => { setStage("selecting"); setSelection(null); setContext(""); setExplanation(""); }} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
+            <button onClick={() => { setStage("selecting"); setSelection(null); setContext(""); setMessages([]); setCaptureId(""); setFollowup(""); }} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
               New selection
             </button>
             <button onClick={() => window.close()} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>

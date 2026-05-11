@@ -3,14 +3,19 @@
   "name": "ContextLens",
   "version": "1.0.0",
   "description": "Highlight any text on any page and instantly understand it — in any language.",
-  "permissions": ["storage", "contextMenus", "tabs"],
+  "permissions": ["storage", "contextMenus", "tabs", "scripting"],
   "commands": {
     "screenshot": {
       "suggested_key": { "default": "Ctrl+Shift+H", "mac": "Command+Shift+H" },
       "description": "Screenshot a region to explain"
     }
   },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "https://web-production-223b1.up.railway.app/*"
+  ],
   "background": {
     "service_worker": "src/background/service-worker.ts",
     "type": "module"

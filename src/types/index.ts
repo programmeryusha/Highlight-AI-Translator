@@ -7,12 +7,17 @@ export interface Capture {
   savedAt: string; // ISO timestamp
   explanation: string | null;
   status: "pending" | "done" | "error";
+  errorMessage?: string;
   imageData?: string; // base64 data URL for screenshot captures
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface StorageSchema {
   captures: Capture[];
-  anthropic_api_key?: string;
 }
 
 export type Message =
@@ -21,4 +26,6 @@ export type Message =
   | { type: "TAKE_SCREENSHOT" }
   | { type: "SHOW_CROP_OVERLAY"; imageData: string }
   | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
+  | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
+  | { type: "ASK_FOLLOWUP"; captureId: string; question: string }
   | { type: "OPEN_DASHBOARD" };

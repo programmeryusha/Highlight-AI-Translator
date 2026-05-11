@@ -36,37 +36,37 @@
 
     <h2>Data stored on your device</h2>
     <p>The following data is stored locally in your browser using Chrome's built-in
-    storage API (<code>chrome.storage.local</code>). It never leaves your device
-    except as described below.</p>
+    storage API (<code>chrome.storage.local</code>). It leaves your device only
+    when you ask ContextLens to generate an explanation.</p>
     <ul>
       <li><strong>Your highlights</strong> — the text you save and any context you add</li>
-      <li><strong>Your Anthropic API key</strong> — entered by you in Settings</li>
       <li><strong>Your preferences</strong> — save trigger settings (bubble, context menu, screenshot shortcuts)</li>
     </ul>
 
     <h2>Data sent to third parties</h2>
     <p>When you save a highlight or screenshot, the selected text and your optional
-    context note are sent directly to the <strong>Anthropic API</strong> using your
-    own API key. This is the only external request the extension makes.</p>
+    context note are sent to the <strong>ContextLens backend</strong>, which calls
+    the Anthropic API to generate the explanation.</p>
     <ul>
       <li>Anthropic's privacy policy applies to data sent to their API:
         <a href="https://www.anthropic.com/privacy" target="_blank">anthropic.com/privacy</a>
       </li>
-      <li>No other third party receives any data from this extension</li>
+      <li>The ContextLens backend receives explanation requests so it can return AI-generated responses</li>
     </ul>
 
     <h2>Data we collect</h2>
     <p>
       <strong>None.</strong> The developer of ContextLens does not collect, receive,
-      store, or have access to any data you enter into the extension. There is no
-      analytics, no telemetry, no crash reporting, and no backend server.
+      store, or have access to your locally saved highlights. The backend receives
+      only the explanation requests you send. There is no analytics, no telemetry,
+      and no crash reporting.
     </p>
 
     <h2>Screenshots</h2>
     <p>When you use the screenshot feature, the visible area of your current tab is
     captured temporarily in memory to let you select a region. The selected region
-    is then sent to the Anthropic API for explanation. No screenshot data is stored
-    permanently on your device or transmitted anywhere other than Anthropic.</p>
+    is then sent to the ContextLens backend for explanation. No screenshot data is
+    stored permanently on your device.</p>
 
     <h2>Permissions</h2>
     <p>The extension requests the following Chrome permissions:</p>

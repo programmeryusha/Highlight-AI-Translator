@@ -1,9 +1,26 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Capture } from "../types";
+import type { Capture, ChatMessage } from "../types";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
+const BACKEND_URL = "https://web-production-223b1.up.railway.app";
+
+async function throwResponseError(label: string, res: Response): Promise<never> {
+  let detail = "";
+  try {
+    const body = await res.text();
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed.detail ?? parsed.error?.message ?? parsed.error?.type ?? body;
+      } catch {
+        detail = body;
+      }
+    }
+  } catch {
+    // Ignore secondary failures while reporting the primary HTTP status.
+  }
+
+  const shortDetail = detail ? ` — ${detail.slice(0, 240)}` : "";
+  throw new Error(`${label}: ${res.status}${shortDetail}`);
 }
 
 function renderMarkdown(text: string): React.ReactNode {
@@ -48,9 +65,10 @@ export default function ChatApp() {
   const captureId = params.get("id");
 
   const [capture, setCapture] = useState<Capture | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sourceExpanded, setSourceExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,10 +78,10 @@ export default function ChatApp() {
       const found = captures.find((c) => c.id === captureId) ?? null;
       setCapture(found);
 
-      const prior: Message[] = result[`chat_${captureId}`] ?? [];
+      const prior: ChatMessage[] = result[`chat_${captureId}`] ?? [];
       if (prior.length === 0 && found?.explanation) {
         // Seed with the initial explanation
-        const seed: Message[] = [{ role: "assistant", content: found.explanation }];
+        const seed: ChatMessage[] = [{ role: "assistant", content: found.explanation }];
         setMessages(seed);
         chrome.storage.local.set({ [`chat_${captureId}`]: seed });
       } else {
@@ -76,49 +94,50 @@ export default function ChatApp() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!capture) return;
+    setSourceExpanded(false);
+  }, [capture?.id]);
+
   async function send() {
     const text = input.trim();
     if (!text || loading || !capture) return;
     setInput("");
 
-    const updated: Message[] = [...messages, { role: "user", content: text }];
+    const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(updated);
     setLoading(true);
 
-    const { anthropic_api_key: apiKey } = await chrome.storage.local.get("anthropic_api_key");
-    if (!apiKey) {
-      const err: Message[] = [...updated, { role: "assistant", content: "No API key found. Add it in Settings." }];
-      setMessages(err);
-      setLoading(false);
-      return;
-    }
-
     try {
-      const systemPrompt = `The user saved this highlighted text:\n"${capture.text}"${capture.context ? `\n\nThey noted they didn't understand: "${capture.context}"` : ""}\n\nAnswer follow-up questions about it clearly and concisely.`;
+      const transcript = updated
+        .slice(-8)
+        .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+        .join("\n");
+      const source = [
+        `Saved item: ${capture.text}`,
+        capture.context ? `Original context note: ${capture.context}` : "",
+        `Conversation so far:\n${transcript}`,
+      ].filter(Boolean).join("\n\n");
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch(`${BACKEND_URL}/explain`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 400,
-          system: systemPrompt,
-          messages: updated.map((m) => ({ role: m.role, content: m.content })),
+          text: source,
+          context: text,
         }),
       });
+      if (!res.ok) await throwResponseError("Backend error", res);
 
       const data = await res.json();
-      const reply = data.content?.[0]?.text?.trim() ?? "No response.";
-      const final: Message[] = [...updated, { role: "assistant", content: reply }];
+      const reply = data.explanation?.trim() ?? "No response.";
+      const final: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
       setMessages(final);
       chrome.storage.local.set({ [`chat_${captureId}`]: final });
-    } catch {
-      const errMsgs: Message[] = [...updated, { role: "assistant", content: "Something went wrong. Try again." }];
+    } catch (error) {
+      console.error("ContextLens chat failed", error);
+      const message = error instanceof Error ? error.message : "Something went wrong. Try again.";
+      const errMsgs: ChatMessage[] = [...updated, { role: "assistant", content: message }];
       setMessages(errMsgs);
     }
     setLoading(false);
@@ -132,8 +151,11 @@ export default function ChatApp() {
     );
   }
 
+  const sourceIsLong = capture.text.length > 700;
+  const sourcePreview = sourceIsLong && !sourceExpanded;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", maxWidth: 900, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", maxWidth: 900, margin: "0 auto" }}>
       {/* Header */}
       <div style={{ padding: "32px 48px 0" }}>
         <a
@@ -145,14 +167,24 @@ export default function ChatApp() {
         {/* Highlighted text */}
         <div
           style={{
+            border: "1px solid #e3e2de",
             borderLeft: "3px solid #e3e2de",
-            paddingLeft: 16,
+            borderRadius: 8,
+            padding: "14px 16px",
             marginBottom: 24,
           }}
         >
-          <p style={{ fontSize: 16, color: "#37352f", lineHeight: 1.6, fontWeight: 500 }}>
+          <p style={{ fontSize: 16, color: "#37352f", lineHeight: 1.6, fontWeight: 500, maxHeight: sourcePreview ? 180 : undefined, overflow: sourcePreview ? "hidden" : undefined, marginBottom: sourceIsLong ? 8 : undefined }}>
             {capture.text}
           </p>
+          {sourceIsLong && (
+            <button
+              onClick={() => setSourceExpanded((value) => !value)}
+              style={{ background: "none", border: "none", color: "#6366f1", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 6 }}
+            >
+              {sourceExpanded ? "Collapse text" : "Show full text"}
+            </button>
+          )}
           {capture.context && (
             <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 6 }}>
               didn't understand: <em>{capture.context}</em>
@@ -163,13 +195,13 @@ export default function ChatApp() {
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 48px" }}>
+      <div style={{ padding: "24px 48px 8px" }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: "#9b9a97", marginBottom: 4, fontWeight: 500 }}>
               {m.role === "assistant" ? "AI" : "You"}
             </p>
-            <div style={{ fontSize: 15, color: "#37352f" }}>
+            <div style={{ fontSize: m.role === "assistant" ? 17 : 15, color: "#37352f", lineHeight: m.role === "assistant" ? 1.85 : 1.7 }}>
               {renderMarkdown(m.content)}
             </div>
           </div>

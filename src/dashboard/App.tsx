@@ -1,9 +1,30 @@
 import React, { useEffect, useState } from "react";
 import type { Capture } from "../types";
 
-type View = "saves" | "words" | "settings";
+type View = "saves" | "history" | "words" | "settings";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
+const LONG_TEXT_LIMIT = 420;
+
+function dayKeyFromDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dayKey(iso: string): string {
+  return dayKeyFromDate(new Date(iso));
+}
+
+function todayKey(): string {
+  return dayKeyFromDate(new Date());
+}
+
+function dayLabelFromKey(key: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return dayLabel(new Date(year, month - 1, day).toISOString());
+}
 
 function dayLabel(iso: string): string {
   const d = new Date(iso);
@@ -26,8 +47,52 @@ function groupByDay(captures: Capture[]): { label: string; items: Capture[] }[] 
   return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
 }
 
+function captureCountsByDay(captures: Capture[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  captures.forEach((capture) => {
+    const key = dayKey(capture.savedAt);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function computeStreak(captures: Capture[]): number {
+  const counts = captureCountsByDay(captures);
+  let cursor = new Date();
+  let streak = 0;
+
+  while (counts.has(dayKeyFromDate(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return streak;
+}
+
 function openChat(id: string) {
   chrome.tabs.create({ url: chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}` });
+}
+
+function CapturePreview({ capture }: { capture: Capture }) {
+  if (capture.imageData) {
+    return <img src={capture.imageData} alt="screenshot" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 6, marginBottom: 4, display: "block" }} />;
+  }
+
+  const isLong = capture.text.length > LONG_TEXT_LIMIT;
+  const text = isLong ? `${capture.text.slice(0, LONG_TEXT_LIMIT).trim()}…` : capture.text;
+
+  return (
+    <>
+      <p style={{ fontSize: 17, fontWeight: 500, color: "#37352f", lineHeight: 1.6, margin: 0 }}>
+        {text}
+      </p>
+      {isLong && (
+        <p style={{ fontSize: 12, color: "#6366f1", margin: "5px 0 0", fontWeight: 600 }}>
+          Open full save
+        </p>
+      )}
+    </>
+  );
 }
 
 function SavesView({ captures }: { captures: Capture[] }) {
@@ -55,13 +120,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
                 onClick={() => openChat(c.id)}
                 style={{ padding: "10px 0", cursor: "pointer" }}
               >
-                {c.imageData ? (
-                  <img src={c.imageData} alt="screenshot" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 6, marginBottom: 4, display: "block" }} />
-                ) : (
-                  <p style={{ fontSize: 17, fontWeight: 500, color: "#37352f", lineHeight: 1.6, margin: 0 }}>
-                    {c.text}
-                  </p>
-                )}
+                <CapturePreview capture={c} />
 
                 {c.context && (
                   <p style={{ fontSize: 14, color: "#9b9a97", margin: "3px 0 0" }}>
@@ -76,7 +135,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
                 )}
                 {c.status === "error" && (
                   <p style={{ fontSize: 14, color: "#eb5757", margin: "5px 0 0" }}>
-                    something went wrong — try again
+                    something went wrong — {c.errorMessage ?? "try again"}
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
@@ -89,6 +148,41 @@ function SavesView({ captures }: { captures: Capture[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function HistoryView({ captures }: { captures: Capture[] }) {
+  const keys = Array.from(new Set(captures.map((capture) => dayKey(capture.savedAt))))
+    .filter((key) => key !== todayKey())
+    .sort((a, b) => b.localeCompare(a));
+  const [selectedDay, setSelectedDay] = useState(keys[0] ?? "");
+  const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
+
+  useEffect(() => {
+    if (!selectedDay && keys[0]) setSelectedDay(keys[0]);
+    if (selectedDay && !keys.includes(selectedDay)) setSelectedDay(keys[0] ?? "");
+  }, [keys.join("|"), selectedDay]);
+
+  if (keys.length === 0) {
+    return <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>No previous days yet. Tomorrow, today’s saves will move here.</p>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <p style={{ fontSize: 13, color: "#9b9a97", margin: 0 }}>{keys.length} saved {keys.length === 1 ? "day" : "days"}</p>
+        <select
+          value={selectedDay}
+          onChange={(event) => setSelectedDay(event.target.value)}
+          style={{ border: "1px solid #e3e2de", borderRadius: 6, background: "#fff", color: "#37352f", fontSize: 13, padding: "6px 10px" }}
+        >
+          {keys.map((key) => (
+            <option key={key} value={key}>{dayLabelFromKey(key)}</option>
+          ))}
+        </select>
+      </div>
+      <SavesView captures={selectedCaptures} />
     </div>
   );
 }
@@ -229,38 +323,16 @@ function WordsView({ captures }: { captures: Capture[] }) {
 }
 
 function SettingsView() {
-  const [key, setKey] = useState("");
-  const [keySet, setKeySet] = useState(false);
-  const [keySaved, setKeySaved] = useState(false);
-  const [keyCleared, setKeyCleared] = useState(false);
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: false });
 
   useEffect(() => {
-    chrome.storage.local.get(["anthropic_api_key", "save_triggers", "screenshot_triggers"], (r) => {
-      setKeySet(!!r.anthropic_api_key);
+    chrome.storage.local.remove("anthropic_api_key");
+    chrome.storage.local.get(["save_triggers", "screenshot_triggers"], (r) => {
       if (r.save_triggers) setTriggers(r.save_triggers);
       if (r.screenshot_triggers) setScreenshotTriggers(r.screenshot_triggers);
     });
   }, []);
-
-  function handleSaveKey() {
-    if (!key.trim()) return;
-    chrome.storage.local.set({ anthropic_api_key: key.trim() }, () => {
-      setKeySaved(true);
-      setKeySet(true);
-      setKey("");
-      setTimeout(() => setKeySaved(false), 2000);
-    });
-  }
-
-  function handleClearKey() {
-    chrome.storage.local.remove("anthropic_api_key", () => {
-      setKeySet(false);
-      setKeyCleared(true);
-      setTimeout(() => setKeyCleared(false), 2000);
-    });
-  }
 
   function handleTriggerChange(field: keyof SaveTriggers, value: boolean) {
     const updated = { ...triggers, [field]: value };
@@ -276,69 +348,6 @@ function SettingsView() {
 
   return (
     <div style={{ maxWidth: 400, paddingTop: 8 }}>
-
-      {/* Optional own API key */}
-      <p style={{ fontSize: 13, fontWeight: 600, color: "#37352f", marginBottom: 4 }}>
-        Use your own Claude API key
-        {keySet && <span style={{ color: "#0f7b6c", fontWeight: 400, marginLeft: 8 }}>✓ active</span>}
-        {keyCleared && <span style={{ color: "#9b9a97", fontWeight: 400, marginLeft: 8 }}>removed</span>}
-      </p>
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12, lineHeight: 1.5 }}>
-        Optional. By default ContextLens uses a shared AI connection. If you have a Claude Pro or Team subscription, paste your key here to use it instead — useful for higher limits or access to more powerful models.
-      </p>
-      <input
-        type="password"
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && handleSaveKey()}
-        placeholder={keySet ? "Enter new key to replace…" : "sk-ant-…"}
-        style={{
-          width: "100%",
-          padding: "8px 0",
-          background: "transparent",
-          border: "none",
-          borderBottom: "1px solid #e3e2de",
-          color: "#37352f",
-          fontSize: 14,
-          outline: "none",
-          marginBottom: 10,
-        }}
-      />
-      <div style={{ display: "flex", gap: 8, marginBottom: 40 }}>
-        <button
-          onClick={handleSaveKey}
-          disabled={!key.trim()}
-          style={{
-            background: keySaved ? "#0f7b6c" : "#37352f",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "7px 16px",
-            fontSize: 13,
-            cursor: key.trim() ? "pointer" : "default",
-            opacity: key.trim() ? 1 : 0.4,
-          }}
-        >
-          {keySaved ? "Saved" : "Save key"}
-        </button>
-        {keySet && (
-          <button
-            onClick={handleClearKey}
-            style={{
-              background: "none",
-              color: "#9b9a97",
-              border: "1px solid #e3e2de",
-              borderRadius: 4,
-              padding: "7px 16px",
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
-            Remove
-          </button>
-        )}
-      </div>
-
       {/* Save triggers */}
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
@@ -360,7 +369,7 @@ function SettingsView() {
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Screenshot trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {([
-          { field: "floatingButton" as const, label: "Show camera button on pages", desc: "A 📷 button appears in the corner of every page." },
+          { field: "floatingButton" as const, label: "Show camera button on pages", desc: "A camera button appears in the corner of every page." },
           { field: "shortcut" as const, label: "Keyboard shortcut", desc: "Set your shortcut at chrome://extensions/shortcuts." },
           { field: "immediate" as const, label: "Show answer immediately", desc: "Displays the explanation in the screenshot window instead of saving quietly." },
         ]).map((opt) => (
@@ -377,9 +386,45 @@ function SettingsView() {
   );
 }
 
+function MonthHeatMap({ captures }: { captures: Capture[] }) {
+  const now = new Date();
+  const counts = captureCountsByDay(captures);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
+  const max = Math.max(1, ...days.map((day) => counts.get(dayKeyFromDate(new Date(now.getFullYear(), now.getMonth(), day))) ?? 0));
+
+  function colorFor(count: number) {
+    if (count === 0) return "#f0efec";
+    const opacity = 0.25 + (count / max) * 0.65;
+    return `rgba(99, 102, 241, ${opacity})`;
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+      <span style={{ fontSize: 12, color: "#9b9a97", whiteSpace: "nowrap" }}>
+        {now.toLocaleDateString("en-US", { month: "short" })}
+      </span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(16, 9px)", gap: 3 }}>
+        {days.map((day) => {
+          const key = dayKeyFromDate(new Date(now.getFullYear(), now.getMonth(), day));
+          const count = counts.get(key) ?? 0;
+          return (
+            <span
+              key={key}
+              title={`${day}: ${count} ${count === 1 ? "save" : "saves"}`}
+              style={{ width: 9, height: 9, borderRadius: 2, background: colorFor(count), display: "block" }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState<View>("saves");
   const [captures, setCaptures] = useState<Capture[]>([]);
+  const [currentDayKey, setCurrentDayKey] = useState(todayKey());
 
   useEffect(() => {
     chrome.storage.local.get("captures", (r) => {
@@ -392,41 +437,56 @@ export default function App() {
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentDayKey(todayKey()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
+  const streak = computeStreak(captures);
+
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
       <div style={{ borderBottom: "1px solid #e3e2de" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 52 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "grid", gridTemplateColumns: "auto minmax(180px, 1fr) auto", gap: 24, alignItems: "center", minHeight: 64 }}>
           <span style={{ fontSize: 15, fontWeight: 600 }}>
             ContextLens
-            {captures.length > 0 && (
-              <span style={{ color: "#9b9a97", fontWeight: 400, marginLeft: 6, fontSize: 14 }}>{captures.length}</span>
+            {todayCaptures.length > 0 && (
+              <span style={{ color: "#9b9a97", fontWeight: 400, marginLeft: 6, fontSize: 14 }}>{todayCaptures.length}</span>
             )}
           </span>
-          <nav style={{ display: "flex", gap: 24 }}>
-            {(["saves", "words", "settings"] as View[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: view === v ? "#37352f" : "#9b9a97",
-                  fontWeight: view === v ? 600 : 400,
-                  fontSize: 14,
-                  cursor: "pointer",
-                  padding: "4px 0",
-                  textTransform: "capitalize",
-                }}
-              >
-                {v}
-              </button>
-            ))}
-          </nav>
+          <MonthHeatMap captures={captures} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
+            <span style={{ fontSize: 13, color: "#37352f", whiteSpace: "nowrap" }}>
+              {streak} day streak
+            </span>
+            <nav style={{ display: "flex", gap: 18 }}>
+              {(["saves", "history", "words", "settings"] as View[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: view === v ? "#37352f" : "#9b9a97",
+                    fontWeight: view === v ? 600 : 400,
+                    fontSize: 14,
+                    cursor: "pointer",
+                    padding: "4px 0",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {v === "saves" ? "Today" : v}
+                </button>
+              ))}
+            </nav>
+          </div>
         </div>
       </div>
 
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 32px" }}>
-        {view === "saves" && <SavesView captures={captures} />}
+        {view === "saves" && <SavesView captures={todayCaptures} />}
+        {view === "history" && <HistoryView captures={captures} />}
         {view === "words" && <WordsView captures={captures} />}
         {view === "settings" && <SettingsView />}
       </div>
