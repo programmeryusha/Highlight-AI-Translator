@@ -26,6 +26,26 @@ function dayLabelFromKey(key: string): string {
   return dayLabel(new Date(year, month - 1, day).toISOString());
 }
 
+function dateFromDayKey(key: string): Date {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addDays(key: string, amount: number): string {
+  const date = dateFromDayKey(key);
+  date.setDate(date.getDate() + amount);
+  return dayKeyFromDate(date);
+}
+
+function lastThirtyDayKeys(): string[] {
+  const today = new Date();
+  return Array.from({ length: 30 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (29 - index));
+    return dayKeyFromDate(date);
+  });
+}
+
 function dayLabel(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
@@ -158,41 +178,93 @@ function SavesView({ captures }: { captures: Capture[] }) {
 }
 
 function HistoryView({ captures }: { captures: Capture[] }) {
-  const keys = Array.from(new Set(captures.map((capture) => dayKey(capture.savedAt))))
-    .filter((key) => key !== todayKey())
-    .sort((a, b) => b.localeCompare(a));
-  const [selectedDay, setSelectedDay] = useState(keys[0] ?? "");
+  const days = lastThirtyDayKeys();
+  const firstDay = days[0];
+  const lastDay = days[days.length - 1];
+  const [selectedDay, setSelectedDay] = useState(todayKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
+  const previousDay = addDays(selectedDay, -1);
+  const nextDay = addDays(selectedDay, 1);
+  const canGoPrevious = previousDay >= firstDay;
+  const canGoNext = nextDay <= lastDay;
 
   useEffect(() => {
-    if (!selectedDay && keys[0]) setSelectedDay(keys[0]);
-    if (selectedDay && !keys.includes(selectedDay)) setSelectedDay(keys[0] ?? "");
-  }, [keys.join("|"), selectedDay]);
+    if (selectedDay < firstDay) setSelectedDay(firstDay);
+    if (selectedDay > lastDay) setSelectedDay(lastDay);
+  }, [firstDay, lastDay, selectedDay]);
+
+  function selectedDayLabel() {
+    if (selectedDay === todayKey()) return "Today";
+    return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  }
+
+  function emptyDayMessage() {
+    if (selectedDay === todayKey()) return "Nothing saved today.";
+    return `Nothing saved on ${selectedDayLabel()}.`;
+  }
 
   return (
-    <div>
-      <div style={{ marginBottom: 32 }}>
-        <MonthHeatMap captures={captures} />
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 48, alignItems: "start" }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 28 }}>
+          <button
+            onClick={() => canGoPrevious && setSelectedDay(previousDay)}
+            disabled={!canGoPrevious}
+            aria-label="Previous day"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 999,
+              border: "1px solid #e3e2de",
+              background: canGoPrevious ? "#fff" : "#f7f6f3",
+              color: canGoPrevious ? "#37352f" : "#c7c6c3",
+              cursor: canGoPrevious ? "pointer" : "default",
+              fontSize: 18,
+            }}
+          >
+            ‹
+          </button>
+          <div style={{ minWidth: 220, textAlign: "center" }}>
+            <h2 style={{ fontSize: 22, color: "#37352f", margin: 0, fontWeight: 700 }}>
+              {selectedDayLabel()}
+            </h2>
+            <p style={{ fontSize: 13, color: "#9b9a97", margin: "5px 0 0" }}>
+              {selectedCaptures.length} {selectedCaptures.length === 1 ? "save" : "saves"}
+            </p>
+          </div>
+          <button
+            onClick={() => canGoNext && setSelectedDay(nextDay)}
+            disabled={!canGoNext}
+            aria-label="Next day"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 999,
+              border: "1px solid #e3e2de",
+              background: canGoNext ? "#fff" : "#f7f6f3",
+              color: canGoNext ? "#37352f" : "#c7c6c3",
+              cursor: canGoNext ? "pointer" : "default",
+              fontSize: 18,
+            }}
+          >
+            ›
+          </button>
+        </div>
+
+        {selectedCaptures.length > 0 ? (
+          <SavesView captures={selectedCaptures} />
+        ) : (
+          <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8, textAlign: "center" }}>
+            {emptyDayMessage()}
+          </p>
+        )}
       </div>
-      {keys.length === 0 ? (
-        <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8 }}>No previous days yet. Tomorrow, today’s saves will move here.</p>
-      ) : (
-        <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <p style={{ fontSize: 13, color: "#9b9a97", margin: 0 }}>{keys.length} saved {keys.length === 1 ? "day" : "days"}</p>
-        <select
-          value={selectedDay}
-          onChange={(event) => setSelectedDay(event.target.value)}
-          style={{ border: "1px solid #e3e2de", borderRadius: 6, background: "#fff", color: "#37352f", fontSize: 13, padding: "6px 10px" }}
-        >
-          {keys.map((key) => (
-            <option key={key} value={key}>{dayLabelFromKey(key)}</option>
-          ))}
-        </select>
-      </div>
-      <SavesView captures={selectedCaptures} />
-        </>
-      )}
+
+      <MonthHeatMap captures={captures} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
     </div>
   );
 }
@@ -396,12 +468,10 @@ function SettingsView() {
   );
 }
 
-function MonthHeatMap({ captures }: { captures: Capture[] }) {
-  const now = new Date();
+function MonthHeatMap({ captures, selectedDay, onSelectDay }: { captures: Capture[]; selectedDay: string; onSelectDay: (day: string) => void }) {
   const counts = captureCountsByDay(captures);
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
-  const max = Math.max(1, ...days.map((day) => counts.get(dayKeyFromDate(new Date(now.getFullYear(), now.getMonth(), day))) ?? 0));
+  const days = lastThirtyDayKeys();
+  const max = Math.max(1, ...days.map((day) => counts.get(day) ?? 0));
 
   function colorFor(count: number) {
     if (count === 0) return "#f0efec";
@@ -410,20 +480,35 @@ function MonthHeatMap({ captures }: { captures: Capture[] }) {
   }
 
   return (
-    <div>
-      <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 10px" }}>
-        {now.toLocaleDateString("en-US", { month: "long" })} activity
+    <div style={{ justifySelf: "end", width: 300 }}>
+      <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 12px" }}>
+        Last 30 days
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(16, 12px)", gap: 4, width: "fit-content" }}>
-        {days.map((day) => {
-          const key = dayKeyFromDate(new Date(now.getFullYear(), now.getMonth(), day));
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 44px)", gap: 8, width: "fit-content" }}>
+        {days.map((key) => {
           const count = counts.get(key) ?? 0;
+          const date = dateFromDayKey(key);
+          const isSelected = selectedDay === key;
           return (
-            <span
+            <button
               key={key}
-              title={`${day}: ${count} ${count === 1 ? "save" : "saves"}`}
-              style={{ width: 12, height: 12, borderRadius: 3, background: colorFor(count), display: "block" }}
-            />
+              title={`${dayLabelFromKey(key)}: ${count} ${count === 1 ? "save" : "saves"}`}
+              onClick={() => onSelectDay(key)}
+              style={{
+                width: 44,
+                height: 42,
+                borderRadius: 8,
+                border: isSelected ? "2px solid #6366f1" : "1px solid #e3e2de",
+                background: colorFor(count),
+                color: count > 0 ? "#37352f" : "#9b9a97",
+                fontSize: 13,
+                fontWeight: isSelected ? 700 : 600,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              {date.getDate()}
+            </button>
           );
         })}
       </div>
