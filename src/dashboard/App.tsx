@@ -6,11 +6,59 @@ type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 const LONG_TEXT_LIMIT = 420;
 
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+
+  function inlineBold(line: string): React.ReactNode[] {
+    return line.split(/\*\*(.*?)\*\*/g).map((part, index) => (
+      index % 2 === 1 ? <strong key={index}>{part}</strong> : part
+    ));
+  }
+
+  function flushList() {
+    if (listItems.length) {
+      nodes.push(<ul key={nodes.length} style={{ margin: "6px 0 6px 20px", padding: 0 }}>{listItems}</ul>);
+      listItems = [];
+    }
+  }
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushList();
+      return;
+    }
+
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2))}</li>);
+      return;
+    }
+
+    flushList();
+    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineBold(trimmed)}</p>);
+  });
+  flushList();
+
+  return <>{nodes}</>;
+}
+
 function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function monthKeyFromDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function currentMonthKey(): string {
+  return monthKeyFromDate(new Date());
 }
 
 function dayKey(iso: string): string {
@@ -164,9 +212,9 @@ function SavesView({ captures }: { captures: Capture[] }) {
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
-                  <p style={{ fontSize: 17, color: "#4f4d49", margin: "12px 0 0", lineHeight: 1.75 }}>
-                    {c.explanation}
-                  </p>
+                  <div style={{ fontSize: 17, color: "#4f4d49", margin: "12px 0 0", lineHeight: 1.75 }}>
+                    {renderMarkdown(c.explanation)}
+                  </div>
                 )}
               </div>
             ))}
@@ -276,22 +324,25 @@ interface WordEntry {
   exampleText: string;
 }
 
-function buildWordList(captures: Capture[]): WordEntry[] {
-  const map = new Map<string, { count: number; explanation: string; exampleText: string }>();
+function buildFlashcardList(captures: Capture[], monthKey = currentMonthKey()): WordEntry[] {
+  const map = new Map<string, { count: number; word: string; explanation: string; exampleText: string }>();
   for (const c of captures) {
-    const w = c.context?.trim();
-    if (!w) continue;
-    const key = w.toLowerCase();
+    if (monthKeyFromDate(new Date(c.savedAt)) !== monthKey) continue;
+
+    const question = c.context?.trim();
+    if (!question) continue;
+
+    const key = question.toLowerCase().replace(/\s+/g, " ");
     if (!map.has(key)) {
-      map.set(key, { count: 0, explanation: c.explanation ?? "", exampleText: c.text });
+      map.set(key, { count: 0, word: question, explanation: c.explanation ?? "", exampleText: c.text });
     }
     const entry = map.get(key)!;
     entry.count++;
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
   }
-  return Array.from(map.entries())
-    .map(([, v], i) => ({ word: Array.from(map.keys())[i], count: v.count, explanation: v.explanation, exampleText: v.exampleText }))
-    .sort((a, b) => b.count - a.count);
+  return Array.from(map.values())
+    .filter((entry) => entry.count >= 3)
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
 }
 
 function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => void }) {
@@ -308,7 +359,7 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
     <div style={{ maxWidth: 600, margin: "0 auto", paddingTop: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#9b9a97", fontSize: 14, cursor: "pointer" }}>
-          ← Back to words
+          ← Back to flashcards
         </button>
         <span style={{ fontSize: 13, color: "#9b9a97" }}>{index + 1} / {words.length}</span>
       </div>
@@ -339,9 +390,9 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
           </>
         ) : (
           <>
-            <p style={{ fontSize: 16, color: "#37352f", lineHeight: 1.7, margin: 0 }}>
-              {card.explanation || "No explanation yet — save a highlight with this word to get one."}
-            </p>
+            <div style={{ fontSize: 16, color: "#37352f", lineHeight: 1.7, margin: 0 }}>
+              {renderMarkdown(card.explanation || "No explanation yet — save a highlight with this question to get one.")}
+            </div>
             {card.exampleText && (
               <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 16, fontStyle: "italic" }}>
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
@@ -366,23 +417,35 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
 
 function WordsView({ captures }: { captures: Capture[] }) {
   const [flashcard, setFlashcard] = useState(false);
-  const words = buildWordList(captures);
+  const words = buildFlashcardList(captures);
 
   if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} />;
 
   if (words.length === 0) {
-    return <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>No words yet. When you save a highlight with a specific word or phrase, it appears here.</p>;
+    return (
+      <div style={{ paddingTop: 16 }}>
+        <h2 style={{ fontSize: 22, color: "#37352f", margin: "0 0 10px", fontWeight: 700 }}>Flashcards</h2>
+        <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+          No flashcards yet. Ask about the same question 3 times this month and it will appear here.
+        </p>
+      </div>
+    );
   }
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <p style={{ fontSize: 13, color: "#9b9a97" }}>{words.length} unique {words.length === 1 ? "word" : "words"}</p>
+        <div>
+          <h2 style={{ fontSize: 22, color: "#37352f", margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
+          <p style={{ fontSize: 13, color: "#9b9a97", margin: 0 }}>
+            {words.length} ready this month
+          </p>
+        </div>
         <button
           onClick={() => setFlashcard(true)}
           style={{ background: "#37352f", color: "#fff", border: "none", borderRadius: 6, padding: "7px 16px", fontSize: 13, cursor: "pointer" }}
         >
-          Flashcards
+          Study
         </button>
       </div>
       <div>
@@ -391,7 +454,7 @@ function WordsView({ captures }: { captures: Capture[] }) {
             <div>
               <p style={{ fontSize: 16, fontWeight: 500, color: "#37352f", margin: 0 }}>{w.word}</p>
               {w.explanation && (
-                <p style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{w.explanation}</p>
+                <div style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
               )}
             </div>
             <span style={{ fontSize: 12, color: "#9b9a97", background: "#f0efec", borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
@@ -570,7 +633,7 @@ export default function App() {
                     textTransform: "capitalize",
                   }}
                 >
-                  {v === "saves" ? "Today" : v}
+                  {v === "saves" ? "Today" : v === "words" ? "Flashcards" : v}
                 </button>
               ))}
             </nav>
