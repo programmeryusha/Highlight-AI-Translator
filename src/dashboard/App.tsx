@@ -4,8 +4,15 @@ import type { Capture } from "../types";
 type View = "saves" | "history" | "words" | "settings";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
+type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth";
 const LONG_TEXT_LIMIT = 420;
 const DEFAULT_FLASHCARD_THRESHOLD = 3;
+const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
+  { value: "yesterday", label: "Yesterday" },
+  { value: "previous3", label: "Previous 3 days" },
+  { value: "lastWeek", label: "Last week" },
+  { value: "lastMonth", label: "Last month" },
+];
 
 function normalizeQuestion(question: string): string {
   return question.trim().toLowerCase().replace(/\s+/g, " ");
@@ -93,6 +100,42 @@ function monthKeyFromDate(date: Date): string {
 
 function currentMonthKey(): string {
   return monthKeyFromDate(new Date());
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDaysToDate(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function capturesForExportRange(captures: Capture[], range: FlashcardExportRange): Capture[] {
+  const now = new Date();
+  const todayStart = startOfLocalDay(now);
+  let start: Date;
+  let end: Date;
+
+  if (range === "yesterday") {
+    start = addDaysToDate(todayStart, -1);
+    end = todayStart;
+  } else if (range === "previous3") {
+    start = addDaysToDate(todayStart, -3);
+    end = todayStart;
+  } else if (range === "lastWeek") {
+    start = addDaysToDate(todayStart, -6);
+    end = now;
+  } else {
+    start = addDaysToDate(todayStart, -29);
+    end = now;
+  }
+
+  return captures.filter((capture) => {
+    const savedAt = new Date(capture.savedAt);
+    return savedAt >= start && savedAt < end;
+  });
 }
 
 function dayKey(iso: string): string {
@@ -462,13 +505,13 @@ function buildFlashcardList(
   captures: Capture[],
   threshold = DEFAULT_FLASHCARD_THRESHOLD,
   starredCaptureIds = new Set<string>(),
-  monthKey = currentMonthKey(),
+  monthKey: string | null = currentMonthKey(),
 ): WordEntry[] {
   const map = new Map<string, { count: number; word: string; explanation: string; exampleText: string; starred: boolean }>();
   for (const c of captures) {
     const isStarred = starredCaptureIds.has(c.id);
-    const isInMonth = monthKeyFromDate(new Date(c.savedAt)) === monthKey;
-    if (!isInMonth && !isStarred) continue;
+    const isInScope = monthKey === null || monthKeyFromDate(new Date(c.savedAt)) === monthKey;
+    if (!isInScope && !isStarred) continue;
 
     const question = c.context?.trim();
     if (!question) continue;
@@ -559,20 +602,12 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
 
 function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string> }) {
   const [flashcard, setFlashcard] = useState(false);
+  const [exportRange, setExportRange] = useState<FlashcardExportRange>("yesterday");
   const words = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
+  const exportWords = buildFlashcardList(capturesForExportRange(captures, exportRange), flashcardThreshold, starredCaptureIds, null);
+  const exportRangeLabel = FLASHCARD_EXPORT_RANGES.find((range) => range.value === exportRange)?.label ?? "Selected range";
 
   if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} />;
-
-  if (words.length === 0) {
-    return (
-      <div style={{ paddingTop: 16 }}>
-        <h2 style={{ fontSize: 22, color: "#37352f", margin: "0 0 10px", fontWeight: 700 }}>Flashcards</h2>
-        <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No flashcards yet. Ask about the same question {flashcardThreshold} times this month or star a save to add it here.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -584,32 +619,126 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
           </p>
         </div>
         <button
+          disabled={words.length === 0}
           onClick={() => setFlashcard(true)}
-          style={{ background: "#37352f", color: "#fff", border: "none", borderRadius: 6, padding: "7px 16px", fontSize: 13, cursor: "pointer" }}
+          style={{
+            background: words.length === 0 ? "#d8d7d2" : "#37352f",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            padding: "7px 16px",
+            fontSize: 13,
+            cursor: words.length === 0 ? "default" : "pointer",
+          }}
         >
           Study
         </button>
       </div>
-      <div>
-        {words.map((w) => (
-          <div key={w.word} style={{ padding: "12px 0", borderBottom: "1px solid #f0efec", display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
-            <div>
-              <p style={{ fontSize: 16, fontWeight: 500, color: "#37352f", margin: 0 }}>{w.word}</p>
-              {w.starred && (
-                <p style={{ fontSize: 12, color: "#8d8b86", margin: "3px 0 0", fontWeight: 700 }}>
-                  Starred
-                </p>
-              )}
-              {w.explanation && (
-                <div style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
-              )}
-            </div>
-            <span style={{ fontSize: 12, color: "#9b9a97", background: "#f0efec", borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
-              ×{w.count}
-            </span>
+
+      <div
+        style={{
+          border: "1px solid #e3e2de",
+          borderRadius: 8,
+          padding: 16,
+          marginBottom: 26,
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 14,
+        }}
+      >
+        <div>
+          <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 8px" }}>Export flashcards</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {FLASHCARD_EXPORT_RANGES.map((range) => (
+              <button
+                key={range.value}
+                type="button"
+                onClick={() => setExportRange(range.value)}
+                style={{
+                  background: exportRange === range.value ? "#37352f" : "#fff",
+                  color: exportRange === range.value ? "#fff" : "#37352f",
+                  border: "1px solid #d8d7d2",
+                  borderRadius: 999,
+                  padding: "6px 11px",
+                  fontSize: 13,
+                  fontWeight: 650,
+                  cursor: "pointer",
+                }}
+              >
+                {range.label}
+              </button>
+            ))}
           </div>
-        ))}
+          <p style={{ fontSize: 12, color: "#9b9a97", margin: "10px 0 0" }}>
+            {exportWords.length} {exportWords.length === 1 ? "flashcard" : "flashcards"} ready from {exportRangeLabel.toLowerCase()}.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            disabled={exportWords.length === 0}
+            onClick={() => exportFlashcards("anki", exportWords)}
+            style={{
+              background: exportWords.length === 0 ? "#d8d7d2" : "#37352f",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "9px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: exportWords.length === 0 ? "default" : "pointer",
+            }}
+          >
+            Export to Anki
+          </button>
+          <button
+            type="button"
+            disabled={exportWords.length === 0}
+            onClick={() => exportFlashcards("quizlet", exportWords)}
+            style={{
+              background: "#fff",
+              color: exportWords.length === 0 ? "#b3b1ad" : "#37352f",
+              border: "1px solid #d8d7d2",
+              borderRadius: 8,
+              padding: "9px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: exportWords.length === 0 ? "default" : "pointer",
+            }}
+          >
+            Export to Quizlet
+          </button>
+        </div>
       </div>
+
+      {words.length === 0 ? (
+        <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+          No flashcards yet. Ask about the same question {flashcardThreshold} times this month or star a save to add it here.
+        </p>
+      ) : (
+        <div>
+          {words.map((w) => (
+            <div key={w.word} style={{ padding: "12px 0", borderBottom: "1px solid #f0efec", display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 500, color: "#37352f", margin: 0 }}>{w.word}</p>
+                {w.starred && (
+                  <p style={{ fontSize: 12, color: "#8d8b86", margin: "3px 0 0", fontWeight: 700 }}>
+                    Starred
+                  </p>
+                )}
+                {w.explanation && (
+                  <div style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
+                )}
+              </div>
+              <span style={{ fontSize: 12, color: "#9b9a97", background: "#f0efec", borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
+                ×{w.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -623,19 +752,14 @@ function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[]) {
 }
 
 function SettingsView({
-  captures,
   flashcardThreshold,
   onFlashcardThresholdChange,
-  starredCaptureIds,
 }: {
-  captures: Capture[];
   flashcardThreshold: number;
   onFlashcardThresholdChange: (value: number) => void;
-  starredCaptureIds: Set<string>;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: false });
-  const flashcards = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
@@ -726,45 +850,6 @@ function SettingsView({
           />
         </label>
 
-        <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 10px" }}>
-          {flashcards.length} {flashcards.length === 1 ? "flashcard" : "flashcards"} ready to export.
-        </p>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            disabled={flashcards.length === 0}
-            onClick={() => exportFlashcards("anki", flashcards)}
-            style={{
-              background: flashcards.length === 0 ? "#d8d7d2" : "#37352f",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "9px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: flashcards.length === 0 ? "default" : "pointer",
-            }}
-          >
-            Export to Anki
-          </button>
-          <button
-            type="button"
-            disabled={flashcards.length === 0}
-            onClick={() => exportFlashcards("quizlet", flashcards)}
-            style={{
-              background: "#fff",
-              color: flashcards.length === 0 ? "#b3b1ad" : "#37352f",
-              border: "1px solid #d8d7d2",
-              borderRadius: 8,
-              padding: "9px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: flashcards.length === 0 ? "default" : "pointer",
-            }}
-          >
-            Export to Quizlet
-          </button>
-        </div>
       </div>
 
       {/* Screenshot triggers */}
@@ -988,10 +1073,8 @@ export default function App() {
         {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} />}
         {view === "settings" && (
           <SettingsView
-            captures={captures}
             flashcardThreshold={flashcardThreshold}
             onFlashcardThresholdChange={updateFlashcardThreshold}
-            starredCaptureIds={starredCaptureIds}
           />
         )}
       </div>
