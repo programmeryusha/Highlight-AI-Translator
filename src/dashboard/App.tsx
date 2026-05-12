@@ -4,7 +4,7 @@ import type { Capture } from "../types";
 type View = "saves" | "history" | "words" | "settings";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
-type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth";
+type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth" | "custom";
 const LONG_TEXT_LIMIT = 420;
 const DEFAULT_FLASHCARD_THRESHOLD = 3;
 const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
@@ -12,6 +12,7 @@ const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] 
   { value: "previous3", label: "Previous 3 days" },
   { value: "lastWeek", label: "Last week" },
   { value: "lastMonth", label: "Last month" },
+  { value: "custom", label: "Custom" },
 ];
 
 function normalizeQuestion(question: string): string {
@@ -112,7 +113,7 @@ function addDaysToDate(date: Date, amount: number): Date {
   return next;
 }
 
-function capturesForExportRange(captures: Capture[], range: FlashcardExportRange): Capture[] {
+function capturesForExportRange(captures: Capture[], range: FlashcardExportRange, customStartKey?: string, customEndKey?: string): Capture[] {
   const now = new Date();
   const todayStart = startOfLocalDay(now);
   let start: Date;
@@ -127,9 +128,12 @@ function capturesForExportRange(captures: Capture[], range: FlashcardExportRange
   } else if (range === "lastWeek") {
     start = addDaysToDate(todayStart, -6);
     end = now;
-  } else {
+  } else if (range === "lastMonth") {
     start = addDaysToDate(todayStart, -29);
     end = now;
+  } else {
+    start = customStartKey ? dateFromDayKey(customStartKey) : addDaysToDate(todayStart, -29);
+    end = customEndKey ? addDaysToDate(dateFromDayKey(customEndKey), 1) : now;
   }
 
   return captures.filter((capture) => {
@@ -602,10 +606,19 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
 
 function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string> }) {
   const [flashcard, setFlashcard] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [exportRange, setExportRange] = useState<FlashcardExportRange>("yesterday");
+  const [customStartKey, setCustomStartKey] = useState(() => dayKeyFromDate(addDaysToDate(startOfLocalDay(new Date()), -29)));
+  const [customEndKey, setCustomEndKey] = useState(() => todayKey());
   const words = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
-  const exportWords = buildFlashcardList(capturesForExportRange(captures, exportRange), flashcardThreshold, starredCaptureIds, null);
+  const exportWords = buildFlashcardList(
+    capturesForExportRange(captures, exportRange, customStartKey, customEndKey),
+    flashcardThreshold,
+    starredCaptureIds,
+    null,
+  );
   const exportRangeLabel = FLASHCARD_EXPORT_RANGES.find((range) => range.value === exportRange)?.label ?? "Selected range";
+  const exportSummary = exportRange === "custom" ? `${customStartKey} to ${customEndKey}` : exportRangeLabel.toLowerCase();
 
   if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} />;
 
@@ -618,100 +631,146 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
             {words.length} ready this month
           </p>
         </div>
-        <button
-          disabled={words.length === 0}
-          onClick={() => setFlashcard(true)}
-          style={{
-            background: words.length === 0 ? "#d8d7d2" : "#37352f",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
-            padding: "7px 16px",
-            fontSize: 13,
-            cursor: words.length === 0 ? "default" : "pointer",
-          }}
-        >
-          Study
-        </button>
-      </div>
-
-      <div
-        style={{
-          border: "1px solid #e3e2de",
-          borderRadius: 8,
-          padding: 16,
-          marginBottom: 26,
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 14,
-        }}
-      >
-        <div>
-          <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 8px" }}>Export flashcards</p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {FLASHCARD_EXPORT_RANGES.map((range) => (
-              <button
-                key={range.value}
-                type="button"
-                onClick={() => setExportRange(range.value)}
-                style={{
-                  background: exportRange === range.value ? "#37352f" : "#fff",
-                  color: exportRange === range.value ? "#fff" : "#37352f",
-                  border: "1px solid #d8d7d2",
-                  borderRadius: 999,
-                  padding: "6px 11px",
-                  fontSize: 13,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                }}
-              >
-                {range.label}
-              </button>
-            ))}
-          </div>
-          <p style={{ fontSize: 12, color: "#9b9a97", margin: "10px 0 0" }}>
-            {exportWords.length} {exportWords.length === 1 ? "flashcard" : "flashcards"} ready from {exportRangeLabel.toLowerCase()}.
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             type="button"
-            disabled={exportWords.length === 0}
-            onClick={() => exportFlashcards("anki", exportWords)}
+            onClick={() => setShowExport((open) => !open)}
             style={{
-              background: exportWords.length === 0 ? "#d8d7d2" : "#37352f",
+              background: showExport ? "#37352f" : "#fff",
+              color: showExport ? "#fff" : "#37352f",
+              border: "1px solid #d8d7d2",
+              borderRadius: 6,
+              padding: "7px 16px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Export
+          </button>
+          <button
+            disabled={words.length === 0}
+            onClick={() => setFlashcard(true)}
+            style={{
+              background: words.length === 0 ? "#d8d7d2" : "#37352f",
               color: "#fff",
               border: "none",
-              borderRadius: 8,
-              padding: "9px 14px",
+              borderRadius: 6,
+              padding: "7px 16px",
               fontSize: 13,
               fontWeight: 700,
-              cursor: exportWords.length === 0 ? "default" : "pointer",
+              cursor: words.length === 0 ? "default" : "pointer",
             }}
           >
-            Export to Anki
-          </button>
-          <button
-            type="button"
-            disabled={exportWords.length === 0}
-            onClick={() => exportFlashcards("quizlet", exportWords)}
-            style={{
-              background: "#fff",
-              color: exportWords.length === 0 ? "#b3b1ad" : "#37352f",
-              border: "1px solid #d8d7d2",
-              borderRadius: 8,
-              padding: "9px 14px",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: exportWords.length === 0 ? "default" : "pointer",
-            }}
-          >
-            Export to Quizlet
+            Study
           </button>
         </div>
       </div>
+
+      {showExport && (
+        <div
+          style={{
+            border: "1px solid #e3e2de",
+            borderRadius: 8,
+            padding: 16,
+            marginBottom: 26,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 14,
+          }}
+        >
+          <div>
+            <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 8px" }}>Export flashcards</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {FLASHCARD_EXPORT_RANGES.map((range) => (
+                <button
+                  key={range.value}
+                  type="button"
+                  onClick={() => setExportRange(range.value)}
+                  style={{
+                    background: exportRange === range.value ? "#37352f" : "#fff",
+                    color: exportRange === range.value ? "#fff" : "#37352f",
+                    border: "1px solid #d8d7d2",
+                    borderRadius: 999,
+                    padding: "6px 11px",
+                    fontSize: 13,
+                    fontWeight: 650,
+                    cursor: "pointer",
+                  }}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+            {exportRange === "custom" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8d8b86", fontWeight: 700 }}>
+                  From
+                  <input
+                    type="date"
+                    value={customStartKey}
+                    max={customEndKey}
+                    onChange={(event) => setCustomStartKey(event.target.value)}
+                    style={{ border: "1px solid #d8d7d2", borderRadius: 6, padding: "6px 8px", fontSize: 13, color: "#37352f" }}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8d8b86", fontWeight: 700 }}>
+                  To
+                  <input
+                    type="date"
+                    value={customEndKey}
+                    min={customStartKey}
+                    max={todayKey()}
+                    onChange={(event) => setCustomEndKey(event.target.value)}
+                    style={{ border: "1px solid #d8d7d2", borderRadius: 6, padding: "6px 8px", fontSize: 13, color: "#37352f" }}
+                  />
+                </label>
+              </div>
+            )}
+            <p style={{ fontSize: 12, color: "#9b9a97", margin: "10px 0 0" }}>
+              {exportWords.length} {exportWords.length === 1 ? "flashcard" : "flashcards"} ready from {exportSummary}.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={exportWords.length === 0}
+              onClick={() => exportFlashcards("anki", exportWords)}
+              style={{
+                background: exportWords.length === 0 ? "#d8d7d2" : "#37352f",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "9px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: exportWords.length === 0 ? "default" : "pointer",
+              }}
+            >
+              Export to Anki
+            </button>
+            <button
+              type="button"
+              disabled={exportWords.length === 0}
+              onClick={() => exportFlashcards("quizlet", exportWords)}
+              style={{
+                background: "#fff",
+                color: exportWords.length === 0 ? "#b3b1ad" : "#37352f",
+                border: "1px solid #d8d7d2",
+                borderRadius: 8,
+                padding: "9px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: exportWords.length === 0 ? "default" : "pointer",
+              }}
+            >
+              Export to Quizlet
+            </button>
+          </div>
+        </div>
+      )}
 
       {words.length === 0 ? (
         <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
