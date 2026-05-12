@@ -18,6 +18,8 @@ export interface ChatMessage {
 
 export interface StorageSchema {
   captures: Capture[];
+  flashcard_threshold?: number;
+  flashcard_starred_capture_ids?: string[];
 }
 
 export type Message =

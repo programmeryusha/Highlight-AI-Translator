@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-12-unified-capture-popup-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-12-scroll-flashcards-v1";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -52,6 +52,19 @@ function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
 
 function panelTopFor(preferredTop: number, maxHeight: number) {
   return Math.max(8, Math.min(preferredTop, window.innerHeight - maxHeight - 8));
+}
+
+function trapScroll(element: HTMLElement) {
+  element.addEventListener("wheel", (event) => {
+    const canScroll = element.scrollHeight > element.clientHeight;
+    const atTop = element.scrollTop <= 0;
+    const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+
+    if (!canScroll || (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) {
+      event.preventDefault();
+    }
+    event.stopPropagation();
+  }, { passive: false });
 }
 
 function createCameraButton() {
@@ -271,6 +284,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
     const list = document.createElement("div");
     list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+    trapScroll(list);
 
     messages.forEach((message) => {
       const label = document.createElement("div");
@@ -441,15 +455,35 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
+let pageScrollLock: { bodyOverflow: string; htmlOverflow: string } | null = null;
+
+function lockPageScroll() {
+  if (pageScrollLock) return;
+  pageScrollLock = {
+    bodyOverflow: document.body.style.overflow,
+    htmlOverflow: document.documentElement.style.overflow,
+  };
+  document.body.style.overflow = "hidden";
+  document.documentElement.style.overflow = "hidden";
+}
+
+function unlockPageScroll() {
+  if (!pageScrollLock) return;
+  document.body.style.overflow = pageScrollLock.bodyOverflow;
+  document.documentElement.style.overflow = pageScrollLock.htmlOverflow;
+  pageScrollLock = null;
+}
 
 function removeCropOverlay() {
   (cropOverlay as (HTMLElement & { __contextLensCleanup?: () => void }) | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
   if (cameraBtn) cameraBtn.style.display = "";
+  unlockPageScroll();
 }
 
 function showCropOverlay(screenshotDataUrl: string) {
   removeCropOverlay();
+  lockPageScroll();
   if (cameraBtn) cameraBtn.style.display = "none";
 
   cropOverlay = document.createElement("div");
@@ -593,6 +627,7 @@ function showCropOverlay(screenshotDataUrl: string) {
 
       const list = document.createElement("div");
       list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+      trapScroll(list);
 
       messages.forEach((message) => {
         const label = document.createElement("div");

@@ -5,6 +5,28 @@ type View = "saves" | "history" | "words" | "settings";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 const LONG_TEXT_LIMIT = 420;
+const DEFAULT_FLASHCARD_THRESHOLD = 3;
+
+function normalizeQuestion(question: string): string {
+  return question.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function cleanExportCell(value: string): string {
+  return value
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function downloadTextFile(filename: string, contents: string) {
+  const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 function renderMarkdown(text: string): React.ReactNode {
   const lines = text.split("\n");
@@ -178,6 +200,42 @@ function openCaptureFromClick(event: React.MouseEvent, id: string) {
   openChat(id);
 }
 
+function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture; starred: boolean; onToggle: (id: string) => void }) {
+  if (!capture.context.trim()) return null;
+
+  return (
+    <button
+      type="button"
+      aria-label={starred ? "Remove from flashcards" : "Add to flashcards"}
+      title={starred ? "Remove from flashcards" : "Add to flashcards"}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle(capture.id);
+      }}
+      style={{
+        width: 30,
+        height: 30,
+        borderRadius: 999,
+        border: "1px solid #e3e2de",
+        background: starred ? "#37352f" : "#fff",
+        color: starred ? "#fff" : "#9b9a97",
+        cursor: "pointer",
+        fontSize: 15,
+        lineHeight: "28px",
+        textAlign: "center",
+        flexShrink: 0,
+      }}
+    >
+      {starred ? "★" : "☆"}
+    </button>
+  );
+}
+
 function CapturePreview({ capture }: { capture: Capture }) {
   if (capture.imageData) {
     return (
@@ -213,7 +271,7 @@ function CapturePreview({ capture }: { capture: Capture }) {
   );
 }
 
-function SavesView({ captures }: { captures: Capture[] }) {
+function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Capture[]; starredCaptureIds: Set<string>; onToggleStar: (id: string) => void }) {
   if (captures.length === 0) {
     return (
       <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>
@@ -237,7 +295,12 @@ function SavesView({ captures }: { captures: Capture[] }) {
                 key={c.id}
                 style={{ padding: "18px 0 28px", maxWidth: "100%" }}
               >
-                <CapturePreview capture={c} />
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <CapturePreview capture={c} />
+                  </div>
+                  <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} />
+                </div>
 
                 {c.context && (
                   <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0" }}>
@@ -274,7 +337,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
   );
 }
 
-function HistoryView({ captures }: { captures: Capture[] }) {
+function HistoryView({ captures, starredCaptureIds, onToggleStar }: { captures: Capture[]; starredCaptureIds: Set<string>; onToggleStar: (id: string) => void }) {
   const windowWidth = useWindowWidth();
   const [selectedDay, setSelectedDay] = useState(todayKey());
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
@@ -358,7 +421,7 @@ function HistoryView({ captures }: { captures: Capture[] }) {
         </div>
 
         {selectedCaptures.length > 0 ? (
-          <SavesView captures={selectedCaptures} />
+          <SavesView captures={selectedCaptures} starredCaptureIds={starredCaptureIds} onToggleStar={onToggleStar} />
         ) : (
           <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8, textAlign: "center" }}>
             {emptyDayMessage()}
@@ -392,27 +455,36 @@ interface WordEntry {
   count: number;
   explanation: string;
   exampleText: string;
+  starred: boolean;
 }
 
-function buildFlashcardList(captures: Capture[], monthKey = currentMonthKey()): WordEntry[] {
-  const map = new Map<string, { count: number; word: string; explanation: string; exampleText: string }>();
+function buildFlashcardList(
+  captures: Capture[],
+  threshold = DEFAULT_FLASHCARD_THRESHOLD,
+  starredCaptureIds = new Set<string>(),
+  monthKey = currentMonthKey(),
+): WordEntry[] {
+  const map = new Map<string, { count: number; word: string; explanation: string; exampleText: string; starred: boolean }>();
   for (const c of captures) {
-    if (monthKeyFromDate(new Date(c.savedAt)) !== monthKey) continue;
+    const isStarred = starredCaptureIds.has(c.id);
+    const isInMonth = monthKeyFromDate(new Date(c.savedAt)) === monthKey;
+    if (!isInMonth && !isStarred) continue;
 
     const question = c.context?.trim();
     if (!question) continue;
 
-    const key = question.toLowerCase().replace(/\s+/g, " ");
+    const key = normalizeQuestion(question);
     if (!map.has(key)) {
-      map.set(key, { count: 0, word: question, explanation: c.explanation ?? "", exampleText: c.text });
+      map.set(key, { count: 0, word: question, explanation: c.explanation ?? "", exampleText: c.text, starred: false });
     }
     const entry = map.get(key)!;
     entry.count++;
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
+    if (isStarred) entry.starred = true;
   }
   return Array.from(map.values())
-    .filter((entry) => entry.count >= 3)
-    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+    .filter((entry) => entry.starred || entry.count >= threshold)
+    .sort((a, b) => Number(b.starred) - Number(a.starred) || b.count - a.count || a.word.localeCompare(b.word));
 }
 
 function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => void }) {
@@ -485,9 +557,9 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
   );
 }
 
-function WordsView({ captures }: { captures: Capture[] }) {
+function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string> }) {
   const [flashcard, setFlashcard] = useState(false);
-  const words = buildFlashcardList(captures);
+  const words = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
 
   if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} />;
 
@@ -496,7 +568,7 @@ function WordsView({ captures }: { captures: Capture[] }) {
       <div style={{ paddingTop: 16 }}>
         <h2 style={{ fontSize: 22, color: "#37352f", margin: "0 0 10px", fontWeight: 700 }}>Flashcards</h2>
         <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No flashcards yet. Ask about the same question 3 times this month and it will appear here.
+          No flashcards yet. Ask about the same question {flashcardThreshold} times this month or star a save to add it here.
         </p>
       </div>
     );
@@ -523,6 +595,11 @@ function WordsView({ captures }: { captures: Capture[] }) {
           <div key={w.word} style={{ padding: "12px 0", borderBottom: "1px solid #f0efec", display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
             <div>
               <p style={{ fontSize: 16, fontWeight: 500, color: "#37352f", margin: 0 }}>{w.word}</p>
+              {w.starred && (
+                <p style={{ fontSize: 12, color: "#8d8b86", margin: "3px 0 0", fontWeight: 700 }}>
+                  Starred
+                </p>
+              )}
               {w.explanation && (
                 <div style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
               )}
@@ -537,9 +614,28 @@ function WordsView({ captures }: { captures: Capture[] }) {
   );
 }
 
-function SettingsView() {
+function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[]) {
+  const rows = flashcards
+    .map((card) => `${cleanExportCell(card.word)}\t${cleanExportCell(card.explanation || card.exampleText || "No explanation yet.")}`)
+    .join("\n");
+  const filename = format === "anki" ? "contextlens-anki.tsv" : "contextlens-quizlet.txt";
+  downloadTextFile(filename, rows);
+}
+
+function SettingsView({
+  captures,
+  flashcardThreshold,
+  onFlashcardThresholdChange,
+  starredCaptureIds,
+}: {
+  captures: Capture[];
+  flashcardThreshold: number;
+  onFlashcardThresholdChange: (value: number) => void;
+  starredCaptureIds: Set<string>;
+}) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: false });
+  const flashcards = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
@@ -567,7 +663,7 @@ function SettingsView() {
   }
 
   return (
-    <div style={{ maxWidth: 400, paddingTop: 8 }}>
+    <div style={{ maxWidth: 520, paddingTop: 8 }}>
       {/* Save triggers */}
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
@@ -601,6 +697,75 @@ function SettingsView() {
           </p>
         </div>
       </label>
+
+      {/* Flashcards */}
+      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Flashcards</p>
+      <div style={{ marginBottom: 40 }}>
+        <label style={{ display: "block", marginBottom: 18 }}>
+          <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px" }}>Question repeat threshold</p>
+          <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 8px" }}>
+            A question appears in Flashcards after this many saves in the current month, unless it is starred.
+          </p>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={flashcardThreshold}
+            onChange={(event) => {
+              const next = Math.max(1, Math.min(50, Number(event.target.value) || DEFAULT_FLASHCARD_THRESHOLD));
+              onFlashcardThresholdChange(next);
+            }}
+            style={{
+              width: 92,
+              border: "1px solid #d8d7d2",
+              borderRadius: 8,
+              padding: "8px 10px",
+              fontSize: 14,
+              color: "#37352f",
+            }}
+          />
+        </label>
+
+        <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 10px" }}>
+          {flashcards.length} {flashcards.length === 1 ? "flashcard" : "flashcards"} ready to export.
+        </p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            disabled={flashcards.length === 0}
+            onClick={() => exportFlashcards("anki", flashcards)}
+            style={{
+              background: flashcards.length === 0 ? "#d8d7d2" : "#37352f",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "9px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: flashcards.length === 0 ? "default" : "pointer",
+            }}
+          >
+            Export to Anki
+          </button>
+          <button
+            type="button"
+            disabled={flashcards.length === 0}
+            onClick={() => exportFlashcards("quizlet", flashcards)}
+            style={{
+              background: "#fff",
+              color: flashcards.length === 0 ? "#b3b1ad" : "#37352f",
+              border: "1px solid #d8d7d2",
+              borderRadius: 8,
+              padding: "9px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: flashcards.length === 0 ? "default" : "pointer",
+            }}
+          >
+            Export to Quizlet
+          </button>
+        </div>
+      </div>
 
       {/* Screenshot triggers */}
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Screenshot trigger</p>
@@ -736,13 +901,19 @@ export default function App() {
   const [view, setView] = useState<View>("saves");
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
+  const [flashcardThreshold, setFlashcardThreshold] = useState(DEFAULT_FLASHCARD_THRESHOLD);
+  const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    chrome.storage.local.get("captures", (r) => {
+    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids"], (r) => {
       setCaptures(r.captures ?? []);
+      setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
+      setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
+      if (changes.flashcard_threshold) setFlashcardThreshold(changes.flashcard_threshold.newValue ?? DEFAULT_FLASHCARD_THRESHOLD);
+      if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -757,6 +928,21 @@ export default function App() {
   const streak = computeStreak(captures);
   const contentMaxWidth = view === "history" ? 1800 : 1100;
   const contentPadding = view === "history" ? "32px 48px 32px 96px" : "32px";
+
+  function updateFlashcardThreshold(value: number) {
+    setFlashcardThreshold(value);
+    chrome.storage.local.set({ flashcard_threshold: value });
+  }
+
+  function toggleFlashcardStar(id: string) {
+    setStarredCaptureIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      chrome.storage.local.set({ flashcard_starred_capture_ids: Array.from(next) });
+      return next;
+    });
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
@@ -797,10 +983,17 @@ export default function App() {
       </div>
 
       <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: contentPadding }}>
-        {view === "saves" && <SavesView captures={todayCaptures} />}
-        {view === "history" && <HistoryView captures={captures} />}
-        {view === "words" && <WordsView captures={captures} />}
-        {view === "settings" && <SettingsView />}
+        {view === "saves" && <SavesView captures={todayCaptures} starredCaptureIds={starredCaptureIds} onToggleStar={toggleFlashcardStar} />}
+        {view === "history" && <HistoryView captures={captures} starredCaptureIds={starredCaptureIds} onToggleStar={toggleFlashcardStar} />}
+        {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} />}
+        {view === "settings" && (
+          <SettingsView
+            captures={captures}
+            flashcardThreshold={flashcardThreshold}
+            onFlashcardThresholdChange={updateFlashcardThreshold}
+            starredCaptureIds={starredCaptureIds}
+          />
+        )}
       </div>
     </div>
   );
