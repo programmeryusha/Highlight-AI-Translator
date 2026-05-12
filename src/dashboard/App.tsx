@@ -247,6 +247,18 @@ function openCaptureFromClick(event: React.MouseEvent, id: string) {
   openChat(id);
 }
 
+function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
 function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture; starred: boolean; onToggle: (id: string) => void }) {
   if (!capture.context.trim()) return null;
 
@@ -279,6 +291,76 @@ function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture;
       }}
     >
       {starred ? "★" : "☆"}
+    </button>
+  );
+}
+
+function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={selected ? "Deselect save" : "Select save"}
+      title={selected ? "Deselect save" : "Select save"}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle();
+      }}
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        border: selected ? "1px solid #6366f1" : "1px solid #d8d7d2",
+        background: selected ? "#6366f1" : "#fff",
+        color: "#fff",
+        cursor: "pointer",
+        fontSize: 14,
+        lineHeight: "20px",
+        fontWeight: 800,
+        flexShrink: 0,
+        marginTop: 6,
+        padding: 0,
+      }}
+    >
+      {selected ? "✓" : ""}
+    </button>
+  );
+}
+
+function DeleteSaveButton({ onDelete }: { onDelete: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Delete save"
+      title="Delete save"
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onDelete();
+      }}
+      style={{
+        width: 30,
+        height: 30,
+        borderRadius: 999,
+        border: "1px solid #e3e2de",
+        background: "#fff",
+        color: "#9b9a97",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <TrashIcon />
     </button>
   );
 }
@@ -318,7 +400,26 @@ function CapturePreview({ capture }: { capture: Capture }) {
   );
 }
 
-function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Capture[]; starredCaptureIds: Set<string>; onToggleStar: (id: string) => void }) {
+function SavesView({
+  captures,
+  starredCaptureIds,
+  onToggleStar,
+  onDeleteCaptures,
+  headerAction,
+}: {
+  captures: Capture[];
+  starredCaptureIds: Set<string>;
+  onToggleStar: (id: string) => void;
+  onDeleteCaptures: (ids: string[]) => void;
+  headerAction?: React.ReactNode;
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const visibleIds = new Set(captures.map((capture) => capture.id));
+    setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+  }, [captures]);
+
   if (captures.length === 0) {
     return (
       <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>
@@ -328,14 +429,68 @@ function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Ca
   }
 
   const groups = groupByDay(captures);
+  const selectedCount = selectedIds.size;
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function deleteSelected() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    onDeleteCaptures(ids);
+    setSelectedIds(new Set());
+  }
 
   return (
     <div>
+      {selectedCount > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            border: "1px solid #e3e2de",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 22,
+          }}
+        >
+          <span style={{ fontSize: 13, color: "#37352f", fontWeight: 700 }}>
+            {selectedCount} selected
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={deleteSelected}
+              style={{ background: "#37352f", color: "#fff", border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+            >
+              Delete selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              style={{ background: "#fff", color: "#8d8b86", border: "1px solid #d8d7d2", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {groups.map((group) => (
         <div key={group.label} style={{ marginBottom: 40 }}>
-          <p style={{ fontSize: 12, fontWeight: 600, color: "#9b9a97", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-            {group.label}
-          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: "#9b9a97", textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+              {group.label}
+            </p>
+            {headerAction}
+          </div>
           <div>
             {group.items.map((c) => (
               <div
@@ -343,14 +498,18 @@ function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Ca
                 style={{ padding: "18px 0 28px", maxWidth: "100%" }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <CapturePreview capture={c} />
                   </div>
-                  <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} />
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                    <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} />
+                    <DeleteSaveButton onDelete={() => onDeleteCaptures([c.id])} />
+                  </div>
                 </div>
 
                 {c.context && (
-                  <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0" }}>
+                  <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0 34px" }}>
                     <p style={{ fontSize: 12, color: "#8d8b86", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
                       Your question
                     </p>
@@ -361,17 +520,17 @@ function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Ca
                 )}
 
                 {c.status === "pending" && (
-                  <p style={{ fontSize: 16, color: "#8d8b86", margin: "10px 0 0", fontStyle: "italic" }}>
+                  <p style={{ fontSize: 16, color: "#8d8b86", margin: "10px 0 0 34px", fontStyle: "italic" }}>
                     thinking…
                   </p>
                 )}
                 {c.status === "error" && (
-                  <p style={{ fontSize: 16, color: "#eb5757", margin: "10px 0 0", lineHeight: 1.6 }}>
+                  <p style={{ fontSize: 16, color: "#eb5757", margin: "10px 0 0 34px", lineHeight: 1.6 }}>
                     something went wrong — {c.errorMessage ?? "try again"}
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
-                  <div style={{ fontSize: 19, color: "#4f4d49", margin: "14px 0 0", lineHeight: 1.75 }}>
+                  <div style={{ fontSize: 19, color: "#4f4d49", margin: "14px 0 0 34px", lineHeight: 1.75 }}>
                     {renderMarkdown(c.explanation)}
                   </div>
                 )}
@@ -384,7 +543,17 @@ function SavesView({ captures, starredCaptureIds, onToggleStar }: { captures: Ca
   );
 }
 
-function HistoryView({ captures, starredCaptureIds, onToggleStar }: { captures: Capture[]; starredCaptureIds: Set<string>; onToggleStar: (id: string) => void }) {
+function HistoryView({
+  captures,
+  starredCaptureIds,
+  onToggleStar,
+  onDeleteCaptures,
+}: {
+  captures: Capture[];
+  starredCaptureIds: Set<string>;
+  onToggleStar: (id: string) => void;
+  onDeleteCaptures: (ids: string[]) => void;
+}) {
   const windowWidth = useWindowWidth();
   const [selectedDay, setSelectedDay] = useState(todayKey());
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
@@ -468,7 +637,12 @@ function HistoryView({ captures, starredCaptureIds, onToggleStar }: { captures: 
         </div>
 
         {selectedCaptures.length > 0 ? (
-          <SavesView captures={selectedCaptures} starredCaptureIds={starredCaptureIds} onToggleStar={onToggleStar} />
+          <SavesView
+            captures={selectedCaptures}
+            starredCaptureIds={starredCaptureIds}
+            onToggleStar={onToggleStar}
+            onDeleteCaptures={onDeleteCaptures}
+          />
         ) : (
           <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8, textAlign: "center" }}>
             {emptyDayMessage()}
@@ -845,6 +1019,10 @@ function SettingsView({
     chrome.storage.local.set(patch);
   }
 
+  function openShortcutSettings() {
+    chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+  }
+
   return (
     <div style={{ maxWidth: 520, paddingTop: 8 }}>
       {/* Save triggers */}
@@ -926,6 +1104,23 @@ function SettingsView({
             </div>
           </label>
         ))}
+        <button
+          type="button"
+          onClick={openShortcutSettings}
+          style={{
+            width: "fit-content",
+            background: "#fff",
+            color: "#37352f",
+            border: "1px solid #d8d7d2",
+            borderRadius: 8,
+            padding: "8px 12px",
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Open Chrome shortcut settings
+        </button>
       </div>
     </div>
   );
@@ -1088,6 +1283,33 @@ export default function App() {
     });
   }
 
+  function deleteCapturesByIds(ids: string[]) {
+    const idsToDelete = new Set(ids);
+    if (idsToDelete.size === 0) return;
+
+    setCaptures((current) => {
+      const next = current.filter((capture) => !idsToDelete.has(capture.id));
+      chrome.storage.local.set({ captures: next });
+      return next;
+    });
+
+    setStarredCaptureIds((current) => {
+      const next = new Set(current);
+      idsToDelete.forEach((id) => next.delete(id));
+      chrome.storage.local.set({ flashcard_starred_capture_ids: Array.from(next) });
+      return next;
+    });
+  }
+
+  function clearTodayCaptures() {
+    if (todayCaptures.length === 0) return;
+    if (todayCaptures.length > 5) {
+      const confirmed = window.confirm(`Delete ${todayCaptures.length} saves from today? This can't be undone.`);
+      if (!confirmed) return;
+    }
+    deleteCapturesByIds(todayCaptures.map((capture) => capture.id));
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
       <div style={{ borderBottom: "1px solid #e3e2de" }}>
@@ -1127,8 +1349,43 @@ export default function App() {
       </div>
 
       <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: contentPadding }}>
-        {view === "saves" && <SavesView captures={todayCaptures} starredCaptureIds={starredCaptureIds} onToggleStar={toggleFlashcardStar} />}
-        {view === "history" && <HistoryView captures={captures} starredCaptureIds={starredCaptureIds} onToggleStar={toggleFlashcardStar} />}
+        {view === "saves" && (
+          <SavesView
+            captures={todayCaptures}
+            starredCaptureIds={starredCaptureIds}
+            onToggleStar={toggleFlashcardStar}
+            onDeleteCaptures={deleteCapturesByIds}
+            headerAction={
+              todayCaptures.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearTodayCaptures}
+                  title="Clear today's saves"
+                  style={{
+                    background: "#fff",
+                    color: "#8d8b86",
+                    border: "1px solid #d8d7d2",
+                    borderRadius: 7,
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Clear all
+                </button>
+              ) : null
+            }
+          />
+        )}
+        {view === "history" && (
+          <HistoryView
+            captures={captures}
+            starredCaptureIds={starredCaptureIds}
+            onToggleStar={toggleFlashcardStar}
+            onDeleteCaptures={deleteCapturesByIds}
+          />
+        )}
         {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} />}
         {view === "settings" && (
           <SettingsView
