@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-12-scroll-flashcards-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-12-shift-enter-v1";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -65,6 +65,13 @@ function trapScroll(element: HTMLElement) {
     }
     event.stopPropagation();
   }, { passive: false });
+}
+
+function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
+  textarea.style.height = "auto";
+  const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
 function createCameraButton() {
@@ -207,24 +214,31 @@ function showContextInput(x: number, y: number, selectedText: string) {
   `
   );
 
-  const input = document.createElement("input");
-  input.type = "text";
+  const input = document.createElement("textarea");
   input.dir = "auto";
+  input.rows = 1;
   input.placeholder = "Any specific part of the text you don't understand?";
   input.setAttribute(
     "style",
     `
     display: block;
     width: 100%;
+    min-height: 54px;
+    max-height: 120px;
     background: transparent;
     border: none;
     outline: none;
     color: #e2e8f0;
     font-size: 18px;
+    line-height: 1.4;
     padding: 14px 16px;
     box-sizing: border-box;
+    resize: none;
+    font-family: inherit;
   `
   );
+  autosizeTextarea(input);
+  trapScroll(input);
 
   let submitted = false;
 
@@ -316,22 +330,29 @@ function showContextInput(x: number, y: number, selectedText: string) {
       list.appendChild(body);
     }
 
-    const followupInput = document.createElement("input");
-    followupInput.type = "text";
+    const followupInput = document.createElement("textarea");
     followupInput.dir = "auto";
+    followupInput.rows = 1;
     followupInput.placeholder = "Ask a follow-up…";
     followupInput.disabled = loading;
     followupInput.setAttribute("style", `
       flex: 1;
       min-width: 0;
+      min-height: 36px;
+      max-height: 120px;
       background: transparent;
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 7px;
       color: #e2e8f0;
       font-size: 14px;
+      line-height: 1.45;
       outline: none;
       padding: 8px 10px;
+      resize: none;
+      font-family: inherit;
     `);
+    autosizeTextarea(followupInput);
+    trapScroll(followupInput);
 
     const askBtn = document.createElement("button");
     askBtn.textContent = "Ask";
@@ -378,9 +399,13 @@ function showContextInput(x: number, y: number, selectedText: string) {
         .catch((error) => renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
     }
 
+    followupInput.addEventListener("input", () => autosizeTextarea(followupInput));
     followupInput.addEventListener("keydown", (event) => {
       event.stopPropagation();
-      if (event.key === "Enter") askFollowup();
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        askFollowup();
+      }
       if (event.key === "Escape") removeWidget();
     });
     askBtn.addEventListener("click", askFollowup);
@@ -427,7 +452,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   }
 
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       doSave();
     }
@@ -437,6 +462,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     }
     e.stopPropagation();
   });
+  input.addEventListener("input", () => autosizeTextarea(input));
 
   widget.appendChild(preview);
   widget.appendChild(input);
@@ -659,22 +685,29 @@ function showCropOverlay(screenshotDataUrl: string) {
         list.appendChild(body);
       }
 
-      const input = document.createElement("input");
-      input.type = "text";
+      const input = document.createElement("textarea");
       input.dir = "auto";
+      input.rows = 1;
       input.placeholder = "Ask a follow-up…";
       input.disabled = loading;
       input.setAttribute("style", `
         flex: 1;
         min-width: 0;
+        min-height: 36px;
+        max-height: 120px;
         background: transparent;
         border: 1px solid rgba(255,255,255,0.12);
         border-radius: 7px;
         color: #e2e8f0;
         font-size: 14px;
+        line-height: 1.45;
         outline: none;
         padding: 8px 10px;
+        resize: none;
+        font-family: inherit;
       `);
+      autosizeTextarea(input);
+      trapScroll(input);
 
       const askBtn = document.createElement("button");
       askBtn.textContent = "Ask";
@@ -721,9 +754,13 @@ function showCropOverlay(screenshotDataUrl: string) {
           .catch((error) => renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
       }
 
+      input.addEventListener("input", () => autosizeTextarea(input));
       input.addEventListener("keydown", (event) => {
         event.stopPropagation();
-        if (event.key === "Enter") askFollowup();
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          askFollowup();
+        }
         if (event.key === "Escape") removeCropOverlay();
       });
       askBtn.addEventListener("click", askFollowup);
@@ -800,20 +837,27 @@ function showCropOverlay(screenshotDataUrl: string) {
       const row = document.createElement("div");
       row.setAttribute("style", "display:flex;align-items:center;gap:8px;padding:0;");
 
-      const input = document.createElement("input");
-      input.type = "text";
+      const input = document.createElement("textarea");
       input.dir = "auto";
+      input.rows = 1;
       input.placeholder = "Any specific part of the screenshot you don't understand?";
       input.setAttribute("style", `
         flex: 1;
         min-width: 0;
+        min-height: 54px;
+        max-height: 120px;
         background: transparent;
         border: none;
         color: #e2e8f0;
         font-size: 18px;
+        line-height: 1.4;
         outline: none;
         padding: 14px 16px;
+        resize: none;
+        font-family: inherit;
       `);
+      autosizeTextarea(input);
+      trapScroll(input);
 
       const cancelBtn = document.createElement("button");
       cancelBtn.textContent = "Cancel";
@@ -841,9 +885,10 @@ function showCropOverlay(screenshotDataUrl: string) {
         removeCropOverlay();
       });
 
+      input.addEventListener("input", () => autosizeTextarea(input));
       input.addEventListener("keydown", (e) => {
         e.stopPropagation();
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           doSave();
         }
