@@ -1,26 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Capture, ChatMessage } from "../types";
+import type { Capture, ChatMessage, Message } from "../types";
 
-const BACKEND_URL = "https://web-production-223b1.up.railway.app";
-
-async function throwResponseError(label: string, res: Response): Promise<never> {
-  let detail = "";
-  try {
-    const body = await res.text();
-    if (body) {
-      try {
-        const parsed = JSON.parse(body);
-        detail = parsed.detail ?? parsed.error?.message ?? parsed.error?.type ?? body;
-      } catch {
-        detail = body;
+function sendRuntimeMessage<T>(message: Message): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
       }
-    }
-  } catch {
-    // Ignore secondary failures while reporting the primary HTTP status.
-  }
-
-  const shortDetail = detail ? ` — ${detail.slice(0, 240)}` : "";
-  throw new Error(`${label}: ${res.status}${shortDetail}`);
+      if (response?.error) {
+        reject(new Error(response.error));
+        return;
+      }
+      resolve(response as T);
+    });
+  });
 }
 
 function renderMarkdown(text: string): React.ReactNode {
@@ -73,6 +68,7 @@ export default function ChatApp() {
 
   useEffect(() => {
     if (!captureId) return;
+    document.title = "ContextLens";
     chrome.storage.local.get(["captures", `chat_${captureId}`], (result) => {
       const captures: Capture[] = result.captures ?? [];
       const found = captures.find((c) => c.id === captureId) ?? null;
@@ -109,29 +105,12 @@ export default function ChatApp() {
     setLoading(true);
 
     try {
-      const transcript = updated
-        .slice(-8)
-        .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
-        .join("\n");
-      const source = [
-        `Saved item: ${capture.text}`,
-        capture.context ? `Original context note: ${capture.context}` : "",
-        `Conversation so far:\n${transcript}`,
-      ].filter(Boolean).join("\n\n");
-
-      const res = await fetch(`${BACKEND_URL}/explain`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: source,
-          context: text,
-        }),
+      const data = await sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+        type: "ASK_FOLLOWUP",
+        captureId: capture.id,
+        question: text,
       });
-      if (!res.ok) await throwResponseError("Backend error", res);
-
-      const data = await res.json();
-      const reply = data.explanation?.trim() ?? "No response.";
-      const final: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
+      const final = data.messages ?? [...updated, { role: "assistant", content: data.reply }];
       setMessages(final);
       chrome.storage.local.set({ [`chat_${captureId}`]: final });
     } catch (error) {
@@ -151,11 +130,12 @@ export default function ChatApp() {
     );
   }
 
-  const sourceIsLong = capture.text.length > 700;
+  const hasScreenshot = Boolean(capture.imageData);
+  const sourceIsLong = !hasScreenshot && capture.text.length > 700;
   const sourcePreview = sourceIsLong && !sourceExpanded;
 
   return (
-    <div style={{ minHeight: "100vh", maxWidth: 900, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column" }}>
       {/* Header */}
       <div style={{ padding: "32px 48px 0" }}>
         <a
@@ -174,9 +154,34 @@ export default function ChatApp() {
             marginBottom: 24,
           }}
         >
-          <p style={{ fontSize: 16, color: "#37352f", lineHeight: 1.6, fontWeight: 500, maxHeight: sourcePreview ? 180 : undefined, overflow: sourcePreview ? "hidden" : undefined, marginBottom: sourceIsLong ? 8 : undefined }}>
-            {capture.text}
-          </p>
+          {hasScreenshot ? (
+            <img
+              src={capture.imageData}
+              alt="Saved screenshot"
+              style={{
+                display: "block",
+                width: "100%",
+                maxHeight: 460,
+                objectFit: "contain",
+                borderRadius: 6,
+                background: "#f7f6f3",
+              }}
+            />
+          ) : (
+            <p
+              style={{
+                fontSize: 21,
+                color: "#2f2e2b",
+                lineHeight: 1.6,
+                fontWeight: 650,
+                maxHeight: sourcePreview ? 220 : undefined,
+                overflow: sourcePreview ? "hidden" : undefined,
+                marginBottom: sourceIsLong ? 8 : undefined,
+              }}
+            >
+              {capture.text}
+            </p>
+          )}
           {sourceIsLong && (
             <button
               onClick={() => setSourceExpanded((value) => !value)}
@@ -190,7 +195,7 @@ export default function ChatApp() {
               <p style={{ fontSize: 12, color: "#9b9a97", fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Your question
               </p>
-              <p style={{ fontSize: 15, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 500 }}>
+              <p style={{ fontSize: 18, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
                 {capture.context}
               </p>
             </div>
@@ -200,13 +205,13 @@ export default function ChatApp() {
       </div>
 
       {/* Messages */}
-      <div style={{ padding: "24px 48px 8px" }}>
+      <div style={{ padding: "24px 48px 96px", flex: 1 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: "#9b9a97", marginBottom: 4, fontWeight: 500 }}>
               {m.role === "assistant" ? "AI" : "You"}
             </p>
-            <div style={{ fontSize: m.role === "assistant" ? 17 : 15, color: "#37352f", lineHeight: m.role === "assistant" ? 1.85 : 1.7 }}>
+            <div style={{ fontSize: m.role === "assistant" ? 19 : 16, color: "#37352f", lineHeight: m.role === "assistant" ? 1.8 : 1.7 }}>
               {renderMarkdown(m.content)}
             </div>
           </div>
@@ -221,23 +226,50 @@ export default function ChatApp() {
       </div>
 
       {/* Input */}
-      <div style={{ padding: "16px 48px 32px", borderTop: "1px solid #e3e2de" }}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Ask a follow-up question…"
-          disabled={loading}
-          style={{
-            width: "100%",
-            fontSize: 15,
-            color: "#37352f",
-            background: "transparent",
-            border: "none",
-            outline: "none",
-            padding: "8px 0",
+      <div style={{ position: "sticky", bottom: 0, padding: "14px 48px 24px", background: "#fff", borderTop: "1px solid #e3e2de" }}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            send();
           }}
-        />
+          style={{ display: "flex", gap: 10, alignItems: "center" }}
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask a follow-up question…"
+            disabled={loading}
+            style={{
+              flex: 1,
+              minHeight: 52,
+              fontSize: 17,
+              color: "#37352f",
+              background: "#fff",
+              border: "1px solid #d8d7d2",
+              borderRadius: 14,
+              outline: "none",
+              padding: "0 16px",
+              boxShadow: "0 1px 6px rgba(15, 15, 15, 0.06)",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={loading || !input.trim()}
+            style={{
+              minHeight: 52,
+              padding: "0 18px",
+              border: "none",
+              borderRadius: 14,
+              background: loading || !input.trim() ? "#d8d7d2" : "#37352f",
+              color: "#fff",
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: loading || !input.trim() ? "default" : "pointer",
+            }}
+          >
+            Ask
+          </button>
+        </form>
       </div>
     </div>
   );

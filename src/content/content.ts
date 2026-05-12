@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-11-immediate-answer-v2";
+const CONTENT_SCRIPT_VERSION = "2026-05-12-unified-capture-popup-v1";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -48,6 +48,10 @@ function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
   chrome.storage.local.get(["answer_immediate", "screenshot_triggers"], (result) => {
     callback(Boolean(result.answer_immediate || result.screenshot_triggers?.immediate));
   });
+}
+
+function panelTopFor(preferredTop: number, maxHeight: number) {
+  return Math.max(8, Math.min(preferredTop, window.innerHeight - maxHeight - 8));
 }
 
 function createCameraButton() {
@@ -213,23 +217,27 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   function styleExpandedWidget() {
     if (!widget) return;
+    const maxHeight = Math.min(560, window.innerHeight - 24);
+    const expandedTop = panelTopFor(top, maxHeight);
     widget.setAttribute(
       "style",
       `
       position: fixed;
       left: ${left}px;
-      top: ${top}px;
+      top: ${expandedTop}px;
       background: rgba(30,30,40,0.96);
       border: 1px solid rgba(255,255,255,0.15);
       border-radius: 10px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.4);
       z-index: 2147483647;
       width: ${widgetWidth}px;
-      max-height: min(520px, calc(100vh - 48px));
+      max-height: ${maxHeight}px;
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       overflow: hidden;
       box-sizing: border-box;
       padding: 14px;
+      display: flex;
+      flex-direction: column;
     `
     );
   }
@@ -259,9 +267,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false) {
     if (!widget) return;
     styleExpandedWidget();
+    const listMaxHeight = Math.max(160, Math.min(560, window.innerHeight - 24) - 92);
 
     const list = document.createElement("div");
-    list.setAttribute("style", "max-height:350px;overflow-y:auto;padding-right:4px;margin-bottom:12px;");
+    list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
 
     messages.forEach((message) => {
       const label = document.createElement("div");
@@ -434,6 +443,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 let cropOverlay: HTMLElement | null = null;
 
 function removeCropOverlay() {
+  (cropOverlay as (HTMLElement & { __contextLensCleanup?: () => void }) | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
   if (cameraBtn) cameraBtn.style.display = "";
 }
@@ -467,6 +477,37 @@ function showCropOverlay(screenshotDataUrl: string) {
     let dragStart: { x: number; y: number } | null = null;
     let selection: { x: number; y: number; w: number; h: number } | null = null;
     let contextPanel: HTMLElement | null = null;
+    let contextPanelOutsideHandler: ((event: MouseEvent) => void) | null = null;
+    let contextPanelSubmitted = false;
+    let contextPanelLeft = 8;
+    let contextPanelTop = 8;
+    const contextPanelWidth = Math.min(560, window.innerWidth - 24);
+
+    function removeContextPanelOutsideHandler() {
+      if (!contextPanelOutsideHandler) return;
+      document.removeEventListener("mousedown", contextPanelOutsideHandler, true);
+      contextPanelOutsideHandler = null;
+    }
+
+    function removeContextPanel() {
+      removeContextPanelOutsideHandler();
+      contextPanel?.remove();
+      contextPanel = null;
+    }
+
+    function closeContextPanelOnOutsideClick() {
+      removeContextPanelOutsideHandler();
+      setTimeout(() => {
+        contextPanelOutsideHandler = (event: MouseEvent) => {
+          const target = event.target as Node;
+          if (!contextPanel || contextPanel.contains(target)) return;
+          removeCropOverlay();
+        };
+        document.addEventListener("mousedown", contextPanelOutsideHandler, true);
+      }, 0);
+    }
+
+    (cropOverlay as HTMLElement & { __contextLensCleanup?: () => void }).__contextLensCleanup = removeContextPanelOutsideHandler;
 
     function getPos(e: MouseEvent) {
       const rect = canvas.getBoundingClientRect();
@@ -500,22 +541,26 @@ function showCropOverlay(screenshotDataUrl: string) {
 
     function styleAnswerPanel() {
       if (!contextPanel) return;
+      const maxHeight = Math.min(560, window.innerHeight - 24);
+      const top = panelTopFor(contextPanelTop, maxHeight);
       contextPanel.setAttribute("style", `
         position: fixed;
-        left: ${contextPanel.style.left};
-        top: ${contextPanel.style.top};
+        left: ${contextPanelLeft}px;
+        top: ${top}px;
         background: rgba(30,30,40,0.96);
         backdrop-filter: blur(8px);
         border: 1px solid rgba(255,255,255,0.15);
         border-radius: 10px;
         padding: 14px;
-        width: min(460px, calc(100vw - 24px));
-        max-height: min(520px, calc(100vh - 48px));
+        width: ${contextPanelWidth}px;
+        max-height: ${maxHeight}px;
         box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         z-index: 2147483647;
         cursor: default;
         box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
       `);
     }
 
@@ -544,14 +589,10 @@ function showCropOverlay(screenshotDataUrl: string) {
     function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false) {
       if (!contextPanel) return;
       styleAnswerPanel();
+      const listMaxHeight = Math.max(160, Math.min(560, window.innerHeight - 24) - 92);
 
       const list = document.createElement("div");
-      list.setAttribute("style", `
-        max-height: 330px;
-        overflow-y: auto;
-        padding-right: 4px;
-        margin-bottom: 12px;
-      `);
+      list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
 
       messages.forEach((message) => {
         const label = document.createElement("div");
@@ -562,7 +603,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         body.textContent = message.content;
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? "#e2e8f0" : "#cbd5e1"};
-          font-size: ${message.role === "assistant" ? "15px" : "13px"};
+          font-size: ${message.role === "assistant" ? "16px" : "14px"};
           line-height: 1.65;
           margin-bottom: 12px;
           white-space: pre-wrap;
@@ -595,7 +636,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         border: 1px solid rgba(255,255,255,0.12);
         border-radius: 7px;
         color: #e2e8f0;
-        font-size: 13px;
+        font-size: 14px;
         outline: none;
         padding: 8px 10px;
       `);
@@ -655,9 +696,13 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(list, row);
       list.scrollTop = list.scrollHeight;
       setTimeout(() => input.focus(), 50);
+      closeContextPanelOnOutsideClick();
     }
 
     function cropAndSend(context: string) {
+      if (contextPanelSubmitted) return;
+      contextPanelSubmitted = true;
+      removeContextPanelOutsideHandler();
       const croppedDataUrl = cropSelection();
       if (!croppedDataUrl) return;
 
@@ -676,7 +721,8 @@ function showCropOverlay(screenshotDataUrl: string) {
     }
 
     function showContextPanel(sel: { x: number; y: number; w: number; h: number }) {
-      if (contextPanel) contextPanel.remove();
+      removeContextPanel();
+      contextPanelSubmitted = false;
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
 
@@ -687,56 +733,51 @@ function showCropOverlay(screenshotDataUrl: string) {
 
       const bubbleX = canvasRect.left + sel.x * scaleX;
       const bubbleY = canvasRect.top + (sel.y + sel.h) * scaleY + 10;
-      const clampedLeft = Math.min(Math.max(bubbleX, 8), window.innerWidth - 380);
-      const clampedTop = Math.min(bubbleY, window.innerHeight - 80);
+      contextPanelLeft = Math.min(Math.max(bubbleX, 8), window.innerWidth - contextPanelWidth - 8);
+      contextPanelTop = Math.min(bubbleY, window.innerHeight - 80);
 
       contextPanel = document.createElement("div");
       contextPanel.setAttribute("style", `
         position: fixed;
-        left: ${clampedLeft}px;
-        top: ${clampedTop}px;
+        left: ${contextPanelLeft}px;
+        top: ${contextPanelTop}px;
         background: rgba(30,30,40,0.92);
         backdrop-filter: blur(8px);
         border: 1px solid rgba(255,255,255,0.15);
         border-radius: 10px;
-        padding: 8px 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 360px;
+        width: ${contextPanelWidth}px;
         box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         z-index: 2147483647;
         cursor: default;
+        overflow: hidden;
       `);
+
+      const preview = document.createElement("div");
+      preview.textContent = "Screenshot";
+      preview.setAttribute("style", `
+        font-size: 13px;
+        color: #6366f1;
+        padding: 8px 12px 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      `);
+
+      const row = document.createElement("div");
+      row.setAttribute("style", "display:flex;align-items:center;gap:8px;padding:0;");
 
       const input = document.createElement("input");
       input.type = "text";
       input.dir = "auto";
-      input.placeholder = "Add context… (optional)";
+      input.placeholder = "Any specific part of the screenshot you don't understand?";
       input.setAttribute("style", `
         flex: 1;
+        min-width: 0;
         background: transparent;
         border: none;
         color: #e2e8f0;
-        font-size: 13px;
+        font-size: 18px;
         outline: none;
-        min-width: 0;
-      `);
-
-      const saveBtn = document.createElement("button");
-      saveBtn.textContent = "Save";
-      saveBtn.setAttribute("style", `
-        background: #6366f1;
-        color: #fff;
-        border: none;
-        border-radius: 6px;
-        padding: 5px 12px;
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-        white-space: nowrap;
-        flex-shrink: 0;
+        padding: 14px 16px;
       `);
 
       const cancelBtn = document.createElement("button");
@@ -747,33 +788,51 @@ function showCropOverlay(screenshotDataUrl: string) {
         color: #e2e8f0;
         border: 1px solid rgba(255,255,255,0.12);
         border-radius: 6px;
-        padding: 5px 10px;
-        font-size: 12px;
+        padding: 8px 12px;
+        font-size: 13px;
         font-weight: 600;
         cursor: pointer;
         white-space: nowrap;
         flex-shrink: 0;
+        margin-right: 12px;
       `);
 
       function doSave() {
         cropAndSend(input.value.trim());
       }
 
-      cancelBtn.addEventListener("click", removeCropOverlay);
-      saveBtn.addEventListener("click", doSave);
+      cancelBtn.addEventListener("click", () => {
+        removeContextPanelOutsideHandler();
+        removeCropOverlay();
+      });
 
       input.addEventListener("keydown", (e) => {
         e.stopPropagation();
-        if (e.key === "Enter") doSave();
-        if (e.key === "Escape") removeCropOverlay();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          doSave();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          removeCropOverlay();
+        }
       });
 
-      contextPanel.appendChild(input);
-      contextPanel.appendChild(cancelBtn);
-      contextPanel.appendChild(saveBtn);
+      row.appendChild(input);
+      row.appendChild(cancelBtn);
+      contextPanel.appendChild(preview);
+      contextPanel.appendChild(row);
       cropOverlay!.appendChild(contextPanel);
 
-      setTimeout(() => input.focus(), 50);
+      setTimeout(() => {
+        input.focus();
+        contextPanelOutsideHandler = (event: MouseEvent) => {
+          const target = event.target as Node;
+          if (!contextPanel || contextPanel.contains(target)) return;
+          doSave();
+        };
+        document.addEventListener("mousedown", contextPanelOutsideHandler, true);
+      }, 50);
     }
 
     canvas.addEventListener("mousedown", (e) => {

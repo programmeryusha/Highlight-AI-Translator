@@ -172,9 +172,22 @@ function openChat(id: string) {
   chrome.tabs.create({ url: chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}` });
 }
 
+function openCaptureFromClick(event: React.MouseEvent, id: string) {
+  if (window.getSelection()?.toString().trim()) return;
+  event.stopPropagation();
+  openChat(id);
+}
+
 function CapturePreview({ capture }: { capture: Capture }) {
   if (capture.imageData) {
-    return <img src={capture.imageData} alt="screenshot" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 6, marginBottom: 4, display: "block" }} />;
+    return (
+      <img
+        src={capture.imageData}
+        alt="screenshot"
+        onClick={(event) => openCaptureFromClick(event, capture.id)}
+        style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 6, marginBottom: 4, display: "block", cursor: "pointer" }}
+      />
+    );
   }
 
   const isLong = capture.text.length > LONG_TEXT_LIMIT;
@@ -182,11 +195,17 @@ function CapturePreview({ capture }: { capture: Capture }) {
 
   return (
     <>
-      <p style={{ fontSize: 21, fontWeight: 650, color: "#2f2e2b", lineHeight: 1.6, margin: 0 }}>
+      <p
+        onClick={(event) => openCaptureFromClick(event, capture.id)}
+        style={{ fontSize: 21, fontWeight: 650, color: "#2f2e2b", lineHeight: 1.6, margin: 0, cursor: "pointer" }}
+      >
         {text}
       </p>
       {isLong && (
-        <p style={{ fontSize: 14, color: "#6366f1", margin: "7px 0 0", fontWeight: 700 }}>
+        <p
+          onClick={(event) => openCaptureFromClick(event, capture.id)}
+          style={{ fontSize: 14, color: "#6366f1", margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
+        >
           Open full save
         </p>
       )}
@@ -216,8 +235,7 @@ function SavesView({ captures }: { captures: Capture[] }) {
             {group.items.map((c) => (
               <div
                 key={c.id}
-                onClick={() => openChat(c.id)}
-                style={{ padding: "18px 0 28px", cursor: "pointer", maxWidth: "100%" }}
+                style={{ padding: "18px 0 28px", maxWidth: "100%" }}
               >
                 <CapturePreview capture={c} />
 
