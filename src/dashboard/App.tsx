@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import type { Capture } from "../types";
+import type { Capture, ContextLensUser, Message } from "../types";
 
 type View = "saves" | "history" | "words" | "settings";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
@@ -34,6 +34,23 @@ function downloadTextFile(filename: string, contents: string) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function sendRuntimeMessage<T>(message: Message): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      if (response?.error) {
+        reject(new Error(response.error));
+        return;
+      }
+      resolve(response as T);
+    });
+  });
 }
 
 function renderMarkdown(text: string): React.ReactNode {
@@ -987,12 +1004,17 @@ function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[]) {
 function SettingsView({
   flashcardThreshold,
   onFlashcardThresholdChange,
+  account,
 }: {
   flashcardThreshold: number;
   onFlashcardThresholdChange: (value: number) => void;
+  account: ContextLensUser | null;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: false });
+  const [username, setUsername] = useState("");
+  const [accountStatus, setAccountStatus] = useState("");
+  const [accountLoading, setAccountLoading] = useState(false);
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
@@ -1023,8 +1045,112 @@ function SettingsView({
     chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
   }
 
+  async function createAccount() {
+    setAccountLoading(true);
+    setAccountStatus("");
+    try {
+      const created = await sendRuntimeMessage<ContextLensUser>({ type: "CREATE_ACCOUNT", username });
+      setUsername("");
+      setAccountStatus(`Connected as ${created.username}. Your saves will sync to Railway.`);
+    } catch (error) {
+      setAccountStatus(error instanceof Error ? error.message : "Could not create account.");
+    } finally {
+      setAccountLoading(false);
+    }
+  }
+
+  async function syncNow() {
+    setAccountLoading(true);
+    setAccountStatus("");
+    try {
+      await sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" });
+      setAccountStatus("Synced with Railway.");
+    } catch (error) {
+      setAccountStatus(error instanceof Error ? error.message : "Could not sync.");
+    } finally {
+      setAccountLoading(false);
+    }
+  }
+
   return (
     <div style={{ maxWidth: 520, paddingTop: 8 }}>
+      {/* Account */}
+      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Account</p>
+      <div style={{ marginBottom: 40 }}>
+        {account ? (
+          <div>
+            <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px", fontWeight: 700 }}>
+              Connected as {account.username}
+            </p>
+            <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 12px", lineHeight: 1.5 }}>
+              Your token is stored on this browser and saves sync to Railway when the backend is reachable.
+            </p>
+            <button
+              type="button"
+              onClick={syncNow}
+              disabled={accountLoading}
+              style={{
+                background: accountLoading ? "#d8d7d2" : "#37352f",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "8px 12px",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: accountLoading ? "default" : "pointer",
+              }}
+            >
+              Sync now
+            </button>
+          </div>
+        ) : (
+          <div>
+            <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px" }}>Create a sync username</p>
+            <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 10px", lineHeight: 1.5 }}>
+              ContextLens will create a token and store it locally so your saves can be stored in the Railway database.
+            </p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                type="text"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="username"
+                style={{
+                  flex: "1 1 220px",
+                  border: "1px solid #d8d7d2",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  fontSize: 14,
+                  color: "#37352f",
+                }}
+              />
+              <button
+                type="button"
+                onClick={createAccount}
+                disabled={accountLoading || username.trim().length < 2}
+                style={{
+                  background: accountLoading || username.trim().length < 2 ? "#d8d7d2" : "#37352f",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "9px 12px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: accountLoading || username.trim().length < 2 ? "default" : "pointer",
+                }}
+              >
+                Create token
+              </button>
+            </div>
+          </div>
+        )}
+        {accountStatus && (
+          <p style={{ fontSize: 12, color: accountStatus.includes("error") || accountStatus.includes("Could not") ? "#eb5757" : "#8d8b86", margin: "10px 0 0", lineHeight: 1.5 }}>
+            {accountStatus}
+          </p>
+        )}
+      </div>
+
       {/* Save triggers */}
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
@@ -1242,17 +1368,20 @@ export default function App() {
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
   const [flashcardThreshold, setFlashcardThreshold] = useState(DEFAULT_FLASHCARD_THRESHOLD);
   const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(new Set());
+  const [account, setAccount] = useState<ContextLensUser | null>(null);
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids"], (r) => {
+    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user"], (r) => {
       setCaptures(r.captures ?? []);
       setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
       setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
+      setAccount(r.contextlens_user ?? null);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
       if (changes.flashcard_threshold) setFlashcardThreshold(changes.flashcard_threshold.newValue ?? DEFAULT_FLASHCARD_THRESHOLD);
       if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
+      if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -1298,6 +1427,10 @@ export default function App() {
       idsToDelete.forEach((id) => next.delete(id));
       chrome.storage.local.set({ flashcard_starred_capture_ids: Array.from(next) });
       return next;
+    });
+
+    void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {
+      console.warn("ContextLens remote delete skipped", error);
     });
   }
 
@@ -1391,6 +1524,7 @@ export default function App() {
           <SettingsView
             flashcardThreshold={flashcardThreshold}
             onFlashcardThresholdChange={updateFlashcardThreshold}
+            account={account}
           />
         )}
       </div>

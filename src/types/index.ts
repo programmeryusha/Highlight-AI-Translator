@@ -20,6 +20,12 @@ export interface StorageSchema {
   captures: Capture[];
   flashcard_threshold?: number;
   flashcard_starred_capture_ids?: string[];
+  contextlens_user?: ContextLensUser;
+}
+
+export interface ContextLensUser {
+  username: string;
+  token: string;
 }
 
 export type Message =
@@ -30,4 +36,7 @@ export type Message =
   | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
   | { type: "ASK_FOLLOWUP"; captureId: string; question: string }
+  | { type: "CREATE_ACCOUNT"; username: string }
+  | { type: "SYNC_REMOTE_CAPTURES" }
+  | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "OPEN_DASHBOARD" };

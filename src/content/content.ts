@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-12-shift-enter-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-13-crop-scroll-v1";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -481,35 +481,15 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
-let pageScrollLock: { bodyOverflow: string; htmlOverflow: string } | null = null;
-
-function lockPageScroll() {
-  if (pageScrollLock) return;
-  pageScrollLock = {
-    bodyOverflow: document.body.style.overflow,
-    htmlOverflow: document.documentElement.style.overflow,
-  };
-  document.body.style.overflow = "hidden";
-  document.documentElement.style.overflow = "hidden";
-}
-
-function unlockPageScroll() {
-  if (!pageScrollLock) return;
-  document.body.style.overflow = pageScrollLock.bodyOverflow;
-  document.documentElement.style.overflow = pageScrollLock.htmlOverflow;
-  pageScrollLock = null;
-}
 
 function removeCropOverlay() {
   (cropOverlay as (HTMLElement & { __contextLensCleanup?: () => void }) | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
   if (cameraBtn) cameraBtn.style.display = "";
-  unlockPageScroll();
 }
 
 function showCropOverlay(screenshotDataUrl: string) {
   removeCropOverlay();
-  lockPageScroll();
   if (cameraBtn) cameraBtn.style.display = "none";
 
   cropOverlay = document.createElement("div");
@@ -520,6 +500,14 @@ function showCropOverlay(screenshotDataUrl: string) {
     cursor: crosshair;
     user-select: none;
   `);
+  cropOverlay.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+  cropOverlay.addEventListener("touchmove", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
 
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";

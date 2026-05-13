@@ -1,9 +1,20 @@
-import type { Capture, ChatMessage, Message } from "../types";
+import type { Capture, ChatMessage, ContextLensUser, Message } from "../types";
 
 const BACKEND_URL = "https://web-production-223b1.up.railway.app";
 const CONTENT_SCRIPT_FILE = "src/content/content.js";
 const INJECTABLE_URL_PATTERN = /^https?:\/\//i;
 const DEFAULT_SAVE_TRIGGERS = { bubble: true, contextMenu: true };
+
+interface RemoteCapture {
+  id: string;
+  text: string;
+  context: string;
+  url?: string;
+  title?: string;
+  image_data?: string | null;
+  explanation: string | null;
+  saved_at: string;
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -36,10 +47,16 @@ chrome.action.onClicked.addListener(() => {
 });
 
 void injectIntoOpenTabs();
+void syncCapturesWithRemote().catch((error) => {
+  console.warn("ContextLens remote sync skipped", error);
+});
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.storage.local.remove("anthropic_api_key");
   injectIntoOpenTabs();
+  void syncCapturesWithRemote().catch((error) => {
+    console.warn("ContextLens remote sync skipped", error);
+  });
 });
 
 function canInjectIntoUrl(url?: string): boolean {
@@ -186,6 +203,24 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "CREATE_ACCOUNT") {
+    createAccount(message.username)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "SYNC_REMOTE_CAPTURES") {
+    syncCapturesWithRemote()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "DELETE_REMOTE_CAPTURES") {
+    deleteRemoteCaptures(message.ids)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
 });
 
 async function fetchExplanation(text: string, context: string, imageBase64?: string): Promise<string> {
@@ -197,6 +232,111 @@ async function fetchExplanation(text: string, context: string, imageBase64?: str
   if (!res.ok) await throwResponseError("Backend error", res);
   const data = await res.json();
   return data.explanation ?? "";
+}
+
+async function getAccount(): Promise<ContextLensUser | null> {
+  const storage = await chrome.storage.local.get("contextlens_user");
+  return storage.contextlens_user ?? null;
+}
+
+function remoteToCapture(remote: RemoteCapture): Capture {
+  return {
+    id: remote.id,
+    text: remote.text,
+    context: remote.context,
+    url: remote.url ?? "",
+    title: remote.title ?? "",
+    savedAt: remote.saved_at,
+    explanation: remote.explanation,
+    status: "done",
+    imageData: remote.image_data ?? undefined,
+  };
+}
+
+function captureToRemotePayload(capture: Capture, token: string) {
+  return {
+    token,
+    id: capture.id,
+    text: capture.text,
+    context: capture.context,
+    url: capture.url,
+    title: capture.title,
+    image_data: capture.imageData ?? null,
+    explanation: capture.explanation,
+    saved_at: capture.savedAt,
+  };
+}
+
+async function createAccount(username: string): Promise<ContextLensUser> {
+  const cleanUsername = username.trim();
+  if (cleanUsername.length < 2) throw new Error("Username must be at least 2 characters.");
+
+  const res = await fetch(`${BACKEND_URL}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: cleanUsername }),
+  });
+  if (!res.ok) await throwResponseError("Account error", res);
+  const data = await res.json();
+  const account = { username: data.username ?? cleanUsername, token: data.token } satisfies ContextLensUser;
+  await chrome.storage.local.set({ contextlens_user: account });
+  await syncCapturesWithRemote(account);
+  return account;
+}
+
+async function saveCaptureRemote(capture: Capture): Promise<void> {
+  if (capture.status !== "done") return;
+  const account = await getAccount();
+  if (!account) return;
+
+  const res = await fetch(`${BACKEND_URL}/captures`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(captureToRemotePayload(capture, account.token)),
+  });
+  if (!res.ok) await throwResponseError("Sync error", res);
+}
+
+async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
+  const res = await fetch(`${BACKEND_URL}/captures?token=${encodeURIComponent(token)}`);
+  if (!res.ok) await throwResponseError("Sync error", res);
+  const remote: RemoteCapture[] = await res.json();
+  return remote.map(remoteToCapture);
+}
+
+async function syncCapturesWithRemote(accountOverride?: ContextLensUser): Promise<{ synced: number }> {
+  const account = accountOverride ?? await getAccount();
+  if (!account) return { synced: 0 };
+
+  const storage = await chrome.storage.local.get("captures");
+  const localCaptures: Capture[] = storage.captures ?? [];
+  const uploadable = localCaptures.filter((capture) => capture.status === "done");
+  await Promise.all(uploadable.map((capture) => saveCaptureRemote(capture).catch((error) => {
+    console.warn("ContextLens remote save skipped", error);
+  })));
+
+  const remoteCaptures = await fetchRemoteCaptures(account.token);
+  const merged = new Map<string, Capture>();
+  remoteCaptures.forEach((capture) => merged.set(capture.id, capture));
+  localCaptures.forEach((capture) => {
+    if (!merged.has(capture.id)) merged.set(capture.id, capture);
+  });
+  const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+  await chrome.storage.local.set({ captures });
+  return { synced: remoteCaptures.length };
+}
+
+async function deleteRemoteCaptures(ids: string[]): Promise<{ deleted: number }> {
+  const account = await getAccount();
+  if (!account || ids.length === 0) return { deleted: 0 };
+
+  const res = await fetch(`${BACKEND_URL}/captures/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: account.token, ids }),
+  });
+  if (!res.ok) await throwResponseError("Delete sync error", res);
+  return await res.json();
 }
 
 async function addCapture(capture: Capture) {
@@ -253,7 +393,12 @@ async function explainAndSaveScreenshot(imageData: string, context: string): Pro
   try {
     const base64 = imageData.split(",")[1];
     const explanation = await fetchExplanation("", context, base64);
-    await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    if (capture) {
+      void saveCaptureRemote(capture).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
   } catch (error) {
@@ -309,7 +454,12 @@ async function saveHighlight(text: string, url: string, title: string, context: 
 
   try {
     const explanation = await fetchExplanation(text, context);
-    await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    if (capture) {
+      void saveCaptureRemote(capture).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
   } catch (error) {
