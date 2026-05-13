@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-13-crop-scroll-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-13-visual-crop-v2";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -16,8 +16,10 @@ if (contextLensGlobal.__contextLensContentVersion !== CONTENT_SCRIPT_VERSION) {
 
 function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
+let widgetMode: "bubble" | "input" | null = null;
 let skipNextMouseup = false;
 let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
+let selectionCheckTimer: number | null = null;
 const cleanupTasks: Array<() => void> = [];
 
 // Floating camera button
@@ -50,8 +52,49 @@ function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
   });
 }
 
+function getVisualViewportRect() {
+  const viewport = window.visualViewport;
+  return {
+    left: Math.max(0, Math.floor(viewport?.offsetLeft ?? 0)),
+    top: Math.max(0, Math.floor(viewport?.offsetTop ?? 0)),
+    width: viewportWidth(),
+    height: viewportHeight(),
+  };
+}
+
+function fixedViewportX(clientX: number) {
+  return clientX + (window.visualViewport?.offsetLeft ?? 0);
+}
+
+function fixedViewportY(clientY: number) {
+  return clientY + (window.visualViewport?.offsetTop ?? 0);
+}
+
 function panelTopFor(preferredTop: number, maxHeight: number) {
-  return Math.max(8, Math.min(preferredTop, window.innerHeight - maxHeight - 8));
+  const rect = getVisualViewportRect();
+  const minTop = rect.top + 8;
+  const maxTop = rect.top + Math.max(0, rect.height - maxHeight - 8);
+  return Math.max(minTop, Math.min(preferredTop, maxTop));
+}
+
+function viewportWidth() {
+  return Math.max(1, Math.floor(window.visualViewport?.width ?? window.innerWidth));
+}
+
+function viewportHeight() {
+  return Math.max(1, Math.floor(window.visualViewport?.height ?? window.innerHeight));
+}
+
+function clampLeftToViewport(preferredLeft: number, width: number) {
+  const rect = getVisualViewportRect();
+  const minLeft = rect.left + 8;
+  const maxLeft = rect.left + Math.max(0, rect.width - width - 8);
+  return Math.max(minLeft, Math.min(preferredLeft, maxLeft));
+}
+
+function panelWidthFor(maxWidth = 560, minWidth = 220) {
+  const available = Math.max(1, viewportWidth() - 24);
+  return Math.max(Math.min(minWidth, available), Math.min(maxWidth, available));
 }
 
 function trapScroll(element: HTMLElement) {
@@ -135,10 +178,13 @@ function removeWidget() {
     widget.remove();
     widget = null;
   }
+  widgetMode = null;
 }
 
 function showSaveBubble(x: number, y: number, selectedText: string) {
+  if (widgetMode === "input") return;
   removeWidget();
+  widgetMode = "bubble";
 
   widget = document.createElement("div");
   widget.textContent = "Save";
@@ -175,10 +221,11 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
 
 function showContextInput(x: number, y: number, selectedText: string) {
   removeWidget();
+  widgetMode = "input";
 
-  const widgetWidth = Math.min(560, window.innerWidth - 24);
-  const left = Math.min(Math.max(x - widgetWidth / 2, 8), window.innerWidth - widgetWidth - 8);
-  const top = Math.max(y - 110, 8);
+  const widgetWidth = panelWidthFor();
+  const left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
+  const top = panelTopFor(y - 110, 132);
 
   widget = document.createElement("div");
   widget.setAttribute(
@@ -244,7 +291,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   function styleExpandedWidget() {
     if (!widget) return;
-    const maxHeight = Math.min(560, window.innerHeight - 24);
+    const maxHeight = Math.min(560, viewportHeight() - 24);
     const expandedTop = panelTopFor(top, maxHeight);
     widget.setAttribute(
       "style",
@@ -294,7 +341,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false) {
     if (!widget) return;
     styleExpandedWidget();
-    const listMaxHeight = Math.max(160, Math.min(560, window.innerHeight - 24) - 92);
+    const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
 
     const list = document.createElement("div");
     list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
@@ -481,9 +528,37 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
+type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
+
+function lockPageScroll() {
+  const elements = [document.documentElement, document.body].filter((element): element is HTMLElement => Boolean(element));
+  const snapshots = elements.map((element) => ({
+    element,
+    overflowX: element.style.overflowX,
+    overflowY: element.style.overflowY,
+    overscrollBehaviorX: element.style.overscrollBehaviorX,
+    overscrollBehaviorY: element.style.overscrollBehaviorY,
+  }));
+
+  elements.forEach((element) => {
+    element.style.overflowX = "hidden";
+    element.style.overflowY = "hidden";
+    element.style.overscrollBehaviorX = "none";
+    element.style.overscrollBehaviorY = "none";
+  });
+
+  return () => {
+    snapshots.forEach(({ element, overflowX, overflowY, overscrollBehaviorX, overscrollBehaviorY }) => {
+      element.style.overflowX = overflowX;
+      element.style.overflowY = overflowY;
+      element.style.overscrollBehaviorX = overscrollBehaviorX;
+      element.style.overscrollBehaviorY = overscrollBehaviorY;
+    });
+  };
+}
 
 function removeCropOverlay() {
-  (cropOverlay as (HTMLElement & { __contextLensCleanup?: () => void }) | null)?.__contextLensCleanup?.();
+  (cropOverlay as CropOverlayElement | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
   if (cameraBtn) cameraBtn.style.display = "";
 }
@@ -495,11 +570,50 @@ function showCropOverlay(screenshotDataUrl: string) {
   cropOverlay = document.createElement("div");
   cropOverlay.setAttribute("style", `
     position: fixed;
-    inset: 0;
+    left: 0;
+    top: 0;
+    width: ${viewportWidth()}px;
+    height: ${viewportHeight()}px;
     z-index: 2147483647;
     cursor: crosshair;
     user-select: none;
+    overflow: hidden;
+    contain: layout style paint;
+    box-sizing: border-box;
+    direction: ltr;
+    text-align: left;
+    touch-action: none;
   `);
+  const cropCleanupTasks: Array<() => void> = [lockPageScroll()];
+  (cropOverlay as CropOverlayElement).__contextLensCleanup = () => {
+    while (cropCleanupTasks.length) {
+      try {
+        cropCleanupTasks.pop()?.();
+      } catch {
+        // Keep restoring the page even if one cleanup step fails.
+      }
+    }
+  };
+
+  function syncCropOverlayToViewport() {
+    if (!cropOverlay) return;
+    const rect = getVisualViewportRect();
+    cropOverlay.style.left = `${rect.left}px`;
+    cropOverlay.style.top = `${rect.top}px`;
+    cropOverlay.style.width = `${rect.width}px`;
+    cropOverlay.style.height = `${rect.height}px`;
+  }
+
+  syncCropOverlayToViewport();
+  window.visualViewport?.addEventListener("resize", syncCropOverlayToViewport);
+  window.visualViewport?.addEventListener("scroll", syncCropOverlayToViewport);
+  window.addEventListener("resize", syncCropOverlayToViewport);
+  cropCleanupTasks.push(() => {
+    window.visualViewport?.removeEventListener("resize", syncCropOverlayToViewport);
+    window.visualViewport?.removeEventListener("scroll", syncCropOverlayToViewport);
+    window.removeEventListener("resize", syncCropOverlayToViewport);
+  });
+
   cropOverlay.addEventListener("wheel", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -510,13 +624,14 @@ function showCropOverlay(screenshotDataUrl: string) {
   }, { passive: false });
 
   const canvas = document.createElement("canvas");
-  canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+  canvas.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;display:block;box-sizing:border-box;";
   cropOverlay.appendChild(canvas);
 
   appendToPage(cropOverlay);
 
   const img = new Image();
   img.onload = () => {
+    if (!cropOverlay || !canvas.isConnected) return;
     canvas.width = img.width;
     canvas.height = img.height;
     const ctx = canvas.getContext("2d")!;
@@ -529,7 +644,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelSubmitted = false;
     let contextPanelLeft = 8;
     let contextPanelTop = 8;
-    const contextPanelWidth = Math.min(560, window.innerWidth - 24);
+    let contextPanelWidth = panelWidthFor();
 
     function removeContextPanelOutsideHandler() {
       if (!contextPanelOutsideHandler) return;
@@ -555,7 +670,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       }, 0);
     }
 
-    (cropOverlay as HTMLElement & { __contextLensCleanup?: () => void }).__contextLensCleanup = removeContextPanelOutsideHandler;
+    cropCleanupTasks.push(removeContextPanelOutsideHandler);
 
     function getPos(e: MouseEvent) {
       const rect = canvas.getBoundingClientRect();
@@ -589,7 +704,8 @@ function showCropOverlay(screenshotDataUrl: string) {
 
     function styleAnswerPanel() {
       if (!contextPanel) return;
-      const maxHeight = Math.min(560, window.innerHeight - 24);
+      contextPanelWidth = panelWidthFor();
+      const maxHeight = Math.min(560, viewportHeight() - 24);
       const top = panelTopFor(contextPanelTop, maxHeight);
       contextPanel.setAttribute("style", `
         position: fixed;
@@ -609,6 +725,8 @@ function showCropOverlay(screenshotDataUrl: string) {
         box-sizing: border-box;
         display: flex;
         flex-direction: column;
+        direction: ltr;
+        text-align: left;
       `);
     }
 
@@ -637,7 +755,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false) {
       if (!contextPanel) return;
       styleAnswerPanel();
-      const listMaxHeight = Math.max(160, Math.min(560, window.innerHeight - 24) - 92);
+      const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
 
       const list = document.createElement("div");
       list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
@@ -785,16 +903,28 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanelSubmitted = false;
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
+      contextPanelWidth = panelWidthFor();
 
-      // Position bubble just below the selection
+      // Position panel below the selection; fall back above if no space
       const canvasRect = canvas.getBoundingClientRect();
       const scaleX = canvasRect.width / canvas.width;
       const scaleY = canvasRect.height / canvas.height;
 
-      const bubbleX = canvasRect.left + sel.x * scaleX;
-      const bubbleY = canvasRect.top + (sel.y + sel.h) * scaleY + 10;
-      contextPanelLeft = Math.min(Math.max(bubbleX, 8), window.innerWidth - contextPanelWidth - 8);
-      contextPanelTop = Math.min(bubbleY, window.innerHeight - 80);
+      const visibleViewport = getVisualViewportRect();
+      const selBottom = fixedViewportY(canvasRect.top + (sel.y + sel.h) * scaleY);
+      const selTop = fixedViewportY(canvasRect.top + sel.y * scaleY);
+      const selCenterX = fixedViewportX(canvasRect.left + (sel.x + sel.w / 2) * scaleX);
+      const panelH = 154;
+      const MARGIN = 10;
+
+      contextPanelLeft = clampLeftToViewport(selCenterX - contextPanelWidth / 2, contextPanelWidth);
+      if (selBottom + MARGIN + panelH <= visibleViewport.top + visibleViewport.height - 8) {
+        contextPanelTop = selBottom + MARGIN;
+      } else if (selTop - MARGIN - panelH >= visibleViewport.top + 8) {
+        contextPanelTop = selTop - MARGIN - panelH;
+      } else {
+        contextPanelTop = panelTopFor(selBottom + MARGIN, panelH);
+      }
 
       contextPanel = document.createElement("div");
       contextPanel.setAttribute("style", `
@@ -811,28 +941,57 @@ function showCropOverlay(screenshotDataUrl: string) {
         z-index: 2147483647;
         cursor: default;
         overflow: hidden;
+        box-sizing: border-box;
+        direction: ltr;
+        text-align: left;
+      `);
+
+      const header = document.createElement("div");
+      header.setAttribute("style", `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 12px 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
       `);
 
       const preview = document.createElement("div");
       preview.textContent = "Screenshot";
       preview.setAttribute("style", `
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         font-size: 13px;
         color: #6366f1;
-        padding: 8px 12px 6px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
       `);
 
-      const row = document.createElement("div");
-      row.setAttribute("style", "display:flex;align-items:center;gap:8px;padding:0;");
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.title = "Cancel screenshot";
+      cancelBtn.setAttribute("style", `
+        background: transparent;
+        color: #cbd5e1;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+      `);
 
       const input = document.createElement("textarea");
       input.dir = "auto";
       input.rows = 1;
       input.placeholder = "Any specific part of the screenshot you don't understand?";
       input.setAttribute("style", `
-        flex: 1;
-        min-width: 0;
-        min-height: 54px;
+        display: block;
+        width: 100%;
+        min-height: 82px;
         max-height: 120px;
         background: transparent;
         border: none;
@@ -840,29 +999,13 @@ function showCropOverlay(screenshotDataUrl: string) {
         font-size: 18px;
         line-height: 1.4;
         outline: none;
-        padding: 14px 16px;
+        padding: 22px 32px;
         resize: none;
         font-family: inherit;
+        box-sizing: border-box;
       `);
       autosizeTextarea(input);
       trapScroll(input);
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.textContent = "Cancel";
-      cancelBtn.title = "Cancel screenshot";
-      cancelBtn.setAttribute("style", `
-        background: rgba(255,255,255,0.08);
-        color: #e2e8f0;
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 6px;
-        padding: 8px 12px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        white-space: nowrap;
-        flex-shrink: 0;
-        margin-right: 12px;
-      `);
 
       function doSave() {
         cropAndSend(input.value.trim());
@@ -886,11 +1029,13 @@ function showCropOverlay(screenshotDataUrl: string) {
         }
       });
 
-      row.appendChild(input);
-      row.appendChild(cancelBtn);
-      contextPanel.appendChild(preview);
-      contextPanel.appendChild(row);
+      header.appendChild(preview);
+      header.appendChild(cancelBtn);
+      contextPanel.appendChild(header);
+      contextPanel.appendChild(input);
       cropOverlay!.appendChild(contextPanel);
+      contextPanelTop = panelTopFor(contextPanelTop, contextPanel.getBoundingClientRect().height || 154);
+      contextPanel.style.top = `${contextPanelTop}px`;
 
       setTimeout(() => {
         input.focus();
@@ -937,8 +1082,9 @@ function showCropOverlay(screenshotDataUrl: string) {
 // Listen for context menu trigger from service worker
 const runtimeMessageHandler = (message: Message) => {
   if (message.type === "SHOW_CONTEXT_INPUT") {
-    const x = window.innerWidth / 2;
-    const y = window.innerHeight / 2;
+    const rect = getVisualViewportRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
     showContextInput(x, y, message.text);
   }
   if (message.type === "SHOW_CROP_OVERLAY") {
@@ -958,8 +1104,8 @@ const documentMouseupHandler = (e: MouseEvent) => {
     if (text.length > 0 && selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const y = rect.top;
+      const x = fixedViewportX(e.clientX);
+      const y = fixedViewportY(rect.top);
 
       chrome.storage.local.get("save_triggers", (result) => {
         const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
