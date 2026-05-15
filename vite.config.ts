@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     webExtension({
       manifest: "public/manifest.json",
-      additionalInputs: ["src/chat/chat.html", "src/crop/crop.html", "src/welcome/welcome.html"],
+      additionalInputs: ["src/chat/chat.html", "src/crop/crop.html", "src/welcome/welcome.html", "src/privacy/privacy.html"],
     }),
   ],
 });

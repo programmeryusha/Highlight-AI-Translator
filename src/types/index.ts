@@ -25,6 +25,7 @@ export interface StorageSchema {
 
 export interface ContextLensUser {
   username: string;
+  email: string;
   token: string;
 }
 
@@ -37,6 +38,8 @@ export type Message =
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
   | { type: "ASK_FOLLOWUP"; captureId: string; question: string }
   | { type: "CREATE_ACCOUNT"; username: string }
+  | { type: "REGISTER_EMAIL"; email: string }
+  | { type: "DEEP_DIVE"; captureId: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "OPEN_DASHBOARD" };

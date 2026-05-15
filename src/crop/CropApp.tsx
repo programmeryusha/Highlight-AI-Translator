@@ -32,8 +32,12 @@ export default function CropApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [followup, setFollowup] = useState("");
   const [followupLoading, setFollowupLoading] = useState(false);
+  const [deepDiveActive, setDeepDiveActive] = useState(false);
+  const [deepDiveLoading, setDeepDiveLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const glowStyleInjected = useRef(false);
 
   useEffect(() => {
     chrome.storage.session.get("pending_screenshot", (r) => {
@@ -68,6 +72,33 @@ export default function CropApp() {
     };
     img.src = screenshot;
   }, [screenshot, selection]);
+
+  useEffect(() => {
+    if (!deepDiveLoading && !deepDiveActive) return;
+    if (!glowStyleInjected.current) {
+      glowStyleInjected.current = true;
+      const style = document.createElement("style");
+      style.textContent = `
+        @keyframes clDeepDiveGlow {
+          0%   { filter: drop-shadow(0 0 0px  rgba(99,102,241,0));    }
+          50%  { filter: drop-shadow(0 0 14px rgba(99,102,241,0.75)); }
+          100% { filter: drop-shadow(0 0 7px  rgba(99,102,241,0.45)); }
+        }
+        .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
+        .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(99,102,241,0.4)); }
+      `;
+      document.head.appendChild(style);
+    }
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (deepDiveLoading) {
+      panel.classList.add("cl-deep-dive-glow");
+      panel.classList.remove("cl-deep-dive-active");
+    } else {
+      panel.classList.remove("cl-deep-dive-glow");
+      panel.classList.add("cl-deep-dive-active");
+    }
+  }, [deepDiveLoading, deepDiveActive]);
 
   function getPos(e: React.MouseEvent<HTMLCanvasElement>) {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -106,7 +137,6 @@ export default function CropApp() {
     const finalContext = contextOverride.trim();
     setStage("saving");
 
-    // Crop image
     const canvas = document.createElement("canvas");
     canvas.width = selection.w;
     canvas.height = selection.h;
@@ -133,7 +163,6 @@ export default function CropApp() {
 
       setStage("done");
     } else {
-      // Save to list, close
       chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context: finalContext });
       window.close();
     }
@@ -162,9 +191,48 @@ export default function CropApp() {
     }
   }
 
+  async function handleDeepDive() {
+    if (!captureId || deepDiveActive || deepDiveLoading) return;
+    setDeepDiveLoading(true);
+    try {
+      const response = await sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+        type: "DEEP_DIVE",
+        captureId,
+      });
+      setMessages([{ role: "assistant", content: response.explanation }]);
+      setDeepDiveActive(true);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Something went wrong.";
+      if (msg === "DEEP_DIVE_LIMIT_REACHED") {
+        setMessages((prev) => [...prev, {
+          role: "assistant",
+          content: "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer.",
+        }]);
+      }
+    } finally {
+      setDeepDiveLoading(false);
+    }
+  }
+
+  function resetSelection() {
+    setStage("selecting");
+    setSelection(null);
+    setContext("");
+    setMessages([]);
+    setCaptureId("");
+    setFollowup("");
+    setDeepDiveActive(false);
+    setDeepDiveLoading(false);
+    if (panelRef.current) {
+      panelRef.current.classList.remove("cl-deep-dive-glow", "cl-deep-dive-active");
+    }
+  }
+
   if (!screenshot) {
     return <div style={{ color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontSize: 16 }}>Loading…</div>;
   }
+
+  const showDeepDiveBtn = messages.length === 1 && messages[0].role === "assistant" && !deepDiveActive && !deepDiveLoading;
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh", background: "#000" }}>
@@ -205,7 +273,7 @@ export default function CropApp() {
       )}
 
       {stage === "done" && (
-        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "18px 20px", width: "min(520px, calc(100vw - 32px))", maxHeight: "min(620px, calc(100vh - 64px))", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", boxSizing: "border-box" }}>
+        <div ref={panelRef} style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "18px 20px", width: "min(520px, calc(100vw - 32px))", maxHeight: "min(620px, calc(100vh - 64px))", boxShadow: "0 8px 32px rgba(0,0,0,0.6)", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
           <div style={{ maxHeight: 360, overflowY: "auto", paddingRight: 4, marginBottom: 14 }}>
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} style={{ marginBottom: 14 }}>
@@ -218,22 +286,37 @@ export default function CropApp() {
             {followupLoading && (
               <div style={{ color: "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking…</div>
             )}
+            {deepDiveLoading && (
+              <div style={{ color: "#818cf8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Deep diving…</div>
+            )}
           </div>
+
+          {showDeepDiveBtn && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+              <button
+                onClick={handleDeepDive}
+                style={{ background: "transparent", color: "#818cf8", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
+              >
+                ✦ Deep Dive
+              </button>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <input
               value={followup}
               onChange={(e) => setFollowup(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") askFollowup(); if (e.key === "Escape") window.close(); }}
               placeholder="Ask a follow-up…"
-              disabled={!captureId || followupLoading}
+              disabled={!captureId || followupLoading || deepDiveLoading}
               style={{ flex: 1, minWidth: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#e2e8f0", fontSize: 13, outline: "none", padding: "8px 10px" }}
             />
-            <button onClick={askFollowup} disabled={!captureId || followupLoading} style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading ? "pointer" : "default", opacity: captureId && !followupLoading ? 1 : 0.55 }}>
+            <button onClick={askFollowup} disabled={!captureId || followupLoading || deepDiveLoading} style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading && !deepDiveLoading ? "pointer" : "default", opacity: captureId && !followupLoading && !deepDiveLoading ? 1 : 0.55 }}>
               Ask
             </button>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => { setStage("selecting"); setSelection(null); setContext(""); setMessages([]); setCaptureId(""); setFollowup(""); }} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
+            <button onClick={resetSelection} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
               New selection
             </button>
             <button onClick={() => window.close()} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>

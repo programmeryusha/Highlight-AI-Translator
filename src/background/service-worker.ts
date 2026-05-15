@@ -209,6 +209,18 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "REGISTER_EMAIL") {
+    createAccount(message.email)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "DEEP_DIVE") {
+    deepDive(message.captureId)
+      .then(sendResponse)
+      .catch((err: unknown) => sendResponse({ error: errorMessage(err) }));
+    return true;
+  }
   if (message.type === "SYNC_REMOTE_CAPTURES") {
     syncCapturesWithRemote()
       .then(sendResponse)
@@ -223,12 +235,22 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   }
 });
 
-async function fetchExplanation(text: string, context: string, imageBase64?: string): Promise<string> {
+async function fetchExplanation(text: string, context: string, imageBase64?: string, deepDive = false): Promise<string> {
+  const account = deepDive ? await getAccount() : null;
+  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null };
+  if (deepDive) {
+    body.deep_dive = true;
+    body.token = account?.token ?? null;
+  }
   const res = await fetch(`${BACKEND_URL}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, context, image_base64: imageBase64 ?? null }),
+    body: JSON.stringify(body),
   });
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    if (data.detail === "deep_dive_limit_reached") throw new Error("DEEP_DIVE_LIMIT_REACHED");
+  }
   if (!res.ok) await throwResponseError("Backend error", res);
   const data = await res.json();
   return data.explanation ?? "";
@@ -267,18 +289,18 @@ function captureToRemotePayload(capture: Capture, token: string) {
   };
 }
 
-async function createAccount(username: string): Promise<ContextLensUser> {
-  const cleanUsername = username.trim();
-  if (cleanUsername.length < 2) throw new Error("Username must be at least 2 characters.");
+async function createAccount(email: string): Promise<ContextLensUser> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (cleanEmail.length < 2) throw new Error("Email must be at least 2 characters.");
 
   const res = await fetch(`${BACKEND_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: cleanUsername }),
+    body: JSON.stringify({ email: cleanEmail }),
   });
   if (!res.ok) await throwResponseError("Account error", res);
   const data = await res.json();
-  const account = { username: data.username ?? cleanUsername, token: data.token } satisfies ContextLensUser;
+  const account: ContextLensUser = { username: data.username ?? cleanEmail, email: cleanEmail, token: data.token };
   await chrome.storage.local.set({ contextlens_user: account });
   await syncCapturesWithRemote(account);
   return account;
@@ -435,6 +457,24 @@ async function askFollowup(captureId: string, question: string): Promise<{ reply
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
   return { reply, messages };
+}
+
+async function deepDive(captureId: string): Promise<{ explanation: string; messages: ChatMessage[] }> {
+  const storage = await chrome.storage.local.get(["captures", `chat_${captureId}`]);
+  const captures: Capture[] = storage.captures ?? [];
+  const capture = captures.find((c) => c.id === captureId);
+  if (!capture) throw new Error("Saved item not found.");
+
+  const imageBase64 = capture.imageData?.split(",")[1];
+  const explanation = await fetchExplanation(capture.text, capture.context, imageBase64, true);
+
+  await updateCapture(captureId, { explanation });
+
+  const chatKey = `chat_${captureId}`;
+  const messages: ChatMessage[] = [{ role: "assistant", content: explanation }];
+  await chrome.storage.local.set({ [chatKey]: messages });
+
+  return { explanation, messages };
 }
 
 async function saveHighlight(text: string, url: string, title: string, context: string): Promise<{ captureId: string; explanation: string }> {

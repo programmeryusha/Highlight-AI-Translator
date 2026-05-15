@@ -14,9 +14,27 @@ if (contextLensGlobal.__contextLensContentVersion !== CONTENT_SCRIPT_VERSION) {
   initContextLensContentScript();
 }
 
+let deepDiveStylesInjected = false;
+function ensureDeepDiveStyles() {
+  if (deepDiveStylesInjected) return;
+  deepDiveStylesInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes clDeepDiveGlow {
+      0%   { filter: drop-shadow(0 0 0px  rgba(99,102,241,0));    }
+      50%  { filter: drop-shadow(0 0 14px rgba(99,102,241,0.75)); }
+      100% { filter: drop-shadow(0 0 7px  rgba(99,102,241,0.45)); }
+    }
+    .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
+    .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(99,102,241,0.4)); }
+  `;
+  document.head.appendChild(style);
+}
+
 function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
+let widgetDeepDiveActive = false;
 let skipNextMouseup = false;
 let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
 let selectionCheckTimer: number | null = null;
@@ -179,6 +197,7 @@ function removeWidget() {
     widget = null;
   }
   widgetMode = null;
+  widgetDeepDiveActive = false;
 }
 
 function showSaveBubble(x: number, y: number, selectedText: string) {
@@ -457,7 +476,52 @@ function showContextInput(x: number, y: number, selectedText: string) {
     });
     askBtn.addEventListener("click", askFollowup);
 
-    widget.replaceChildren(list, row);
+    const renderChildren: Node[] = [list];
+
+    if (!loading && !widgetDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
+      const deepDiveBtn = document.createElement("button");
+      deepDiveBtn.textContent = "✦ Deep Dive";
+      deepDiveBtn.setAttribute("style", `
+        align-self: flex-end;
+        background: transparent;
+        color: #818cf8;
+        border: 1px solid rgba(99,102,241,0.4);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-bottom: 10px;
+        letter-spacing: 0.02em;
+      `);
+      deepDiveBtn.addEventListener("click", () => {
+        widgetDeepDiveActive = true;
+        ensureDeepDiveStyles();
+        widget!.classList.add("cl-deep-dive-glow");
+        sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId })
+          .then((response) => {
+            widget?.classList.remove("cl-deep-dive-glow");
+            widget?.classList.add("cl-deep-dive-active");
+            renderConversation(captureId, [{ role: "assistant", content: response.explanation }]);
+          })
+          .catch((error: Error) => {
+            widget?.classList.remove("cl-deep-dive-glow");
+            widgetDeepDiveActive = false;
+            if (error.message === "DEEP_DIVE_LIMIT_REACHED") {
+              renderConversation(captureId, [...messages, {
+                role: "assistant" as const,
+                content: "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer.",
+              }]);
+            } else {
+              renderConversation(captureId, messages);
+            }
+          });
+      });
+      renderChildren.push(deepDiveBtn);
+    }
+
+    renderChildren.push(row);
+    widget.replaceChildren(...renderChildren);
     list.scrollTop = list.scrollHeight;
     setTimeout(() => followupInput.focus(), 50);
   }
@@ -645,6 +709,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelLeft = 8;
     let contextPanelTop = 8;
     let contextPanelWidth = panelWidthFor();
+    let panelDeepDiveActive = false;
 
     function removeContextPanelOutsideHandler() {
       if (!contextPanelOutsideHandler) return;
@@ -871,7 +936,52 @@ function showCropOverlay(screenshotDataUrl: string) {
       });
       askBtn.addEventListener("click", askFollowup);
 
-      contextPanel.replaceChildren(list, row);
+      const panelChildren: Node[] = [list];
+
+      if (!loading && !panelDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
+        const deepDiveBtn = document.createElement("button");
+        deepDiveBtn.textContent = "✦ Deep Dive";
+        deepDiveBtn.setAttribute("style", `
+          align-self: flex-end;
+          background: transparent;
+          color: #818cf8;
+          border: 1px solid rgba(99,102,241,0.4);
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          margin-bottom: 10px;
+          letter-spacing: 0.02em;
+        `);
+        deepDiveBtn.addEventListener("click", () => {
+          panelDeepDiveActive = true;
+          ensureDeepDiveStyles();
+          contextPanel!.classList.add("cl-deep-dive-glow");
+          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId })
+            .then((response) => {
+              contextPanel?.classList.remove("cl-deep-dive-glow");
+              contextPanel?.classList.add("cl-deep-dive-active");
+              renderConversationPanel(captureId, [{ role: "assistant", content: response.explanation }]);
+            })
+            .catch((error: Error) => {
+              contextPanel?.classList.remove("cl-deep-dive-glow");
+              panelDeepDiveActive = false;
+              if (error.message === "DEEP_DIVE_LIMIT_REACHED") {
+                renderConversationPanel(captureId, [...messages, {
+                  role: "assistant" as const,
+                  content: "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer.",
+                }]);
+              } else {
+                renderConversationPanel(captureId, messages);
+              }
+            });
+        });
+        panelChildren.push(deepDiveBtn);
+      }
+
+      panelChildren.push(row);
+      contextPanel.replaceChildren(...panelChildren);
       list.scrollTop = list.scrollHeight;
       setTimeout(() => input.focus(), 50);
       closeContextPanelOnOutsideClick();
