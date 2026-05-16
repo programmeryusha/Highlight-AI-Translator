@@ -1,11 +1,39 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-16-save-chip-dismiss-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-16-triple-click-mode-popup-v1";
+const DEFAULT_ACCENT_COLOR = "#2563eb";
+type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
   __contextLensCleanup?: () => void;
 };
+
+function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) return `#${trimmed.toLowerCase()}`;
+  return fallback;
+}
+
+function rgbTriplet(hex: string): string {
+  const color = normalizeHexColor(hex);
+  return `${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}`;
+}
+
+function colorWithAlpha(hex: string, alpha: number): string {
+  return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
+function textOnColor(hex: string): string {
+  const color = normalizeHexColor(hex);
+  const red = parseInt(color.slice(1, 3), 16) / 255;
+  const green = parseInt(color.slice(3, 5), 16) / 255;
+  const blue = parseInt(color.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return luminance > 0.62 ? "#1f2933" : "#fff";
+}
 
 if (contextLensGlobal.__contextLensContentVersion !== CONTENT_SCRIPT_VERSION) {
   contextLensGlobal.__contextLensCleanup?.();
@@ -21,12 +49,12 @@ function ensureDeepDiveStyles() {
   const style = document.createElement("style");
   style.textContent = `
     @keyframes clDeepDiveGlow {
-      0%   { filter: drop-shadow(0 0 0px  rgba(99,102,241,0));    }
-      50%  { filter: drop-shadow(0 0 14px rgba(99,102,241,0.75)); }
-      100% { filter: drop-shadow(0 0 7px  rgba(99,102,241,0.45)); }
+      0%   { filter: drop-shadow(0 0 0px  rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0));    }
+      50%  { filter: drop-shadow(0 0 14px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.75)); }
+      100% { filter: drop-shadow(0 0 7px  rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.45)); }
     }
     .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
-    .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(99,102,241,0.4)); }
+    .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.4)); }
   `;
   document.head.appendChild(style);
 }
@@ -35,33 +63,64 @@ function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
 let widgetDeepDiveActive = false;
-let widgetDevModel = "gemini-2.5-flash";
 let appMode: "language_learning" | "student" = "language_learning";
-
-chrome.storage.local.get("app_mode", (r) => { appMode = r.app_mode ?? "language_learning"; });
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.app_mode) appMode = changes.app_mode.newValue ?? "language_learning";
-});
-
-const DEV_MODELS_LIST = [
-  { label: "Haiku",   key: "haiku" },
-  { label: "Sonnet",  key: "sonnet" },
-  { label: "Opus",    key: "opus" },
-  { label: "GPT 5.5", key: "gpt-5.5" },
-  { label: "4o",      key: "gpt-4o" },
-  { label: "G3 Pro",  key: "gemini-3-pro" },
-  { label: "2.5F",    key: "gemini-2.5-flash" },
-  { label: "G3F",     key: "gemini-3-flash" },
-] as const;
+let appearanceTheme: ThemeName = "light";
+let accentColor = DEFAULT_ACCENT_COLOR;
 let skipNextMouseup = false;
 let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
 let selectionCheckTimer: number | null = null;
 let pointerIsDown = false;
 let lastSelectionAnchor: { clientX: number; clientY: number; detail: number; timestamp: number } | null = null;
 let suppressSaveBubbleUntil = 0;
-const SAVE_BUBBLE_DELAY_MS = 190;
 const SAVE_BUBBLE_DISMISS_SUPPRESS_MS = 700;
 const cleanupTasks: Array<() => void> = [];
+
+function isThemeName(value: unknown): value is ThemeName {
+  return value === "light" || value === "dark";
+}
+
+function applyAppearance(theme: unknown, accent: unknown) {
+  appearanceTheme = isThemeName(theme) ? theme : "light";
+  accentColor = normalizeHexColor(accent);
+  document.documentElement.style.setProperty("--contextlens-accent-rgb", rgbTriplet(accentColor));
+}
+
+function uiColors() {
+  const dark = appearanceTheme === "dark";
+  return {
+    panel: dark ? "rgba(30,30,40,0.96)" : "rgba(255,255,255,0.98)",
+    panelSoft: dark ? "rgba(30,30,40,0.92)" : "rgba(255,255,255,0.94)",
+    border: dark ? "rgba(255,255,255,0.14)" : "rgba(55,53,47,0.16)",
+    faintBorder: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.09)",
+    text: dark ? "#e8e8ef" : "#2f2e2b",
+    userText: dark ? "#cbd5e1" : "#504f4a",
+    muted: dark ? "#9ca3af" : "#7b7770",
+    subtle: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.06)",
+    shadow: dark ? "0 4px 20px rgba(0,0,0,0.4)" : "0 6px 24px rgba(15,15,15,0.16)",
+    accent: accentColor,
+    accentSoft: colorWithAlpha(accentColor, 0.16),
+    accentBorder: colorWithAlpha(accentColor, 0.38),
+    accentText: textOnColor(accentColor),
+    error: dark ? "#fecaca" : "#b91c1c",
+  };
+}
+
+chrome.storage.local.get(["app_mode", "theme", "accent_color"], (r) => {
+  appMode = r.app_mode ?? "language_learning";
+  applyAppearance(r.theme, r.accent_color);
+});
+
+const appearanceStorageHandler = (changes: Record<string, chrome.storage.StorageChange>) => {
+  if (changes.app_mode) appMode = changes.app_mode.newValue ?? "language_learning";
+  if (changes.theme || changes.accent_color) {
+    applyAppearance(
+      changes.theme?.newValue ?? appearanceTheme,
+      changes.accent_color?.newValue ?? accentColor,
+    );
+  }
+};
+chrome.storage.onChanged.addListener(appearanceStorageHandler);
+cleanupTasks.push(() => chrome.storage.onChanged.removeListener(appearanceStorageHandler));
 
 // Floating camera button
 let cameraBtn: HTMLElement | null = null;
@@ -162,8 +221,28 @@ function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
+function appendMarkdownText(container: HTMLElement, text: string) {
+  const lines = text.split("\n");
+  lines.forEach((line, lineIndex) => {
+    if (lineIndex > 0) container.appendChild(document.createElement("br"));
+    line.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
+      if (!part) return;
+      if (partIndex % 2 === 1) {
+        const strong = document.createElement("strong");
+        strong.textContent = part;
+        strong.style.fontWeight = "800";
+        strong.style.color = "inherit";
+        container.appendChild(strong);
+      } else {
+        container.appendChild(document.createTextNode(part));
+      }
+    });
+  });
+}
+
 function createCameraButton() {
   if (cameraBtn) return;
+  const colors = uiColors();
   cameraBtn = document.createElement("div");
   cameraBtn.title = "Screenshot to explain";
   cameraBtn.textContent = "📷";
@@ -173,8 +252,8 @@ function createCameraButton() {
     right: 24px;
     width: 44px;
     height: 44px;
-    background: #1a1a2e;
-    border: 1px solid rgba(255,255,255,0.12);
+    background: ${colors.panel};
+    border: 1px solid ${colors.border};
     border-radius: 50%;
     font-size: 20px;
     line-height: 44px;
@@ -231,6 +310,7 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
   if (widgetMode === "input") return;
   removeWidget();
   widgetMode = "bubble";
+  const colors = uiColors();
 
   widget = document.createElement("div");
   widget.textContent = "Save";
@@ -239,27 +319,27 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     `
     position: fixed;
     left: ${x}px;
-    top: ${y - 48}px;
-    transform: translate(-50%, 3px);
+    top: ${y - 34}px;
+    transform: translate(-50%, 2px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 68px;
-    height: 30px;
+    min-width: 52px;
+    height: 25px;
     box-sizing: border-box;
-    background: rgba(38, 39, 52, 0.9);
-    color: #d8dbe8;
+    background: ${appearanceTheme === "dark" ? "rgba(38, 39, 52, 0.84)" : "rgba(255,255,255,0.92)"};
+    color: ${colors.text};
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1;
     font-weight: 650;
-    padding: 0 13px;
+    padding: 0 10px;
     border-radius: 999px;
     cursor: pointer;
     z-index: 2147483647;
-    box-shadow: 0 4px 14px rgba(15,15,24,0.18);
+    box-shadow: ${appearanceTheme === "dark" ? "0 3px 10px rgba(15,15,24,0.16)" : "0 3px 10px rgba(15,15,15,0.10)"};
     user-select: none;
-    border: 1px solid rgba(255,255,255,0.12);
+    border: 1px solid ${colors.border};
     backdrop-filter: blur(8px);
     opacity: 0;
     transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
@@ -284,6 +364,7 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
 function showContextInput(x: number, y: number, selectedText: string) {
   removeWidget();
   widgetMode = "input";
+  const colors = uiColors();
 
   const widgetWidth = panelWidthFor();
   const left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
@@ -296,10 +377,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
     position: fixed;
     left: ${left}px;
     top: ${top}px;
-    background: #1a1a2e;
-    border: 1px solid rgba(255,255,255,0.12);
+    background: ${colors.panel};
+    border: 1px solid ${colors.border};
     border-radius: 10px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    box-shadow: ${colors.shadow};
     z-index: 2147483647;
     width: ${widgetWidth}px;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
@@ -314,9 +395,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
     "style",
     `
     font-size: 13px;
-    color: #6366f1;
+    color: ${colors.accent};
     padding: 8px 12px 6px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid ${colors.faintBorder};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -337,7 +418,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     background: transparent;
     border: none;
     outline: none;
-    color: #e2e8f0;
+    color: ${colors.text};
     font-size: 18px;
     line-height: 1.4;
     padding: 14px 16px;
@@ -355,6 +436,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   function styleExpandedWidget() {
     if (!widget) return;
+    const colors = uiColors();
     const maxHeight = Math.min(560, viewportHeight() - 24);
     const expandedTop = panelTopFor(top, maxHeight);
     widget.setAttribute(
@@ -363,10 +445,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
       position: fixed;
       left: ${left}px;
       top: ${expandedTop}px;
-      background: rgba(30,30,40,0.96);
-      border: 1px solid rgba(255,255,255,0.15);
+      background: ${colors.panel};
+      border: 1px solid ${colors.border};
       border-radius: 10px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      box-shadow: ${colors.shadow};
       z-index: 2147483647;
       width: ${widgetWidth}px;
       max-height: ${maxHeight}px;
@@ -383,21 +465,23 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function renderLoading() {
     if (!widget) return;
     styleExpandedWidget();
+    const colors = uiColors();
     const status = document.createElement("div");
     status.textContent = "Saving and analyzing…";
-    status.setAttribute("style", "color:#cbd5e1;font-size:16px;line-height:1.6;");
+    status.setAttribute("style", `color:${colors.text};font-size:16px;line-height:1.6;`);
     widget.replaceChildren(status);
   }
 
   function renderError(error: string) {
     if (!widget) return;
     styleExpandedWidget();
+    const colors = uiColors();
     const message = document.createElement("div");
     message.textContent = error;
-    message.setAttribute("style", "color:#fecaca;font-size:16px;line-height:1.6;margin-bottom:12px;");
+    message.setAttribute("style", `color:${colors.error};font-size:16px;line-height:1.6;margin-bottom:12px;`);
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Done";
-    closeBtn.setAttribute("style", "background:#6366f1;color:#fff;border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;");
+    closeBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
     closeBtn.addEventListener("click", removeWidget);
     widget.replaceChildren(message, closeBtn);
   }
@@ -405,6 +489,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
     if (!widget) return;
     styleExpandedWidget();
+    const colors = uiColors();
     const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
 
     const list = document.createElement("div");
@@ -414,12 +499,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     messages.forEach((message) => {
       const label = document.createElement("div");
       label.textContent = message.role === "assistant" ? "AI" : "You";
-      label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:700;margin:0 0 4px;");
+      label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
 
       const body = document.createElement("div");
-      body.textContent = message.content;
+      appendMarkdownText(body, message.content);
       body.setAttribute("style", `
-        color: ${message.role === "assistant" ? "#e2e8f0" : "#cbd5e1"};
+        color: ${message.role === "assistant" ? colors.text : colors.userText};
         font-size: ${message.role === "assistant" ? "16px" : "14px"};
         line-height: 1.65;
         margin-bottom: 12px;
@@ -433,10 +518,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (loading) {
       const label = document.createElement("div");
       label.textContent = "AI";
-      label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:700;margin:0 0 4px;");
+      label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
       const body = document.createElement("div");
       body.textContent = loadingText;
-      body.setAttribute("style", "color:#94a3b8;font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;");
+      body.setAttribute("style", `color:${widgetDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
       list.appendChild(label);
       list.appendChild(body);
     }
@@ -452,9 +537,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
       min-height: 36px;
       max-height: 120px;
       background: transparent;
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid ${colors.border};
       border-radius: 7px;
-      color: #e2e8f0;
+      color: ${colors.text};
       font-size: 14px;
       line-height: 1.45;
       outline: none;
@@ -469,8 +554,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
     askBtn.textContent = "Ask";
     askBtn.disabled = loading;
     askBtn.setAttribute("style", `
-      background: #6366f1;
-      color: #fff;
+      background: ${colors.accent};
+      color: ${colors.accentText};
       border: none;
       border-radius: 7px;
       padding: 8px 13px;
@@ -483,9 +568,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const doneBtn = document.createElement("button");
     doneBtn.textContent = "Done";
     doneBtn.setAttribute("style", `
-      background: rgba(255,255,255,0.08);
-      color: #e2e8f0;
-      border: 1px solid rgba(255,255,255,0.12);
+      background: ${colors.subtle};
+      color: ${colors.text};
+      border: 1px solid ${colors.border};
       border-radius: 7px;
       padding: 8px 12px;
       font-size: 13px;
@@ -522,21 +607,74 @@ function showContextInput(x: number, y: number, selectedText: string) {
     askBtn.addEventListener("click", askFollowup);
 
     const renderChildren: Node[] = [list];
+    const actionRow = document.createElement("div");
+    actionRow.setAttribute("style", `
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    `);
+    let analogyBox: HTMLElement | null = null;
+
+    if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+      if (analogyLoading) {
+        const analogyStatus = document.createElement("div");
+        analogyStatus.textContent = "Finding an analogy…";
+        analogyStatus.setAttribute("style", `color:${colors.muted};font-size:13px;font-style:italic;`);
+        actionRow.appendChild(analogyStatus);
+      } else if (analogyText) {
+        analogyBox = document.createElement("div");
+        analogyBox.textContent = analogyText;
+        analogyBox.setAttribute("style", `
+          background: rgba(251,191,36,0.08);
+          border: 1px solid rgba(251,191,36,0.2);
+          border-radius: 7px;
+          color: #fbbf24;
+          font-size: 14px;
+          line-height: 1.6;
+          padding: 9px 11px;
+          margin-bottom: 10px;
+        `);
+      } else {
+        const analogyBtn = document.createElement("button");
+        analogyBtn.textContent = "💡 Analogy";
+        analogyBtn.setAttribute("style", `
+          align-self: flex-start;
+          background: transparent;
+          color: #fbbf24;
+          border: 1px solid rgba(251,191,36,0.35);
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          letter-spacing: 0.02em;
+        `);
+        analogyBtn.addEventListener("click", () => {
+          analogyLoading = true;
+          renderConversation(captureId, messages, false);
+          sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
+            .then((response) => { analogyText = response.analogy; analogyLoading = false; renderConversation(captureId, messages, false); })
+            .catch(() => { analogyLoading = false; renderConversation(captureId, messages, false); });
+        });
+        actionRow.appendChild(analogyBtn);
+      }
+    }
 
     if (!loading && !widgetDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
       const deepDiveBtn = document.createElement("button");
       deepDiveBtn.textContent = "✦ Deep Dive";
       deepDiveBtn.setAttribute("style", `
-        align-self: flex-end;
-        background: transparent;
-        color: #818cf8;
-        border: 1px solid rgba(99,102,241,0.4);
+        background: ${colors.accentSoft};
+        color: ${colors.accent};
+        border: 1px solid ${colors.accentBorder};
         border-radius: 6px;
         padding: 5px 10px;
         font-size: 12px;
         font-weight: 600;
         cursor: pointer;
-        margin-bottom: 10px;
         letter-spacing: 0.02em;
       `);
       deepDiveBtn.addEventListener("click", () => {
@@ -569,102 +707,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
             }
           });
       });
-      renderChildren.push(deepDiveBtn);
+      actionRow.appendChild(deepDiveBtn);
     }
 
-    if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
-      if (analogyLoading) {
-        const analogyStatus = document.createElement("div");
-        analogyStatus.textContent = "Finding an analogy…";
-        analogyStatus.setAttribute("style", "color:#94a3b8;font-size:13px;font-style:italic;margin-bottom:10px;align-self:flex-start;");
-        renderChildren.push(analogyStatus);
-      } else if (analogyText) {
-        const analogyBox = document.createElement("div");
-        analogyBox.textContent = analogyText;
-        analogyBox.setAttribute("style", `
-          background: rgba(251,191,36,0.08);
-          border: 1px solid rgba(251,191,36,0.2);
-          border-radius: 7px;
-          color: #fbbf24;
-          font-size: 14px;
-          line-height: 1.6;
-          padding: 9px 11px;
-          margin-bottom: 10px;
-        `);
-        renderChildren.push(analogyBox);
-      } else {
-        const analogyBtn = document.createElement("button");
-        analogyBtn.textContent = "💡 Analogy";
-        analogyBtn.setAttribute("style", `
-          align-self: flex-start;
-          background: transparent;
-          color: #fbbf24;
-          border: 1px solid rgba(251,191,36,0.35);
-          border-radius: 6px;
-          padding: 5px 10px;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          margin-bottom: 10px;
-          letter-spacing: 0.02em;
-        `);
-        analogyBtn.addEventListener("click", () => {
-          analogyLoading = true;
-          renderConversation(captureId, messages, false);
-          sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content, model: widgetDevModel })
-            .then((response) => { analogyText = response.analogy; analogyLoading = false; renderConversation(captureId, messages, false); })
-            .catch(() => { analogyLoading = false; renderConversation(captureId, messages, false); });
-        });
-        renderChildren.push(analogyBtn);
-      }
-    }
-
-    if (!loading && messages.length === 1 && messages[0].role === "assistant") {
-      const devRow = document.createElement("div");
-      devRow.setAttribute("style", `
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 5px;
-        margin-bottom: 10px;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255,255,255,0.06);
-      `);
-      const devLabel = document.createElement("span");
-      devLabel.textContent = "DEV";
-      devLabel.setAttribute("style", "color:#475569;font-size:10px;font-weight:700;letter-spacing:0.08em;margin-right:2px;");
-      devRow.appendChild(devLabel);
-      DEV_MODELS_LIST.forEach(({ label, key }) => {
-        const btn = document.createElement("button");
-        btn.textContent = label;
-        const isActive = key === widgetDevModel;
-        btn.setAttribute("style", `
-          background: ${isActive ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)"};
-          color: ${isActive ? "#a5b4fc" : "#64748b"};
-          border: 1px solid ${isActive ? "rgba(99,102,241,0.45)" : "rgba(255,255,255,0.08)"};
-          border-radius: 4px;
-          padding: 3px 7px;
-          font-size: 11px;
-          font-weight: 600;
-          cursor: ${isActive ? "default" : "pointer"};
-          font-family: inherit;
-        `);
-        btn.addEventListener("click", () => {
-          if (key === widgetDevModel) return;
-          widgetDevModel = key;
-          widgetDeepDiveActive = false;
-          analogyText = "";
-          analogyLoading = false;
-          widget?.classList.remove("cl-deep-dive-glow", "cl-deep-dive-active");
-          renderConversation(captureId, messages, true, `Testing ${label}…`);
-          sendRuntimeMessage<{ explanation: string }>({ type: "DEV_EXPLAIN", captureId, model: key })
-            .then((response) => renderConversation(captureId, [{ role: "assistant", content: response.explanation }]))
-            .catch((error: Error) => renderConversation(captureId, [{ role: "assistant", content: `[${label} error] ${error.message}` }]));
-        });
-        devRow.appendChild(btn);
-      });
-      renderChildren.push(devRow);
-    }
+    if (actionRow.childNodes.length > 0) renderChildren.push(actionRow);
+    if (analogyBox) renderChildren.push(analogyBox);
 
     renderChildren.push(row);
     widget.replaceChildren(...renderChildren);
@@ -856,7 +903,6 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelTop = 8;
     let contextPanelWidth = panelWidthFor();
     let panelDeepDiveActive = false;
-    let panelDevModel = "gemini-2.5-flash";
     let panelAnalogyText = "";
     let panelAnalogyLoading = false;
 
@@ -897,7 +943,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     function redraw() {
       ctx.drawImage(img, 0, 0);
       if (selection) {
-        ctx.strokeStyle = "rgba(99,102,241,0.95)";
+        ctx.strokeStyle = colorWithAlpha(accentColor, 0.95);
         ctx.lineWidth = 2;
         ctx.strokeRect(selection.x, selection.y, selection.w, selection.h);
         ctx.strokeStyle = "rgba(255,255,255,0.85)";
@@ -918,6 +964,7 @@ function showCropOverlay(screenshotDataUrl: string) {
 
     function styleAnswerPanel() {
       if (!contextPanel) return;
+      const colors = uiColors();
       contextPanelWidth = panelWidthFor();
       const maxHeight = Math.min(560, viewportHeight() - 24);
       const top = panelTopFor(contextPanelTop, maxHeight);
@@ -925,14 +972,14 @@ function showCropOverlay(screenshotDataUrl: string) {
         position: fixed;
         left: ${contextPanelLeft}px;
         top: ${top}px;
-        background: rgba(30,30,40,0.96);
+        background: ${colors.panel};
         backdrop-filter: blur(8px);
-        border: 1px solid rgba(255,255,255,0.15);
+        border: 1px solid ${colors.border};
         border-radius: 10px;
         padding: 14px;
         width: ${contextPanelWidth}px;
         max-height: ${maxHeight}px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        box-shadow: ${colors.shadow};
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         z-index: 2147483647;
         cursor: default;
@@ -947,21 +994,23 @@ function showCropOverlay(screenshotDataUrl: string) {
     function renderLoadingPanel(text = "Analyzing…") {
       if (!contextPanel) return;
       styleAnswerPanel();
+      const colors = uiColors();
       const status = document.createElement("div");
       status.textContent = text;
-      status.setAttribute("style", "color:#cbd5e1;font-size:14px;line-height:1.6;");
+      status.setAttribute("style", `color:${colors.text};font-size:14px;line-height:1.6;`);
       contextPanel.replaceChildren(status);
     }
 
     function renderErrorPanel(error: string) {
       if (!contextPanel) return;
       styleAnswerPanel();
+      const colors = uiColors();
       const message = document.createElement("div");
       message.textContent = error;
-      message.setAttribute("style", "color:#fecaca;font-size:14px;line-height:1.6;margin-bottom:12px;");
+      message.setAttribute("style", `color:${colors.error};font-size:14px;line-height:1.6;margin-bottom:12px;`);
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Close";
-      closeBtn.setAttribute("style", "background:#6366f1;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;");
+      closeBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;`);
       closeBtn.addEventListener("click", removeCropOverlay);
       contextPanel.replaceChildren(message, closeBtn);
     }
@@ -969,6 +1018,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
       if (!contextPanel) return;
       styleAnswerPanel();
+      const colors = uiColors();
       const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
 
       const list = document.createElement("div");
@@ -978,12 +1028,12 @@ function showCropOverlay(screenshotDataUrl: string) {
       messages.forEach((message) => {
         const label = document.createElement("div");
         label.textContent = message.role === "assistant" ? "AI" : "You";
-        label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:600;margin:0 0 3px;");
+        label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
 
         const body = document.createElement("div");
-        body.textContent = message.content;
+        appendMarkdownText(body, message.content);
         body.setAttribute("style", `
-          color: ${message.role === "assistant" ? "#e2e8f0" : "#cbd5e1"};
+          color: ${message.role === "assistant" ? colors.text : colors.userText};
           font-size: ${message.role === "assistant" ? "16px" : "14px"};
           line-height: 1.65;
           margin-bottom: 12px;
@@ -997,10 +1047,10 @@ function showCropOverlay(screenshotDataUrl: string) {
       if (loading) {
         const label = document.createElement("div");
         label.textContent = "AI";
-        label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:600;margin:0 0 3px;");
+        label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
         const body = document.createElement("div");
         body.textContent = loadingText;
-        body.setAttribute("style", "color:#94a3b8;font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;");
+        body.setAttribute("style", `color:${panelDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
         list.appendChild(label);
         list.appendChild(body);
       }
@@ -1016,9 +1066,9 @@ function showCropOverlay(screenshotDataUrl: string) {
         min-height: 36px;
         max-height: 120px;
         background: transparent;
-        border: 1px solid rgba(255,255,255,0.12);
+        border: 1px solid ${colors.border};
         border-radius: 7px;
-        color: #e2e8f0;
+        color: ${colors.text};
         font-size: 14px;
         line-height: 1.45;
         outline: none;
@@ -1033,8 +1083,8 @@ function showCropOverlay(screenshotDataUrl: string) {
       askBtn.textContent = "Ask";
       askBtn.disabled = loading;
       askBtn.setAttribute("style", `
-        background: #6366f1;
-        color: #fff;
+        background: ${colors.accent};
+        color: ${colors.accentText};
         border: none;
         border-radius: 7px;
         padding: 8px 13px;
@@ -1047,9 +1097,9 @@ function showCropOverlay(screenshotDataUrl: string) {
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Done";
       closeBtn.setAttribute("style", `
-        background: rgba(255,255,255,0.08);
-        color: #e2e8f0;
-        border: 1px solid rgba(255,255,255,0.12);
+        background: ${colors.subtle};
+        color: ${colors.text};
+        border: 1px solid ${colors.border};
         border-radius: 7px;
         padding: 8px 12px;
         font-size: 13px;
@@ -1086,21 +1136,74 @@ function showCropOverlay(screenshotDataUrl: string) {
       askBtn.addEventListener("click", askFollowup);
 
       const panelChildren: Node[] = [list];
+      const actionRow = document.createElement("div");
+      actionRow.setAttribute("style", `
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      `);
+      let analogyBox: HTMLElement | null = null;
+
+      if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+        if (panelAnalogyLoading) {
+          const analogyStatus = document.createElement("div");
+          analogyStatus.textContent = "Finding an analogy…";
+          analogyStatus.setAttribute("style", `color:${colors.muted};font-size:13px;font-style:italic;`);
+          actionRow.appendChild(analogyStatus);
+        } else if (panelAnalogyText) {
+          analogyBox = document.createElement("div");
+          analogyBox.textContent = panelAnalogyText;
+          analogyBox.setAttribute("style", `
+            background: rgba(251,191,36,0.08);
+            border: 1px solid rgba(251,191,36,0.2);
+            border-radius: 7px;
+            color: #fbbf24;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 9px 11px;
+            margin-bottom: 10px;
+          `);
+        } else {
+          const analogyBtn = document.createElement("button");
+          analogyBtn.textContent = "💡 Analogy";
+          analogyBtn.setAttribute("style", `
+            align-self: flex-start;
+            background: transparent;
+            color: #fbbf24;
+            border: 1px solid rgba(251,191,36,0.35);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            letter-spacing: 0.02em;
+          `);
+          analogyBtn.addEventListener("click", () => {
+            panelAnalogyLoading = true;
+            renderConversationPanel(captureId, messages, false);
+            sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
+              .then((response) => { panelAnalogyText = response.analogy; panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); })
+              .catch(() => { panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); });
+          });
+          actionRow.appendChild(analogyBtn);
+        }
+      }
 
       if (!loading && !panelDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
         const deepDiveBtn = document.createElement("button");
         deepDiveBtn.textContent = "✦ Deep Dive";
         deepDiveBtn.setAttribute("style", `
-          align-self: flex-end;
-          background: transparent;
-          color: #818cf8;
-          border: 1px solid rgba(99,102,241,0.4);
+          background: ${colors.accentSoft};
+          color: ${colors.accent};
+          border: 1px solid ${colors.accentBorder};
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
           font-weight: 600;
           cursor: pointer;
-          margin-bottom: 10px;
           letter-spacing: 0.02em;
         `);
         deepDiveBtn.addEventListener("click", () => {
@@ -1133,102 +1236,11 @@ function showCropOverlay(screenshotDataUrl: string) {
               }
             });
         });
-        panelChildren.push(deepDiveBtn);
+        actionRow.appendChild(deepDiveBtn);
       }
 
-      if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
-        if (panelAnalogyLoading) {
-          const analogyStatus = document.createElement("div");
-          analogyStatus.textContent = "Finding an analogy…";
-          analogyStatus.setAttribute("style", "color:#94a3b8;font-size:13px;font-style:italic;margin-bottom:10px;align-self:flex-start;");
-          panelChildren.push(analogyStatus);
-        } else if (panelAnalogyText) {
-          const analogyBox = document.createElement("div");
-          analogyBox.textContent = panelAnalogyText;
-          analogyBox.setAttribute("style", `
-            background: rgba(251,191,36,0.08);
-            border: 1px solid rgba(251,191,36,0.2);
-            border-radius: 7px;
-            color: #fbbf24;
-            font-size: 14px;
-            line-height: 1.6;
-            padding: 9px 11px;
-            margin-bottom: 10px;
-          `);
-          panelChildren.push(analogyBox);
-        } else {
-          const analogyBtn = document.createElement("button");
-          analogyBtn.textContent = "💡 Analogy";
-          analogyBtn.setAttribute("style", `
-            align-self: flex-start;
-            background: transparent;
-            color: #fbbf24;
-            border: 1px solid rgba(251,191,36,0.35);
-            border-radius: 6px;
-            padding: 5px 10px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            margin-bottom: 10px;
-            letter-spacing: 0.02em;
-          `);
-          analogyBtn.addEventListener("click", () => {
-            panelAnalogyLoading = true;
-            renderConversationPanel(captureId, messages, false);
-            sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content, model: panelDevModel })
-              .then((response) => { panelAnalogyText = response.analogy; panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); })
-              .catch(() => { panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); });
-          });
-          panelChildren.push(analogyBtn);
-        }
-      }
-
-      if (!loading && messages.length === 1 && messages[0].role === "assistant") {
-        const devRow = document.createElement("div");
-        devRow.setAttribute("style", `
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 5px;
-          margin-bottom: 10px;
-          padding-top: 8px;
-          border-top: 1px solid rgba(255,255,255,0.06);
-        `);
-        const devLabel = document.createElement("span");
-        devLabel.textContent = "DEV";
-        devLabel.setAttribute("style", "color:#475569;font-size:10px;font-weight:700;letter-spacing:0.08em;margin-right:2px;");
-        devRow.appendChild(devLabel);
-        DEV_MODELS_LIST.forEach(({ label, key }) => {
-          const btn = document.createElement("button");
-          btn.textContent = label;
-          const isActive = key === panelDevModel;
-          btn.setAttribute("style", `
-            background: ${isActive ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)"};
-            color: ${isActive ? "#a5b4fc" : "#64748b"};
-            border: 1px solid ${isActive ? "rgba(99,102,241,0.45)" : "rgba(255,255,255,0.08)"};
-            border-radius: 4px;
-            padding: 3px 7px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: ${isActive ? "default" : "pointer"};
-            font-family: inherit;
-          `);
-          btn.addEventListener("click", () => {
-            if (key === panelDevModel) return;
-            panelDevModel = key;
-            panelDeepDiveActive = false;
-            panelAnalogyText = "";
-            panelAnalogyLoading = false;
-            contextPanel?.classList.remove("cl-deep-dive-glow", "cl-deep-dive-active");
-            renderConversationPanel(captureId, messages, true, `Testing ${label}…`);
-            sendRuntimeMessage<{ explanation: string }>({ type: "DEV_EXPLAIN", captureId, model: key })
-              .then((response) => renderConversationPanel(captureId, [{ role: "assistant", content: response.explanation }]))
-              .catch((error: Error) => renderConversationPanel(captureId, [{ role: "assistant", content: `[${label} error] ${error.message}` }]));
-          });
-          devRow.appendChild(btn);
-        });
-        panelChildren.push(devRow);
-      }
+      if (actionRow.childNodes.length > 0) panelChildren.push(actionRow);
+      if (analogyBox) panelChildren.push(analogyBox);
 
       panelChildren.push(row);
       contextPanel.replaceChildren(...panelChildren);
@@ -1264,6 +1276,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
       contextPanelWidth = panelWidthFor();
+      const colors = uiColors();
 
       // Position panel below the selection; fall back above if no space
       const canvasRect = canvas.getBoundingClientRect();
@@ -1291,12 +1304,12 @@ function showCropOverlay(screenshotDataUrl: string) {
         position: fixed;
         left: ${contextPanelLeft}px;
         top: ${contextPanelTop}px;
-        background: rgba(30,30,40,0.92);
+        background: ${colors.panelSoft};
         backdrop-filter: blur(8px);
-        border: 1px solid rgba(255,255,255,0.15);
+        border: 1px solid ${colors.border};
         border-radius: 10px;
         width: ${contextPanelWidth}px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        box-shadow: ${colors.shadow};
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         z-index: 2147483647;
         cursor: default;
@@ -1313,7 +1326,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         justify-content: space-between;
         gap: 12px;
         padding: 8px 12px 6px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
+        border-bottom: 1px solid ${colors.faintBorder};
       `);
 
       const preview = document.createElement("div");
@@ -1324,7 +1337,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         text-overflow: ellipsis;
         white-space: nowrap;
         font-size: 13px;
-        color: #6366f1;
+        color: ${colors.accent};
       `);
 
       const cancelBtn = document.createElement("button");
@@ -1332,8 +1345,8 @@ function showCropOverlay(screenshotDataUrl: string) {
       cancelBtn.title = "Cancel screenshot";
       cancelBtn.setAttribute("style", `
         background: transparent;
-        color: #cbd5e1;
-        border: 1px solid rgba(255,255,255,0.12);
+        color: ${colors.text};
+        border: 1px solid ${colors.border};
         border-radius: 6px;
         padding: 6px 10px;
         font-size: 12px;
@@ -1355,7 +1368,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         max-height: 120px;
         background: transparent;
         border: none;
-        color: #e2e8f0;
+        color: ${colors.text};
         font-size: 18px;
         line-height: 1.4;
         outline: none;
@@ -1627,7 +1640,7 @@ function extractSelectionText(selection: Selection): string {
   return raw;
 }
 
-function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false, delay = SAVE_BUBBLE_DELAY_MS) {
+function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (saveBubbleSuppressed()) return;
   if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
   if (pageHasTypingFocus(event?.target ?? null)) {
@@ -1641,37 +1654,34 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false, del
     ? { clientX: event.clientX, clientY: event.clientY, detail: event.detail }
     : recentAnchor;
   clearSelectionCheckTimer();
-  selectionCheckTimer = window.setTimeout(() => {
-    selectionCheckTimer = null;
-    if (saveBubbleSuppressed()) return;
-    if (widgetMode === "input") return;
-    if (pageHasTypingFocus()) {
-      if (widgetMode === "bubble") removeWidget();
-      return;
-    }
-    const selection = window.getSelection();
-    const text = selection ? extractSelectionText(selection) : "";
+  if (saveBubbleSuppressed()) return;
+  if (widgetMode === "input") return;
+  if (pageHasTypingFocus()) {
+    if (widgetMode === "bubble") removeWidget();
+    return;
+  }
+  const selection = window.getSelection();
+  const text = selection ? extractSelectionText(selection) : "";
 
-    if (text.length > 0 && selection && selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      const rect = rangeAnchorRect(range, anchor && anchor.detail >= 2 ? anchor : undefined);
-      if (!rect) return;
-      const x = fixedViewportX(rect.left + rect.width / 2);
-      const y = fixedViewportY(rect.top);
+  if (text.length > 0 && selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    const rect = rangeAnchorRect(range, anchor && anchor.detail >= 2 ? anchor : undefined);
+    if (!rect) return;
+    const x = fixedViewportX(rect.left + rect.width / 2);
+    const y = fixedViewportY(rect.top);
 
-      chrome.storage.local.get("save_triggers", (result) => {
-        const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
-        if (triggers.bubble) {
-          showSaveBubble(x, y, text);
-        }
-      });
-    } else if (removeWhenEmpty) {
-      const target = event?.target as HTMLElement | undefined;
-      if (widget && (!target || !widget.contains(target))) {
-        removeWidget();
+    chrome.storage.local.get("save_triggers", (result) => {
+      const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
+      if (triggers.bubble) {
+        showSaveBubble(x, y, text);
       }
+    });
+  } else if (removeWhenEmpty) {
+    const target = event?.target as HTMLElement | undefined;
+    if (widget && (!target || !widget.contains(target))) {
+      removeWidget();
     }
-  }, delay);
+  }
 }
 
 const documentMousedownHandler = (event: MouseEvent) => {
@@ -1681,7 +1691,9 @@ const documentMousedownHandler = (event: MouseEvent) => {
 
   if (widgetMode === "bubble" && widget && (!clickedWidget || isPageEditableTarget(target))) {
     removeWidget();
-    suppressSaveBubble();
+    if (event.detail <= 1 || isPageEditableTarget(target)) {
+      suppressSaveBubble();
+    }
   }
 
   if (!isInContextLensUi(target)) return;
@@ -1700,7 +1712,7 @@ const documentMouseupHandler = (event: MouseEvent) => {
   };
   if (skipNextMouseup) { skipNextMouseup = false; return; }
   if (saveBubbleSuppressed()) return;
-  scheduleSelectionCheck(event, true, event.detail >= 3 ? SAVE_BUBBLE_DELAY_MS + 40 : SAVE_BUBBLE_DELAY_MS);
+  scheduleSelectionCheck(event, true);
 };
 document.addEventListener("mouseup", documentMouseupHandler, true);
 cleanupTasks.push(() => document.removeEventListener("mouseup", documentMouseupHandler, true));
@@ -1712,7 +1724,7 @@ const selectionChangeHandler = () => {
     if (widgetMode === "bubble") removeWidget();
     return;
   }
-  scheduleSelectionCheck(undefined, false, SAVE_BUBBLE_DELAY_MS + 40);
+  scheduleSelectionCheck(undefined, false);
 };
 document.addEventListener("selectionchange", selectionChangeHandler);
 cleanupTasks.push(() => document.removeEventListener("selectionchange", selectionChangeHandler));

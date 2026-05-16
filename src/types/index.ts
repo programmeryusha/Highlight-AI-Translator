@@ -40,9 +40,9 @@ export type Message =
   | { type: "SIGN_UP"; email: string; password: string }
   | { type: "SIGN_IN"; email: string; password: string }
   | { type: "SIGN_OUT" }
+  | { type: "DELETE_ACCOUNT" }
   | { type: "DEEP_DIVE"; captureId: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "OPEN_DASHBOARD" }
-  | { type: "DEV_EXPLAIN"; captureId: string; model: string }
-  | { type: "ANALOGY"; text: string; model: string };
+  | { type: "ANALOGY"; text: string };

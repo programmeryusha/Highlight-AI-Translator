@@ -42,11 +42,6 @@ async function throwResponseError(label: string, res: Response): Promise<never> 
   throw new Error(`${label}: ${res.status}${shortDetail}`);
 }
 
-// Open dashboard when extension icon is clicked
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
-});
-
 void injectIntoOpenTabs();
 void syncCapturesWithRemote().catch((error) => {
   console.warn("ContextLens remote sync skipped", error);
@@ -222,6 +217,12 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "DELETE_ACCOUNT") {
+    deleteAccount()
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
   if (message.type === "DEEP_DIVE") {
     deepDive(message.captureId)
       .then(sendResponse)
@@ -229,13 +230,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "ANALOGY") {
-    generateAnalogy(message.text, message.model)
-      .then(sendResponse)
-      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
-    return true;
-  }
-  if (message.type === "DEV_EXPLAIN") {
-    devExplain(message.captureId, message.model)
+    generateAnalogy(message.text)
       .then(sendResponse)
       .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -344,6 +339,20 @@ async function signIn(email: string, password: string): Promise<ContextLensUser>
 
 async function signOut(): Promise<void> {
   await chrome.storage.local.remove("contextlens_user");
+}
+
+async function deleteAccount(): Promise<{ deleted: boolean }> {
+  const account = await getAccount();
+  if (!account) throw new Error("No account is signed in.");
+
+  const res = await fetch(`${BACKEND_URL}/auth/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: account.token }),
+  });
+  if (!res.ok) await throwResponseError("Delete account error", res);
+  await chrome.storage.local.remove("contextlens_user");
+  return { deleted: true };
 }
 
 async function saveCaptureRemote(capture: Capture): Promise<void> {
@@ -538,9 +547,9 @@ async function deepDive(captureId: string): Promise<{ explanation: string; messa
   return { explanation, messages };
 }
 
-async function generateAnalogy(text: string, model: string): Promise<{ analogy: string }> {
+async function generateAnalogy(text: string): Promise<{ analogy: string }> {
   const mode = await getAppMode();
-  const body: Record<string, unknown> = { text, context: "", analogy: true, model, mode };
+  const body: Record<string, unknown> = { text, context: "", analogy: true, mode };
   const res = await fetch(`${BACKEND_URL}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -551,29 +560,6 @@ async function generateAnalogy(text: string, model: string): Promise<{ analogy: 
   return { analogy: data.explanation ?? "" };
 }
 
-async function devExplain(captureId: string, model: string): Promise<{ explanation: string }> {
-  const storage = await chrome.storage.local.get("captures");
-  const captures: Capture[] = storage.captures ?? [];
-  const capture = captures.find((c) => c.id === captureId);
-  if (!capture) throw new Error("Saved item not found.");
-
-  const mode = await getAppMode();
-  const body: Record<string, unknown> = {
-    text: capture.text,
-    context: capture.context,
-    image_base64: capture.imageData?.split(",")[1] ?? null,
-    model,
-    mode,
-  };
-  const res = await fetch(`${BACKEND_URL}/explain`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) await throwResponseError("Dev explain error", res);
-  const data = await res.json();
-  return { explanation: data.explanation ?? "" };
-}
 
 async function saveHighlight(text: string, url: string, title: string, context: string): Promise<{ captureId: string; explanation: string }> {
   const id = crypto.randomUUID();
