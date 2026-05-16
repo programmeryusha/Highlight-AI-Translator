@@ -1,0 +1,67 @@
+[
+  {
+    "id": "youtube-comments-covid-1",
+    "file": "youtube-comments-covid-1.png",
+    "question": "Translate the two comments underneath the first one. Pay special attention to كفاية كذبة كورونا and السفينة."
+  },
+  {
+    "id": "youtube-comments-dialect-2",
+    "file": "youtube-comments-dialect-2.png",
+    "question": "Explain the strange dialect phrases هته آخر أيام لنا and هالعالم in these comments."
+  },
+  {
+    "id": "youtube-comments-replies-3",
+    "file": "youtube-comments-replies-3.png",
+    "question": "What does قصف في منتصف الجبهة mean in this reply thread?"
+  },
+  {
+    "id": "youtube-comments-virus-4",
+    "file": "youtube-comments-virus-4.png",
+    "question": "Explain the phrase كلهم فيروسات ما خلاها وما راح يخليها in context."
+  },
+  {
+    "id": "youtube-comments-replies-6",
+    "file": "youtube-comments-replies-6.png",
+    "question": "Explain the final long reply in plain English, especially ما أصيب ولا واحد and كورونا وهم."
+  },
+  {
+    "id": "poetry",
+    "file": "poetry.png",
+    "question": "Explain the second paragraph in this screenshot."
+  },
+  {
+    "id": "stories-2",
+    "file": "stories_2.png",
+    "question": "Explain the word مصقولة in context."
+  },
+  {
+    "id": "kaleela",
+    "file": "kaleela.png",
+    "question": "Explain these words and phrases in context: التمس، يعقل، يحتال، علل، متقنه على أفواه الطير، شعاب، أما هو، اجتمع له أمره، احتنك، ثاب، قد كنز."
+  },
+  {
+    "id": "kaleela-2",
+    "file": "kaleela_2.png",
+    "question": "Explain these phrases in context: إن كثرت أصول العلم، علل، التثبت."
+  },
+  {
+    "id": "huroof",
+    "file": "huroof.png",
+    "question": "Explain the entire passage generally, and explain مدارج and مخارج."
+  },
+  {
+    "id": "trip",
+    "file": "trip.png",
+    "question": "Explain the place he is in and where he went to."
+  },
+  {
+    "id": "trip-2",
+    "file": "trip_2.png",
+    "question": "Explain the places he went to."
+  },
+  {
+    "id": "labeed",
+    "file": "labeed.png",
+    "question": "Explain the poem and the footnote definitions generally."
+  }
+]

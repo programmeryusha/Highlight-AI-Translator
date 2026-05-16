@@ -14,7 +14,7 @@ export default function PrivacyApp() {
         <p>Text you highlight and notes you add are sent to our backend server to generate an explanation. They are stored in your account so you can review them later. Screenshot regions you select are processed the same way.</p>
         <p style={{ marginTop: 10 }}>Your highlights are stored in two places:</p>
         <ul style={{ paddingLeft: 20, marginTop: 6 }}>
-          <li>Locally in <code>chrome.storage.local</code> on your device</li>
+          <li>Locally in <code style={{ fontFamily: "monospace", fontSize: "0.9em", background: "#f0efec", borderRadius: 4, padding: "1px 5px" }}>chrome.storage.local</code> on your device</li>
           <li>On our backend database (PostgreSQL hosted on Railway) linked to your account</li>
         </ul>
       </Section>

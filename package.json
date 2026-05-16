@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bench:models": "node scripts/model-benchmark.mjs",
+    "bench:report": "node scripts/render-eval-report.mjs",
+    "bench:deep-models": "node scripts/model-benchmark.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",

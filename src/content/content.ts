@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-13-visual-crop-v2";
+const CONTENT_SCRIPT_VERSION = "2026-05-16-save-chip-dismiss-v1";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -35,9 +35,32 @@ function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
 let widgetDeepDiveActive = false;
+let widgetDevModel = "gemini-2.5-flash";
+let appMode: "language_learning" | "student" = "language_learning";
+
+chrome.storage.local.get("app_mode", (r) => { appMode = r.app_mode ?? "language_learning"; });
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.app_mode) appMode = changes.app_mode.newValue ?? "language_learning";
+});
+
+const DEV_MODELS_LIST = [
+  { label: "Haiku",   key: "haiku" },
+  { label: "Sonnet",  key: "sonnet" },
+  { label: "Opus",    key: "opus" },
+  { label: "GPT 5.5", key: "gpt-5.5" },
+  { label: "4o",      key: "gpt-4o" },
+  { label: "G3 Pro",  key: "gemini-3-pro" },
+  { label: "2.5F",    key: "gemini-2.5-flash" },
+  { label: "G3F",     key: "gemini-3-flash" },
+] as const;
 let skipNextMouseup = false;
 let widgetOutsideHandler: ((event: MouseEvent) => void) | null = null;
 let selectionCheckTimer: number | null = null;
+let pointerIsDown = false;
+let lastSelectionAnchor: { clientX: number; clientY: number; detail: number; timestamp: number } | null = null;
+let suppressSaveBubbleUntil = 0;
+const SAVE_BUBBLE_DELAY_MS = 190;
+const SAVE_BUBBLE_DISMISS_SUPPRESS_MS = 700;
 const cleanupTasks: Array<() => void> = [];
 
 // Floating camera button
@@ -66,6 +89,10 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
 
 function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
   chrome.storage.local.get(["answer_immediate", "screenshot_triggers"], (result) => {
+    if (result.answer_immediate === undefined && result.screenshot_triggers === undefined) {
+      callback(true);
+      return;
+    }
     callback(Boolean(result.answer_immediate || result.screenshot_triggers?.immediate));
   });
 }
@@ -212,19 +239,30 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     `
     position: fixed;
     left: ${x}px;
-    top: ${y - 40}px;
-    background: #1a1a2e;
-    color: #e2e8f0;
+    top: ${y - 48}px;
+    transform: translate(-50%, 3px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 68px;
+    height: 30px;
+    box-sizing: border-box;
+    background: rgba(38, 39, 52, 0.9);
+    color: #d8dbe8;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 13px;
-    font-weight: 600;
-    padding: 5px 14px;
+    line-height: 1;
+    font-weight: 650;
+    padding: 0 13px;
     border-radius: 999px;
     cursor: pointer;
     z-index: 2147483647;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 14px rgba(15,15,24,0.18);
     user-select: none;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
   `
   );
 
@@ -236,6 +274,11 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
   });
 
   appendToPage(widget);
+  requestAnimationFrame(() => {
+    if (!widget || widgetMode !== "bubble") return;
+    widget.style.opacity = "1";
+    widget.style.transform = "translate(-50%, 0)";
+  });
 }
 
 function showContextInput(x: number, y: number, selectedText: string) {
@@ -307,6 +350,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
   trapScroll(input);
 
   let submitted = false;
+  let analogyText = "";
+  let analogyLoading = false;
 
   function styleExpandedWidget() {
     if (!widget) return;
@@ -357,7 +402,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     widget.replaceChildren(message, closeBtn);
   }
 
-  function renderConversation(captureId: string, messages: ChatMessage[], loading = false) {
+  function renderConversation(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
     if (!widget) return;
     styleExpandedWidget();
     const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
@@ -390,7 +435,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       label.textContent = "AI";
       label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:700;margin:0 0 4px;");
       const body = document.createElement("div");
-      body.textContent = "Thinking…";
+      body.textContent = loadingText;
       body.setAttribute("style", "color:#94a3b8;font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;");
       list.appendChild(label);
       list.appendChild(body);
@@ -459,8 +504,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
       const question = followupInput.value.trim();
       if (!question || loading) return;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-      renderConversation(captureId, nextMessages, true);
-      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question })
+      renderConversation(captureId, nextMessages, true, widgetDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
+      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question, deepDive: widgetDeepDiveActive })
         .then((response) => renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
         .catch((error) => renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
     }
@@ -497,12 +542,19 @@ function showContextInput(x: number, y: number, selectedText: string) {
       deepDiveBtn.addEventListener("click", () => {
         widgetDeepDiveActive = true;
         ensureDeepDiveStyles();
-        widget!.classList.add("cl-deep-dive-glow");
-        sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId })
+        renderConversation(captureId, messages, true, "Thinking through a deeper answer…");
+        widget?.classList.add("cl-deep-dive-glow");
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
+        );
+        Promise.race([
+          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId }),
+          timeout,
+        ])
           .then((response) => {
             widget?.classList.remove("cl-deep-dive-glow");
             widget?.classList.add("cl-deep-dive-active");
-            renderConversation(captureId, [{ role: "assistant", content: response.explanation }]);
+            renderConversation(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
           })
           .catch((error: Error) => {
             widget?.classList.remove("cl-deep-dive-glow");
@@ -518,6 +570,100 @@ function showContextInput(x: number, y: number, selectedText: string) {
           });
       });
       renderChildren.push(deepDiveBtn);
+    }
+
+    if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+      if (analogyLoading) {
+        const analogyStatus = document.createElement("div");
+        analogyStatus.textContent = "Finding an analogy…";
+        analogyStatus.setAttribute("style", "color:#94a3b8;font-size:13px;font-style:italic;margin-bottom:10px;align-self:flex-start;");
+        renderChildren.push(analogyStatus);
+      } else if (analogyText) {
+        const analogyBox = document.createElement("div");
+        analogyBox.textContent = analogyText;
+        analogyBox.setAttribute("style", `
+          background: rgba(251,191,36,0.08);
+          border: 1px solid rgba(251,191,36,0.2);
+          border-radius: 7px;
+          color: #fbbf24;
+          font-size: 14px;
+          line-height: 1.6;
+          padding: 9px 11px;
+          margin-bottom: 10px;
+        `);
+        renderChildren.push(analogyBox);
+      } else {
+        const analogyBtn = document.createElement("button");
+        analogyBtn.textContent = "💡 Analogy";
+        analogyBtn.setAttribute("style", `
+          align-self: flex-start;
+          background: transparent;
+          color: #fbbf24;
+          border: 1px solid rgba(251,191,36,0.35);
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          margin-bottom: 10px;
+          letter-spacing: 0.02em;
+        `);
+        analogyBtn.addEventListener("click", () => {
+          analogyLoading = true;
+          renderConversation(captureId, messages, false);
+          sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content, model: widgetDevModel })
+            .then((response) => { analogyText = response.analogy; analogyLoading = false; renderConversation(captureId, messages, false); })
+            .catch(() => { analogyLoading = false; renderConversation(captureId, messages, false); });
+        });
+        renderChildren.push(analogyBtn);
+      }
+    }
+
+    if (!loading && messages.length === 1 && messages[0].role === "assistant") {
+      const devRow = document.createElement("div");
+      devRow.setAttribute("style", `
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255,255,255,0.06);
+      `);
+      const devLabel = document.createElement("span");
+      devLabel.textContent = "DEV";
+      devLabel.setAttribute("style", "color:#475569;font-size:10px;font-weight:700;letter-spacing:0.08em;margin-right:2px;");
+      devRow.appendChild(devLabel);
+      DEV_MODELS_LIST.forEach(({ label, key }) => {
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        const isActive = key === widgetDevModel;
+        btn.setAttribute("style", `
+          background: ${isActive ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)"};
+          color: ${isActive ? "#a5b4fc" : "#64748b"};
+          border: 1px solid ${isActive ? "rgba(99,102,241,0.45)" : "rgba(255,255,255,0.08)"};
+          border-radius: 4px;
+          padding: 3px 7px;
+          font-size: 11px;
+          font-weight: 600;
+          cursor: ${isActive ? "default" : "pointer"};
+          font-family: inherit;
+        `);
+        btn.addEventListener("click", () => {
+          if (key === widgetDevModel) return;
+          widgetDevModel = key;
+          widgetDeepDiveActive = false;
+          analogyText = "";
+          analogyLoading = false;
+          widget?.classList.remove("cl-deep-dive-glow", "cl-deep-dive-active");
+          renderConversation(captureId, messages, true, `Testing ${label}…`);
+          sendRuntimeMessage<{ explanation: string }>({ type: "DEV_EXPLAIN", captureId, model: key })
+            .then((response) => renderConversation(captureId, [{ role: "assistant", content: response.explanation }]))
+            .catch((error: Error) => renderConversation(captureId, [{ role: "assistant", content: `[${label} error] ${error.message}` }]));
+        });
+        devRow.appendChild(btn);
+      });
+      renderChildren.push(devRow);
     }
 
     renderChildren.push(row);
@@ -710,6 +856,9 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelTop = 8;
     let contextPanelWidth = panelWidthFor();
     let panelDeepDiveActive = false;
+    let panelDevModel = "gemini-2.5-flash";
+    let panelAnalogyText = "";
+    let panelAnalogyLoading = false;
 
     function removeContextPanelOutsideHandler() {
       if (!contextPanelOutsideHandler) return;
@@ -817,7 +966,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(message, closeBtn);
     }
 
-    function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false) {
+    function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
       if (!contextPanel) return;
       styleAnswerPanel();
       const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
@@ -850,7 +999,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         label.textContent = "AI";
         label.setAttribute("style", "color:#94a3b8;font-size:11px;font-weight:600;margin:0 0 3px;");
         const body = document.createElement("div");
-        body.textContent = "Thinking…";
+        body.textContent = loadingText;
         body.setAttribute("style", "color:#94a3b8;font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;");
         list.appendChild(label);
         list.appendChild(body);
@@ -919,8 +1068,8 @@ function showCropOverlay(screenshotDataUrl: string) {
         const question = input.value.trim();
         if (!question || loading) return;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-        renderConversationPanel(captureId, nextMessages, true);
-        sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question })
+        renderConversationPanel(captureId, nextMessages, true, panelDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
+        sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question, deepDive: panelDeepDiveActive })
           .then((response) => renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
           .catch((error) => renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
       }
@@ -957,12 +1106,19 @@ function showCropOverlay(screenshotDataUrl: string) {
         deepDiveBtn.addEventListener("click", () => {
           panelDeepDiveActive = true;
           ensureDeepDiveStyles();
-          contextPanel!.classList.add("cl-deep-dive-glow");
-          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId })
+          renderConversationPanel(captureId, messages, true, "Thinking through a deeper answer…");
+          contextPanel?.classList.add("cl-deep-dive-glow");
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
+          );
+          Promise.race([
+            sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId }),
+            timeout,
+          ])
             .then((response) => {
               contextPanel?.classList.remove("cl-deep-dive-glow");
               contextPanel?.classList.add("cl-deep-dive-active");
-              renderConversationPanel(captureId, [{ role: "assistant", content: response.explanation }]);
+              renderConversationPanel(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
             })
             .catch((error: Error) => {
               contextPanel?.classList.remove("cl-deep-dive-glow");
@@ -978,6 +1134,100 @@ function showCropOverlay(screenshotDataUrl: string) {
             });
         });
         panelChildren.push(deepDiveBtn);
+      }
+
+      if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+        if (panelAnalogyLoading) {
+          const analogyStatus = document.createElement("div");
+          analogyStatus.textContent = "Finding an analogy…";
+          analogyStatus.setAttribute("style", "color:#94a3b8;font-size:13px;font-style:italic;margin-bottom:10px;align-self:flex-start;");
+          panelChildren.push(analogyStatus);
+        } else if (panelAnalogyText) {
+          const analogyBox = document.createElement("div");
+          analogyBox.textContent = panelAnalogyText;
+          analogyBox.setAttribute("style", `
+            background: rgba(251,191,36,0.08);
+            border: 1px solid rgba(251,191,36,0.2);
+            border-radius: 7px;
+            color: #fbbf24;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 9px 11px;
+            margin-bottom: 10px;
+          `);
+          panelChildren.push(analogyBox);
+        } else {
+          const analogyBtn = document.createElement("button");
+          analogyBtn.textContent = "💡 Analogy";
+          analogyBtn.setAttribute("style", `
+            align-self: flex-start;
+            background: transparent;
+            color: #fbbf24;
+            border: 1px solid rgba(251,191,36,0.35);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 10px;
+            letter-spacing: 0.02em;
+          `);
+          analogyBtn.addEventListener("click", () => {
+            panelAnalogyLoading = true;
+            renderConversationPanel(captureId, messages, false);
+            sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content, model: panelDevModel })
+              .then((response) => { panelAnalogyText = response.analogy; panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); })
+              .catch(() => { panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); });
+          });
+          panelChildren.push(analogyBtn);
+        }
+      }
+
+      if (!loading && messages.length === 1 && messages[0].role === "assistant") {
+        const devRow = document.createElement("div");
+        devRow.setAttribute("style", `
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 5px;
+          margin-bottom: 10px;
+          padding-top: 8px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+        `);
+        const devLabel = document.createElement("span");
+        devLabel.textContent = "DEV";
+        devLabel.setAttribute("style", "color:#475569;font-size:10px;font-weight:700;letter-spacing:0.08em;margin-right:2px;");
+        devRow.appendChild(devLabel);
+        DEV_MODELS_LIST.forEach(({ label, key }) => {
+          const btn = document.createElement("button");
+          btn.textContent = label;
+          const isActive = key === panelDevModel;
+          btn.setAttribute("style", `
+            background: ${isActive ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)"};
+            color: ${isActive ? "#a5b4fc" : "#64748b"};
+            border: 1px solid ${isActive ? "rgba(99,102,241,0.45)" : "rgba(255,255,255,0.08)"};
+            border-radius: 4px;
+            padding: 3px 7px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: ${isActive ? "default" : "pointer"};
+            font-family: inherit;
+          `);
+          btn.addEventListener("click", () => {
+            if (key === panelDevModel) return;
+            panelDevModel = key;
+            panelDeepDiveActive = false;
+            panelAnalogyText = "";
+            panelAnalogyLoading = false;
+            contextPanel?.classList.remove("cl-deep-dive-glow", "cl-deep-dive-active");
+            renderConversationPanel(captureId, messages, true, `Testing ${label}…`);
+            sendRuntimeMessage<{ explanation: string }>({ type: "DEV_EXPLAIN", captureId, model: key })
+              .then((response) => renderConversationPanel(captureId, [{ role: "assistant", content: response.explanation }]))
+              .catch((error: Error) => renderConversationPanel(captureId, [{ role: "assistant", content: `[${label} error] ${error.message}` }]));
+          });
+          devRow.appendChild(btn);
+        });
+        panelChildren.push(devRow);
       }
 
       panelChildren.push(row);
@@ -1205,16 +1455,208 @@ chrome.runtime.onMessage.addListener(runtimeMessageHandler);
 cleanupTasks.push(() => chrome.runtime.onMessage.removeListener(runtimeMessageHandler));
 
 // Show Save bubble (or immediate context input) on text selection
-const documentMouseupHandler = (e: MouseEvent) => {
-  if (skipNextMouseup) { skipNextMouseup = false; return; }
-  setTimeout(() => {
+type RectLike = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
+type SelectionAnchor = { clientX: number; clientY: number };
+
+function isInContextLensUi(target: EventTarget | null) {
+  if (!(target instanceof Node)) return false;
+  return Boolean(
+    (widget && widget.contains(target)) ||
+    (cropOverlay && cropOverlay.contains(target)) ||
+    (cameraBtn && cameraBtn.contains(target))
+  );
+}
+
+function targetElement(target: EventTarget | null): Element | null {
+  if (target instanceof Element) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+}
+
+function isPageEditableTarget(target: EventTarget | null) {
+  const element = targetElement(target);
+  if (!element || isInContextLensUi(element)) return false;
+
+  const editable = element.closest("input, textarea, select, [contenteditable], [role='textbox']");
+  if (!editable) return false;
+
+  if (editable instanceof HTMLInputElement) {
+    return !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(editable.type);
+  }
+
+  if (editable instanceof HTMLTextAreaElement || editable instanceof HTMLSelectElement) return true;
+  if (editable.getAttribute("role") === "textbox") return true;
+  return (editable as HTMLElement).isContentEditable;
+}
+
+function pageHasTypingFocus(target?: EventTarget | null) {
+  return isPageEditableTarget(target ?? null) || isPageEditableTarget(document.activeElement);
+}
+
+function clearSelectionCheckTimer() {
+  if (selectionCheckTimer === null) return;
+  window.clearTimeout(selectionCheckTimer);
+  selectionCheckTimer = null;
+}
+
+function suppressSaveBubble(ms = SAVE_BUBBLE_DISMISS_SUPPRESS_MS) {
+  suppressSaveBubbleUntil = performance.now() + ms;
+  clearSelectionCheckTimer();
+}
+
+function saveBubbleSuppressed() {
+  return performance.now() < suppressSaveBubbleUntil;
+}
+
+function firstUsableRect(rects: DOMRectList | DOMRect[]) {
+  return Array.from(rects).find((rect) => rect.width >= 0 && rect.height > 0);
+}
+
+function visibleSelectionRects(range: Range) {
+  return Array.from(range.getClientRects()).filter((rect) => (
+    rect.width > 1 &&
+    rect.height > 1 &&
+    rect.bottom > 0 &&
+    rect.top < viewportHeight() &&
+    rect.right > 0 &&
+    rect.left < viewportWidth()
+  ));
+}
+
+function collapsedRangeRect(range: Range, toStart: boolean): RectLike | null {
+  const collapsed = range.cloneRange();
+  collapsed.collapse(toStart);
+  return firstUsableRect(collapsed.getClientRects()) ?? collapsed.getBoundingClientRect();
+}
+
+function unionRects(rects: RectLike[]): RectLike {
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const right = Math.max(...rects.map((rect) => rect.right));
+  const bottom = Math.max(...rects.map((rect) => rect.bottom));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function rectDistanceSquared(rect: RectLike, point: SelectionAnchor) {
+  const x = Math.max(rect.left, Math.min(point.clientX, rect.right));
+  const y = Math.max(rect.top, Math.min(point.clientY, rect.bottom));
+  return (point.clientX - x) ** 2 + (point.clientY - y) ** 2;
+}
+
+function groupRectsByLine(rects: RectLike[]) {
+  const groups: RectLike[][] = [];
+  const sortedRects = [...rects].sort((a, b) => a.top - b.top || a.left - b.left);
+
+  sortedRects.forEach((rect) => {
+    const group = groups.find((candidate) => {
+      const groupRect = unionRects(candidate);
+      return Math.abs(rect.top - groupRect.top) <= Math.max(4, rect.height * 0.35, groupRect.height * 0.35);
+    });
+    if (group) group.push(rect);
+    else groups.push([rect]);
+  });
+
+  return groups;
+}
+
+function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | null {
+  const rects = visibleSelectionRects(range);
+  if (rects.length > 0) {
+    const lineGroups = groupRectsByLine(rects);
+    if (anchor) {
+      const closestLine = lineGroups
+        .map((group) => ({ group, rect: unionRects(group) }))
+        .sort((a, b) => rectDistanceSquared(a.rect, anchor) - rectDistanceSquared(b.rect, anchor))[0];
+      return closestLine ? closestLine.rect : unionRects(rects);
+    }
+    return unionRects(lineGroups[0] ?? rects);
+  }
+
+  const startRect = collapsedRangeRect(range, true);
+  const endRect = collapsedRangeRect(range, false);
+  const sameLineTolerance = Math.max(8, Math.min(startRect?.height ?? 0, endRect?.height ?? 0) * 0.75);
+
+  if (
+    startRect &&
+    endRect &&
+    Math.abs(startRect.top - endRect.top) <= sameLineTolerance &&
+    Math.abs(startRect.left - endRect.left) > 1
+  ) {
+    const left = Math.min(startRect.left, endRect.left);
+    const right = Math.max(startRect.left, endRect.left);
+    const top = Math.min(startRect.top, endRect.top);
+    const bottom = Math.max(startRect.bottom, endRect.bottom);
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }
+
+  const fallback = range.getBoundingClientRect();
+  if (fallback.width > 1 && fallback.height > 1) return fallback;
+  return null;
+}
+
+function extractSelectionText(selection: Selection): string {
+  const raw = selection.toString().trim();
+  if (!raw) return "";
+
+  // If text is ONLY tatweel/kashida (ـ) characters plus whitespace, the site is likely
+  // using a Quran calligraphy font where a single placeholder character renders as Arabic.
+  // Try aria-label attributes on elements within the selection as a fallback.
+  if (/^[ـ\s]+$/.test(raw) && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    const container = range.commonAncestorContainer;
+    const el = container instanceof Element ? container : container.parentElement;
+    if (el) {
+      const labels: string[] = [];
+      el.querySelectorAll("[aria-label]").forEach((candidate) => {
+        if (range.intersectsNode(candidate)) {
+          const label = candidate.getAttribute("aria-label");
+          if (label?.trim()) labels.push(label.trim());
+        }
+      });
+      if (labels.length > 0) return labels.join(" ");
+      // Fall back to the ancestor's own aria-label if nothing inside matched
+      let cur: Element | null = el;
+      while (cur && cur !== document.body) {
+        const label = cur.getAttribute("aria-label") || cur.getAttribute("data-text");
+        if (label?.trim()) return label.trim();
+        cur = cur.parentElement;
+      }
+    }
+  }
+
+  return raw;
+}
+
+function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false, delay = SAVE_BUBBLE_DELAY_MS) {
+  if (saveBubbleSuppressed()) return;
+  if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
+  if (pageHasTypingFocus(event?.target ?? null)) {
+    if (widgetMode === "bubble") removeWidget();
+    return;
+  }
+  const recentAnchor = lastSelectionAnchor && performance.now() - lastSelectionAnchor.timestamp < 1000
+    ? lastSelectionAnchor
+    : null;
+  const anchor = event
+    ? { clientX: event.clientX, clientY: event.clientY, detail: event.detail }
+    : recentAnchor;
+  clearSelectionCheckTimer();
+  selectionCheckTimer = window.setTimeout(() => {
+    selectionCheckTimer = null;
+    if (saveBubbleSuppressed()) return;
+    if (widgetMode === "input") return;
+    if (pageHasTypingFocus()) {
+      if (widgetMode === "bubble") removeWidget();
+      return;
+    }
     const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? "";
+    const text = selection ? extractSelectionText(selection) : "";
 
     if (text.length > 0 && selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const x = fixedViewportX(e.clientX);
+      const rect = rangeAnchorRect(range, anchor && anchor.detail >= 2 ? anchor : undefined);
+      if (!rect) return;
+      const x = fixedViewportX(rect.left + rect.width / 2);
       const y = fixedViewportY(rect.top);
 
       chrome.storage.local.get("save_triggers", (result) => {
@@ -1223,18 +1665,60 @@ const documentMouseupHandler = (e: MouseEvent) => {
           showSaveBubble(x, y, text);
         }
       });
-    } else {
-      const target = e.target as HTMLElement;
-      if (widget && !widget.contains(target)) {
+    } else if (removeWhenEmpty) {
+      const target = event?.target as HTMLElement | undefined;
+      if (widget && (!target || !widget.contains(target))) {
         removeWidget();
       }
     }
-  }, 10);
+  }, delay);
+}
+
+const documentMousedownHandler = (event: MouseEvent) => {
+  pointerIsDown = true;
+  const target = event.target;
+  const clickedWidget = target instanceof Node && Boolean(widget?.contains(target));
+
+  if (widgetMode === "bubble" && widget && (!clickedWidget || isPageEditableTarget(target))) {
+    removeWidget();
+    suppressSaveBubble();
+  }
+
+  if (!isInContextLensUi(target)) return;
+  clearSelectionCheckTimer();
 };
-document.addEventListener("mouseup", documentMouseupHandler);
-cleanupTasks.push(() => document.removeEventListener("mouseup", documentMouseupHandler));
+document.addEventListener("mousedown", documentMousedownHandler, true);
+cleanupTasks.push(() => document.removeEventListener("mousedown", documentMousedownHandler, true));
+
+const documentMouseupHandler = (event: MouseEvent) => {
+  pointerIsDown = false;
+  lastSelectionAnchor = {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    detail: event.detail,
+    timestamp: performance.now(),
+  };
+  if (skipNextMouseup) { skipNextMouseup = false; return; }
+  if (saveBubbleSuppressed()) return;
+  scheduleSelectionCheck(event, true, event.detail >= 3 ? SAVE_BUBBLE_DELAY_MS + 40 : SAVE_BUBBLE_DELAY_MS);
+};
+document.addEventListener("mouseup", documentMouseupHandler, true);
+cleanupTasks.push(() => document.removeEventListener("mouseup", documentMouseupHandler, true));
+
+const selectionChangeHandler = () => {
+  if (pointerIsDown || widgetMode === "input") return;
+  if (saveBubbleSuppressed()) return;
+  if (pageHasTypingFocus()) {
+    if (widgetMode === "bubble") removeWidget();
+    return;
+  }
+  scheduleSelectionCheck(undefined, false, SAVE_BUBBLE_DELAY_MS + 40);
+};
+document.addEventListener("selectionchange", selectionChangeHandler);
+cleanupTasks.push(() => document.removeEventListener("selectionchange", selectionChangeHandler));
 
 const documentKeydownHandler = (e: KeyboardEvent) => {
+  if (widgetMode === "bubble" && pageHasTypingFocus(e.target)) removeWidget();
   if (e.key === "Escape") { removeWidget(); removeCropOverlay(); }
 };
 document.addEventListener("keydown", documentKeydownHandler);

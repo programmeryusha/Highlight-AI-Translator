@@ -63,16 +63,19 @@ export default function ChatApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deepDiveLoading, setDeepDiveLoading] = useState(false);
+  const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!captureId) return;
     document.title = "ContextLens";
-    chrome.storage.local.get(["captures", `chat_${captureId}`], (result) => {
+    chrome.storage.local.get(["captures", `chat_${captureId}`, "deep_dive_capture_ids"], (result) => {
       const captures: Capture[] = result.captures ?? [];
       const found = captures.find((c) => c.id === captureId) ?? null;
       setCapture(found);
+      setDeepDiveActive(Boolean(captureId && (result.deep_dive_capture_ids ?? []).includes(captureId)));
 
       const prior: ChatMessage[] = result[`chat_${captureId}`] ?? [];
       if (prior.length === 0 && found?.explanation) {
@@ -88,16 +91,40 @@ export default function ChatApp() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, loading, deepDiveLoading]);
 
   useEffect(() => {
     if (!capture) return;
     setSourceExpanded(false);
+    setDeepDiveLoading(false);
   }, [capture?.id]);
+
+  async function handleDeepDive() {
+    if (!capture || deepDiveActive || deepDiveLoading) return;
+    setDeepDiveLoading(true);
+    try {
+      const data = await sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+        type: "DEEP_DIVE",
+        captureId: capture.id,
+      });
+      const result: ChatMessage[] = [{ role: "assistant", content: data.explanation }];
+      setMessages(result);
+      setDeepDiveActive(true);
+      chrome.storage.local.set({ [`chat_${captureId}`]: result });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Something went wrong.";
+      const content = msg === "DEEP_DIVE_LIMIT_REACHED"
+        ? "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer."
+        : msg;
+      setMessages((prev) => [...prev, { role: "assistant", content }]);
+    } finally {
+      setDeepDiveLoading(false);
+    }
+  }
 
   async function send() {
     const text = input.trim();
-    if (!text || loading || !capture) return;
+    if (!text || loading || deepDiveLoading || !capture) return;
     setInput("");
 
     const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
@@ -109,6 +136,7 @@ export default function ChatApp() {
         type: "ASK_FOLLOWUP",
         captureId: capture.id,
         question: text,
+        deepDive: deepDiveActive,
       });
       const final = data.messages ?? [...updated, { role: "assistant", content: data.reply }];
       setMessages(final);
@@ -133,6 +161,7 @@ export default function ChatApp() {
   const hasScreenshot = Boolean(capture.imageData);
   const sourceIsLong = !hasScreenshot && capture.text.length > 700;
   const sourcePreview = sourceIsLong && !sourceExpanded;
+  const showDeepDiveBtn = capture.status === "done" && !deepDiveActive && !deepDiveLoading;
 
   return (
     <div style={{ minHeight: "100vh", maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column" }}>
@@ -216,10 +245,29 @@ export default function ChatApp() {
             </div>
           </div>
         ))}
+        {showDeepDiveBtn && (
+          <div style={{ marginBottom: 20 }}>
+            <button
+              type="button"
+              onClick={handleDeepDive}
+              style={{ background: "transparent", color: "#818cf8", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 6, padding: "5px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
+            >
+              ✦ Deep Dive
+            </button>
+          </div>
+        )}
+        {deepDiveLoading && (
+          <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 12, color: "#818cf8", marginBottom: 4, fontWeight: 500 }}>AI</p>
+            <p style={{ fontSize: 15, color: "#818cf8", fontStyle: "italic" }}>Thinking through a deeper answer…</p>
+          </div>
+        )}
         {loading && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 12, color: "#9b9a97", marginBottom: 4, fontWeight: 500 }}>AI</p>
-            <p style={{ fontSize: 15, color: "#9b9a97" }}>…</p>
+            <p style={{ fontSize: 12, color: deepDiveActive ? "#818cf8" : "#9b9a97", marginBottom: 4, fontWeight: 500 }}>AI</p>
+            <p style={{ fontSize: 15, color: deepDiveActive ? "#818cf8" : "#9b9a97", fontStyle: deepDiveActive ? "italic" : undefined }}>
+              {deepDiveActive ? "Thinking through a deeper answer…" : "…"}
+            </p>
           </div>
         )}
         <div ref={bottomRef} />
@@ -238,7 +286,7 @@ export default function ChatApp() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask a follow-up question…"
-            disabled={loading}
+            disabled={loading || deepDiveLoading}
             style={{
               flex: 1,
               minHeight: 52,
@@ -254,17 +302,17 @@ export default function ChatApp() {
           />
           <button
             type="submit"
-            disabled={loading || !input.trim()}
+            disabled={loading || deepDiveLoading || !input.trim()}
             style={{
               minHeight: 52,
               padding: "0 18px",
               border: "none",
               borderRadius: 14,
-              background: loading || !input.trim() ? "#d8d7d2" : "#37352f",
+              background: loading || deepDiveLoading || !input.trim() ? "#d8d7d2" : "#37352f",
               color: "#fff",
               fontSize: 15,
               fontWeight: 700,
-              cursor: loading || !input.trim() ? "default" : "pointer",
+              cursor: loading || deepDiveLoading || !input.trim() ? "default" : "pointer",
             }}
           >
             Ask

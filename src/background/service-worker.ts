@@ -4,6 +4,7 @@ const BACKEND_URL = "https://web-production-223b1.up.railway.app";
 const CONTENT_SCRIPT_FILE = "src/content/content.js";
 const INJECTABLE_URL_PATTERN = /^https?:\/\//i;
 const DEFAULT_SAVE_TRIGGERS = { bubble: true, contextMenu: true };
+const DEEP_DIVE_CAPTURE_IDS_KEY = "deep_dive_capture_ids";
 
 interface RemoteCapture {
   id: string;
@@ -198,27 +199,45 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "ASK_FOLLOWUP") {
-    askFollowup(message.captureId, message.question)
+    askFollowup(message.captureId, message.question, Boolean(message.deepDive))
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
-  if (message.type === "CREATE_ACCOUNT") {
-    createAccount(message.username)
+  if (message.type === "SIGN_UP") {
+    signUp(message.email, message.password)
       .then(sendResponse)
-      .catch((error) => sendResponse({ error: errorMessage(error) }));
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
-  if (message.type === "REGISTER_EMAIL") {
-    createAccount(message.email)
+  if (message.type === "SIGN_IN") {
+    signIn(message.email, message.password)
       .then(sendResponse)
-      .catch((error) => sendResponse({ error: errorMessage(error) }));
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "SIGN_OUT") {
+    signOut()
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
   if (message.type === "DEEP_DIVE") {
     deepDive(message.captureId)
       .then(sendResponse)
       .catch((err: unknown) => sendResponse({ error: errorMessage(err) }));
+    return true;
+  }
+  if (message.type === "ANALOGY") {
+    generateAnalogy(message.text, message.model)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "DEV_EXPLAIN") {
+    devExplain(message.captureId, message.model)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
   if (message.type === "SYNC_REMOTE_CAPTURES") {
@@ -235,9 +254,15 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   }
 });
 
+async function getAppMode(): Promise<string> {
+  const storage = await chrome.storage.local.get("app_mode");
+  return storage.app_mode ?? "language_learning";
+}
+
 async function fetchExplanation(text: string, context: string, imageBase64?: string, deepDive = false): Promise<string> {
   const account = deepDive ? await getAccount() : null;
-  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null };
+  const mode = deepDive ? "language_learning" : await getAppMode();
+  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null, mode };
   if (deepDive) {
     body.deep_dive = true;
     body.token = account?.token ?? null;
@@ -289,21 +314,36 @@ function captureToRemotePayload(capture: Capture, token: string) {
   };
 }
 
-async function createAccount(email: string): Promise<ContextLensUser> {
-  const cleanEmail = email.trim().toLowerCase();
-  if (cleanEmail.length < 2) throw new Error("Email must be at least 2 characters.");
-
+async function signUp(email: string, password: string): Promise<ContextLensUser> {
   const res = await fetch(`${BACKEND_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: cleanEmail }),
+    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   });
-  if (!res.ok) await throwResponseError("Account error", res);
+  if (!res.ok) await throwResponseError("Sign up error", res);
   const data = await res.json();
-  const account: ContextLensUser = { username: data.username ?? cleanEmail, email: cleanEmail, token: data.token };
+  const account: ContextLensUser = { email: data.email, token: data.token };
   await chrome.storage.local.set({ contextlens_user: account });
   await syncCapturesWithRemote(account);
   return account;
+}
+
+async function signIn(email: string, password: string): Promise<ContextLensUser> {
+  const res = await fetch(`${BACKEND_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+  });
+  if (!res.ok) await throwResponseError("Sign in error", res);
+  const data = await res.json();
+  const account: ContextLensUser = { email: data.email, token: data.token };
+  await chrome.storage.local.set({ contextlens_user: account });
+  await syncCapturesWithRemote(account);
+  return account;
+}
+
+async function signOut(): Promise<void> {
+  await chrome.storage.local.remove("contextlens_user");
 }
 
 async function saveCaptureRemote(capture: Capture): Promise<void> {
@@ -383,6 +423,21 @@ async function updateCapture(id: string, patch: Partial<Capture>): Promise<Captu
   return captures[idx];
 }
 
+async function getDeepDiveCaptureIds(): Promise<Set<string>> {
+  const storage = await chrome.storage.local.get(DEEP_DIVE_CAPTURE_IDS_KEY);
+  return new Set(storage[DEEP_DIVE_CAPTURE_IDS_KEY] ?? []);
+}
+
+async function isDeepDiveCapture(captureId: string): Promise<boolean> {
+  return (await getDeepDiveCaptureIds()).has(captureId);
+}
+
+async function markDeepDiveCapture(captureId: string): Promise<void> {
+  const ids = await getDeepDiveCaptureIds();
+  ids.add(captureId);
+  await chrome.storage.local.set({ [DEEP_DIVE_CAPTURE_IDS_KEY]: Array.from(ids) });
+}
+
 async function createPendingScreenshot(imageData: string, context: string): Promise<string> {
   const id = crypto.randomUUID();
   const capture: Capture = {
@@ -434,26 +489,31 @@ async function saveScreenshot(imageData: string, context: string) {
   await explainAndSaveScreenshot(imageData, context).catch(() => {});
 }
 
-async function askFollowup(captureId: string, question: string): Promise<{ reply: string; messages: ChatMessage[] }> {
+async function askFollowup(captureId: string, question: string, deepDiveRequested = false): Promise<{ reply: string; messages: ChatMessage[] }> {
   const key = `chat_${captureId}`;
   const storage = await chrome.storage.local.get(["captures", key]);
   const captures: Capture[] = storage.captures ?? [];
   const capture = captures.find((c) => c.id === captureId);
-  if (!capture) throw new Error("Saved item not found.");
 
-  const prior: ChatMessage[] = storage[key] ?? (capture.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  const prior: ChatMessage[] = storage[key] ?? (capture?.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  if (!capture && prior.length === 0) throw new Error("Saved item not found.");
+
   const updated: ChatMessage[] = [...prior, { role: "user", content: question }];
   const transcript = updated
     .slice(-8)
     .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
     .join("\n");
-  const source = [
-    `Saved item: ${capture.text}`,
-    capture.context ? `Original context note: ${capture.context}` : "",
-    `Conversation so far:\n${transcript}`,
-  ].filter(Boolean).join("\n\n");
-  const imageBase64 = capture.imageData?.split(",")[1];
-  const reply = await fetchExplanation(source, question, imageBase64);
+  const source = capture
+    ? [
+        `Saved item: ${capture.text}`,
+        capture.context ? `Original context note: ${capture.context}` : "",
+        `Conversation so far:\n${transcript}`,
+      ].filter(Boolean).join("\n\n")
+    : transcript;
+  const imageBase64 = capture?.imageData?.split(",")[1];
+  const useDeepDive = deepDiveRequested || await isDeepDiveCapture(captureId);
+  const reply = await fetchExplanation(source, question, imageBase64, useDeepDive);
+  if (useDeepDive) await markDeepDiveCapture(captureId);
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
   return { reply, messages };
@@ -469,12 +529,50 @@ async function deepDive(captureId: string): Promise<{ explanation: string; messa
   const explanation = await fetchExplanation(capture.text, capture.context, imageBase64, true);
 
   await updateCapture(captureId, { explanation });
+  await markDeepDiveCapture(captureId);
 
   const chatKey = `chat_${captureId}`;
   const messages: ChatMessage[] = [{ role: "assistant", content: explanation }];
   await chrome.storage.local.set({ [chatKey]: messages });
 
   return { explanation, messages };
+}
+
+async function generateAnalogy(text: string, model: string): Promise<{ analogy: string }> {
+  const mode = await getAppMode();
+  const body: Record<string, unknown> = { text, context: "", analogy: true, model, mode };
+  const res = await fetch(`${BACKEND_URL}/explain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await throwResponseError("Analogy error", res);
+  const data = await res.json();
+  return { analogy: data.explanation ?? "" };
+}
+
+async function devExplain(captureId: string, model: string): Promise<{ explanation: string }> {
+  const storage = await chrome.storage.local.get("captures");
+  const captures: Capture[] = storage.captures ?? [];
+  const capture = captures.find((c) => c.id === captureId);
+  if (!capture) throw new Error("Saved item not found.");
+
+  const mode = await getAppMode();
+  const body: Record<string, unknown> = {
+    text: capture.text,
+    context: capture.context,
+    image_base64: capture.imageData?.split(",")[1] ?? null,
+    model,
+    mode,
+  };
+  const res = await fetch(`${BACKEND_URL}/explain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await throwResponseError("Dev explain error", res);
+  const data = await res.json();
+  return { explanation: data.explanation ?? "" };
 }
 
 async function saveHighlight(text: string, url: string, title: string, context: string): Promise<{ captureId: string; explanation: string }> {

@@ -3,7 +3,7 @@
   "name": "ContextLens",
   "version": "1.0.0",
   "description": "Highlight any text on any page and instantly understand it — in any language.",
-  "permissions": ["storage", "contextMenus", "tabs", "scripting"],
+  "permissions": ["storage", "unlimitedStorage", "contextMenus", "tabs", "scripting"],
   "commands": {
     "screenshot": {
       "suggested_key": { "default": "Ctrl+Shift+H", "mac": "Command+Shift+H" },
@@ -24,7 +24,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/content.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {

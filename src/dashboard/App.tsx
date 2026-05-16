@@ -512,7 +512,16 @@ function SavesView({
             {group.items.map((c) => (
               <div
                 key={c.id}
-                style={{ padding: "18px 0 28px", maxWidth: "100%" }}
+                role="button"
+                tabIndex={0}
+                onClick={(event) => openCaptureFromClick(event, c.id)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  openChat(c.id);
+                }}
+                style={{ padding: "18px 0 28px", maxWidth: "100%", cursor: "pointer", outline: "none" }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                   <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} />
@@ -1005,14 +1014,20 @@ function SettingsView({
   flashcardThreshold,
   onFlashcardThresholdChange,
   account,
+  theme,
+  onThemeChange,
 }: {
   flashcardThreshold: number;
   onFlashcardThresholdChange: (value: number) => void;
   account: ContextLensUser | null;
+  theme: "light" | "dark";
+  onThemeChange: (t: "light" | "dark") => void;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
-  const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: false });
-  const [username, setUsername] = useState("");
+  const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: true });
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [accountStatus, setAccountStatus] = useState("");
   const [accountLoading, setAccountLoading] = useState(false);
 
@@ -1020,10 +1035,9 @@ function SettingsView({
     chrome.storage.local.remove("anthropic_api_key");
     chrome.storage.local.get(["save_triggers", "screenshot_triggers", "answer_immediate"], (r) => {
       if (r.save_triggers) setTriggers(r.save_triggers);
-      if (r.screenshot_triggers || r.answer_immediate !== undefined) {
-        const saved = r.screenshot_triggers ?? { floatingButton: true, shortcut: true, immediate: false };
-        setScreenshotTriggers({ ...saved, immediate: Boolean(r.answer_immediate || saved.immediate) });
-      }
+      const saved = r.screenshot_triggers ?? { floatingButton: true, shortcut: true, immediate: true };
+      const immediate = r.answer_immediate !== undefined ? Boolean(r.answer_immediate) : (saved.immediate ?? true);
+      setScreenshotTriggers({ ...saved, immediate });
     });
   }, []);
 
@@ -1045,32 +1059,41 @@ function SettingsView({
     chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
   }
 
-  async function createAccount() {
+  async function handleAuth() {
     setAccountLoading(true);
     setAccountStatus("");
     try {
-      const created = await sendRuntimeMessage<ContextLensUser>({ type: "CREATE_ACCOUNT", username });
-      setUsername("");
-      setAccountStatus(`Connected as ${created.username}. Your saves will sync to Railway.`);
+      const type = authMode === "signup" ? "SIGN_UP" : "SIGN_IN";
+      const result = await sendRuntimeMessage<ContextLensUser>({ type, email: authEmail, password: authPassword });
+      setAuthEmail("");
+      setAuthPassword("");
+      setAccountStatus(`Signed in as ${result.email}.`);
     } catch (error) {
-      setAccountStatus(error instanceof Error ? error.message : "Could not create account.");
+      setAccountStatus(error instanceof Error ? error.message : "Authentication failed.");
     } finally {
       setAccountLoading(false);
     }
   }
 
-  async function syncNow() {
+  async function handleSignOut() {
     setAccountLoading(true);
-    setAccountStatus("");
     try {
-      await sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" });
-      setAccountStatus("Synced with Railway.");
-    } catch (error) {
-      setAccountStatus(error instanceof Error ? error.message : "Could not sync.");
+      await sendRuntimeMessage<void>({ type: "SIGN_OUT" });
+      setAccountStatus("");
     } finally {
       setAccountLoading(false);
     }
   }
+
+  const inputStyle: React.CSSProperties = {
+    flex: "1 1 200px",
+    border: "1px solid #d8d7d2",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 14,
+    color: "#37352f",
+    outline: "none",
+  };
 
   return (
     <div style={{ maxWidth: 520, paddingTop: 8 }}>
@@ -1080,72 +1103,91 @@ function SettingsView({
         {account ? (
           <div>
             <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px", fontWeight: 700 }}>
-              Connected as {account.username}
+              {account.email}
             </p>
             <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 12px", lineHeight: 1.5 }}>
-              Your token is stored on this browser and saves sync to Railway when the backend is reachable.
+              Signed in — saves sync to Railway when the backend is reachable.
             </p>
             <button
               type="button"
-              onClick={syncNow}
+              onClick={handleSignOut}
               disabled={accountLoading}
               style={{
-                background: accountLoading ? "#d8d7d2" : "#37352f",
-                color: "#fff",
-                border: "none",
+                background: "#fff",
+                color: "#eb5757",
+                border: "1px solid #fca5a5",
                 borderRadius: 8,
-                padding: "8px 12px",
+                padding: "8px 14px",
                 fontSize: 13,
                 fontWeight: 700,
                 cursor: accountLoading ? "default" : "pointer",
               }}
             >
-              Sync now
+              Sign out
             </button>
           </div>
         ) : (
           <div>
-            <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px" }}>Create a sync username</p>
-            <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 10px", lineHeight: 1.5 }}>
-              ContextLens will create a token and store it locally so your saves can be stored in the Railway database.
-            </p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              {(["signin", "signup"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setAuthMode(m); setAccountStatus(""); }}
+                  style={{
+                    background: authMode === m ? "#37352f" : "#fff",
+                    color: authMode === m ? "#fff" : "#9b9a97",
+                    border: "1px solid #d8d7d2",
+                    borderRadius: 6,
+                    padding: "5px 14px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {m === "signin" ? "Sign in" : "Create account"}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <input
-                type="text"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="username"
-                style={{
-                  flex: "1 1 220px",
-                  border: "1px solid #d8d7d2",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                  fontSize: 14,
-                  color: "#37352f",
-                }}
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="Email address"
+                style={inputStyle}
+              />
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Password"
+                onKeyDown={(e) => { if (e.key === "Enter") handleAuth(); }}
+                style={inputStyle}
               />
               <button
                 type="button"
-                onClick={createAccount}
-                disabled={accountLoading || username.trim().length < 2}
+                onClick={handleAuth}
+                disabled={accountLoading || !authEmail.includes("@") || authPassword.length < 6}
                 style={{
-                  background: accountLoading || username.trim().length < 2 ? "#d8d7d2" : "#37352f",
+                  alignSelf: "flex-start",
+                  background: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "#d8d7d2" : "#37352f",
                   color: "#fff",
                   border: "none",
                   borderRadius: 8,
-                  padding: "9px 12px",
+                  padding: "9px 16px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: accountLoading || username.trim().length < 2 ? "default" : "pointer",
+                  cursor: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "default" : "pointer",
                 }}
               >
-                Create token
+                {authMode === "signin" ? "Sign in" : "Create account"}
               </button>
             </div>
           </div>
         )}
         {accountStatus && (
-          <p style={{ fontSize: 12, color: accountStatus.includes("error") || accountStatus.includes("Could not") ? "#eb5757" : "#8d8b86", margin: "10px 0 0", lineHeight: 1.5 }}>
+          <p style={{ fontSize: 12, color: accountStatus.toLowerCase().includes("error") || accountStatus.toLowerCase().includes("failed") || accountStatus.toLowerCase().includes("could not") ? "#eb5757" : "#8d8b86", margin: "10px 0 0", lineHeight: 1.5 }}>
             {accountStatus}
           </p>
         )}
@@ -1248,6 +1290,32 @@ function SettingsView({
           Open Chrome shortcut settings
         </button>
       </div>
+
+      {/* Theme */}
+      <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 40, marginBottom: 12 }}>Appearance</p>
+      <div style={{ display: "flex", background: "#f0efec", borderRadius: 999, padding: 3, gap: 2, width: "fit-content" }}>
+        {(["light", "dark"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => onThemeChange(t)}
+            style={{
+              background: theme === t ? "#37352f" : "transparent",
+              color: theme === t ? "#fff" : "#9b9a97",
+              border: "none",
+              borderRadius: 999,
+              padding: "5px 16px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              textTransform: "capitalize",
+              transition: "background 0.15s, color 0.15s",
+            }}
+          >
+            {t === "light" ? "☀️ Light" : "🌙 Dark"}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1275,8 +1343,9 @@ function MonthCalendar({
 
   function colorFor(count: number) {
     if (count === 0) return "#f0efec";
-    const opacity = 0.25 + (count / max) * 0.65;
-    return `rgba(99, 102, 241, ${opacity})`;
+    const t = Math.sqrt(count / max);
+    const opacity = 0.12 + t * 0.78;
+    return `rgba(99, 102, 241, ${opacity.toFixed(2)})`;
   }
 
   return (
@@ -1362,6 +1431,8 @@ function MonthCalendar({
   );
 }
 
+type AppMode = "language_learning" | "student";
+
 export default function App() {
   const [view, setView] = useState<View>("saves");
   const [captures, setCaptures] = useState<Capture[]>([]);
@@ -1369,23 +1440,41 @@ export default function App() {
   const [flashcardThreshold, setFlashcardThreshold] = useState(DEFAULT_FLASHCARD_THRESHOLD);
   const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(new Set());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
+  const [appMode, setAppMode] = useState<AppMode>("language_learning");
+  const [theme, setThemeState] = useState<"light" | "dark">("light");
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user"], (r) => {
+    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme"], (r) => {
       setCaptures(r.captures ?? []);
       setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
       setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
       setAccount(r.contextlens_user ?? null);
+      setAppMode(r.app_mode ?? "language_learning");
+      const t = r.theme ?? "light";
+      setThemeState(t);
+      document.documentElement.setAttribute("data-theme", t);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
       if (changes.flashcard_threshold) setFlashcardThreshold(changes.flashcard_threshold.newValue ?? DEFAULT_FLASHCARD_THRESHOLD);
       if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
+      if (changes.app_mode) setAppMode(changes.app_mode.newValue ?? "language_learning");
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
+
+  function setTheme(t: "light" | "dark") {
+    setThemeState(t);
+    chrome.storage.local.set({ theme: t });
+    document.documentElement.setAttribute("data-theme", t);
+  }
+
+  function setMode(mode: AppMode) {
+    setAppMode(mode);
+    chrome.storage.local.set({ app_mode: mode });
+  }
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentDayKey(todayKey()), 60_000);
@@ -1429,6 +1518,11 @@ export default function App() {
       return next;
     });
 
+    chrome.storage.local.get("deep_dive_capture_ids", (result) => {
+      const next = (result.deep_dive_capture_ids ?? []).filter((id: string) => !idsToDelete.has(id));
+      chrome.storage.local.set({ deep_dive_capture_ids: next });
+    });
+
     void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {
       console.warn("ContextLens remote delete skipped", error);
     });
@@ -1447,16 +1541,47 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
       <div style={{ borderBottom: "1px solid #e3e2de" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 64 }}>
-          <span style={{ fontSize: 15, fontWeight: 600 }}>
-            ContextLens
-            {todayCaptures.length > 0 && (
-              <span style={{ color: "#9b9a97", fontWeight: 400, marginLeft: 6, fontSize: 14 }}>{todayCaptures.length}</span>
-            )}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button
+              onClick={() => setView("saves")}
+              style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: "#37352f", cursor: "pointer" }}
+            >
+              ContextLens
+            </button>
+            <div style={{ display: "flex", background: "#f0efec", borderRadius: 999, padding: 3, gap: 2 }}>
+              {(["language_learning", "student"] as AppMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  style={{
+                    background: appMode === m ? "#37352f" : "transparent",
+                    color: appMode === m ? "#fff" : "#9b9a97",
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "4px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    transition: "background 0.15s, color 0.15s",
+                  }}
+                >
+                  {m === "language_learning" ? "Language" : "Student"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
-            <span style={{ fontSize: 13, color: "#37352f", whiteSpace: "nowrap" }}>
-              {streak} day streak
-            </span>
+            {streak > 0 && (
+              <button
+                onClick={() => setView("saves")}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+                title="Go to today"
+              >
+                <span style={{ fontSize: 16 }}>🔥</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#37352f" }}>{streak}</span>
+              </button>
+            )}
             <nav style={{ display: "flex", gap: 18 }}>
               {(["saves", "history", "words", "settings"] as View[]).map((v) => (
                 <button
@@ -1465,6 +1590,7 @@ export default function App() {
                   style={{
                     background: "none",
                     border: "none",
+                    borderBottom: view === v ? "2px solid #37352f" : "2px solid transparent",
                     color: view === v ? "#37352f" : "#9b9a97",
                     fontWeight: view === v ? 600 : 400,
                     fontSize: 14,
@@ -1525,6 +1651,8 @@ export default function App() {
             flashcardThreshold={flashcardThreshold}
             onFlashcardThresholdChange={updateFlashcardThreshold}
             account={account}
+            theme={theme}
+            onThemeChange={setTheme}
           />
         )}
       </div>

@@ -47,7 +47,7 @@ export default function CropApp() {
       }
     });
     chrome.storage.local.get("screenshot_triggers", (r) => {
-      setImmediate(r.screenshot_triggers?.immediate ?? false);
+      setImmediate(r.screenshot_triggers?.immediate ?? true);
     });
   }, []);
 
@@ -182,6 +182,7 @@ export default function CropApp() {
         type: "ASK_FOLLOWUP",
         captureId,
         question,
+        deepDive: deepDiveActive,
       });
       setMessages(response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
     } catch (error) {
@@ -284,10 +285,12 @@ export default function CropApp() {
               </div>
             ))}
             {followupLoading && (
-              <div style={{ color: "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking…</div>
+              <div style={{ color: deepDiveActive ? "#818cf8" : "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>
+                {deepDiveActive ? "Thinking through a deeper answer…" : "Thinking…"}
+              </div>
             )}
             {deepDiveLoading && (
-              <div style={{ color: "#818cf8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Deep diving…</div>
+              <div style={{ color: "#818cf8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking through a deeper answer…</div>
             )}
           </div>
 

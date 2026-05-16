@@ -20,11 +20,11 @@ export interface StorageSchema {
   captures: Capture[];
   flashcard_threshold?: number;
   flashcard_starred_capture_ids?: string[];
+  deep_dive_capture_ids?: string[];
   contextlens_user?: ContextLensUser;
 }
 
 export interface ContextLensUser {
-  username: string;
   email: string;
   token: string;
 }
@@ -36,10 +36,13 @@ export type Message =
   | { type: "SHOW_CROP_OVERLAY"; imageData: string }
   | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
-  | { type: "ASK_FOLLOWUP"; captureId: string; question: string }
-  | { type: "CREATE_ACCOUNT"; username: string }
-  | { type: "REGISTER_EMAIL"; email: string }
+  | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean }
+  | { type: "SIGN_UP"; email: string; password: string }
+  | { type: "SIGN_IN"; email: string; password: string }
+  | { type: "SIGN_OUT" }
   | { type: "DEEP_DIVE"; captureId: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
-  | { type: "OPEN_DASHBOARD" };
+  | { type: "OPEN_DASHBOARD" }
+  | { type: "DEV_EXPLAIN"; captureId: string; model: string }
+  | { type: "ANALOGY"; text: string; model: string };
