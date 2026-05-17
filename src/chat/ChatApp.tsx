@@ -1,6 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Capture, ChatMessage, Message } from "../types";
 
+const DEFAULT_ACCENT_COLOR = "#2563eb";
+
+function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) return `#${trimmed.toLowerCase()}`;
+  return fallback;
+}
+
+function rgbTriplet(hex: string): string {
+  const color = normalizeHexColor(hex);
+  return `${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}`;
+}
+
+function colorWithAlpha(hex: string, alpha: number): string {
+  return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -33,7 +52,7 @@ function renderMarkdown(text: string): React.ReactNode {
 
   function inlineBold(line: string, key: number): React.ReactNode {
     const parts = line.split(/\*\*(.*?)\*\*/g);
-    return parts.map((part, i) => i % 2 === 1 ? <strong key={i}>{part}</strong> : part);
+    return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ fontWeight: 800 }}>{part}</strong> : part);
   }
 
   lines.forEach((line, i) => {
@@ -65,8 +84,20 @@ export default function ChatApp() {
   const [loading, setLoading] = useState(false);
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
+  const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chrome.storage.local.get("accent_color", (result) => {
+      setAccentColor(normalizeHexColor(result.accent_color));
+    });
+    const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.accent_color) setAccentColor(normalizeHexColor(changes.accent_color.newValue));
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
 
   useEffect(() => {
     if (!captureId) return;
@@ -162,6 +193,8 @@ export default function ChatApp() {
   const sourceIsLong = !hasScreenshot && capture.text.length > 700;
   const sourcePreview = sourceIsLong && !sourceExpanded;
   const showDeepDiveBtn = capture.status === "done" && !deepDiveActive && !deepDiveLoading;
+  const accentSoft = colorWithAlpha(accentColor, 0.14);
+  const accentBorder = colorWithAlpha(accentColor, 0.38);
 
   return (
     <div style={{ minHeight: "100vh", maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column" }}>
@@ -214,7 +247,7 @@ export default function ChatApp() {
           {sourceIsLong && (
             <button
               onClick={() => setSourceExpanded((value) => !value)}
-              style={{ background: "none", border: "none", color: "#6366f1", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 6 }}
+              style={{ background: "none", border: "none", color: accentColor, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 6 }}
             >
               {sourceExpanded ? "Collapse text" : "Show full text"}
             </button>
@@ -250,7 +283,7 @@ export default function ChatApp() {
             <button
               type="button"
               onClick={handleDeepDive}
-              style={{ background: "transparent", color: "#818cf8", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 6, padding: "5px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
+              style={{ background: accentSoft, color: accentColor, border: `1px solid ${accentBorder}`, borderRadius: 6, padding: "5px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
             >
               ✦ Deep Dive
             </button>
@@ -258,14 +291,14 @@ export default function ChatApp() {
         )}
         {deepDiveLoading && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 12, color: "#818cf8", marginBottom: 4, fontWeight: 500 }}>AI</p>
-            <p style={{ fontSize: 15, color: "#818cf8", fontStyle: "italic" }}>Thinking through a deeper answer…</p>
+            <p style={{ fontSize: 12, color: accentColor, marginBottom: 4, fontWeight: 500 }}>AI</p>
+            <p style={{ fontSize: 15, color: accentColor, fontStyle: "italic" }}>Thinking through a deeper answer…</p>
           </div>
         )}
         {loading && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 12, color: deepDiveActive ? "#818cf8" : "#9b9a97", marginBottom: 4, fontWeight: 500 }}>AI</p>
-            <p style={{ fontSize: 15, color: deepDiveActive ? "#818cf8" : "#9b9a97", fontStyle: deepDiveActive ? "italic" : undefined }}>
+            <p style={{ fontSize: 12, color: deepDiveActive ? accentColor : "#9b9a97", marginBottom: 4, fontWeight: 500 }}>AI</p>
+            <p style={{ fontSize: 15, color: deepDiveActive ? accentColor : "#9b9a97", fontStyle: deepDiveActive ? "italic" : undefined }}>
               {deepDiveActive ? "Thinking through a deeper answer…" : "…"}
             </p>
           </div>

@@ -96,13 +96,13 @@ export default function WelcomeApp() {
         <p style={{ marginTop: 16, fontSize: 13, color: "#9b9a97", textAlign: "center" }}>
           {mode === "signup" ? (
             <>Already have an account?{" "}
-              <button onClick={() => { setMode("signin"); setError(""); }} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
+              <button onClick={() => { setMode("signin"); setError(""); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
                 Sign in
               </button>
             </>
           ) : (
             <>New here?{" "}
-              <button onClick={() => { setMode("signup"); setError(""); }} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
+              <button onClick={() => { setMode("signup"); setError(""); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
                 Create account
               </button>
             </>

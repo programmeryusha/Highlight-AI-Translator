@@ -29,7 +29,8 @@
     }
   ],
   "action": {
-    "default_title": "Open ContextLens"
+    "default_title": "ContextLens",
+    "default_popup": "src/popup/popup.html"
   },
   "options_ui": {
     "page": "src/dashboard/dashboard.html",

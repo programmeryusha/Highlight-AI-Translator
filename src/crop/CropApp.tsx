@@ -3,6 +3,33 @@ import type { ChatMessage, Message } from "../types";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
+const DEFAULT_ACCENT_COLOR = "#2563eb";
+
+function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) return `#${trimmed.toLowerCase()}`;
+  return fallback;
+}
+
+function rgbTriplet(hex: string): string {
+  const color = normalizeHexColor(hex);
+  return `${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}`;
+}
+
+function colorWithAlpha(hex: string, alpha: number): string {
+  return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
+function textOnColor(hex: string): string {
+  const color = normalizeHexColor(hex);
+  const red = parseInt(color.slice(1, 3), 16) / 255;
+  const green = parseInt(color.slice(3, 5), 16) / 255;
+  const blue = parseInt(color.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return luminance > 0.62 ? "#1f2933" : "#fff";
+}
 
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -21,6 +48,44 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   });
 }
 
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let listItems: React.ReactNode[] = [];
+
+  function inlineBold(line: string): React.ReactNode[] {
+    return line.split(/\*\*(.*?)\*\*/g).map((part, index) => (
+      index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{part}</strong> : part
+    ));
+  }
+
+  function flushList() {
+    if (listItems.length) {
+      nodes.push(<ul key={nodes.length} style={{ margin: "6px 0 6px 20px", padding: 0 }}>{listItems}</ul>);
+      listItems = [];
+    }
+  }
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushList();
+      return;
+    }
+
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2))}</li>);
+      return;
+    }
+
+    flushList();
+    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.65 }}>{inlineBold(trimmed)}</p>);
+  });
+  flushList();
+
+  return <>{nodes}</>;
+}
+
 export default function CropApp() {
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("selecting");
@@ -34,6 +99,7 @@ export default function CropApp() {
   const [followupLoading, setFollowupLoading] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
+  const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -46,9 +112,15 @@ export default function CropApp() {
         chrome.storage.session.remove("pending_screenshot");
       }
     });
-    chrome.storage.local.get("screenshot_triggers", (r) => {
+    chrome.storage.local.get(["screenshot_triggers", "accent_color"], (r) => {
       setImmediate(r.screenshot_triggers?.immediate ?? true);
+      setAccentColor(normalizeHexColor(r.accent_color));
     });
+    const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.accent_color) setAccentColor(normalizeHexColor(changes.accent_color.newValue));
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
   useEffect(() => {
@@ -62,7 +134,7 @@ export default function CropApp() {
       ctx.drawImage(img, 0, 0);
 
       if (selection) {
-        ctx.strokeStyle = "rgba(99,102,241,0.95)";
+        ctx.strokeStyle = colorWithAlpha(accentColor, 0.95);
         ctx.lineWidth = 2;
         ctx.strokeRect(selection.x, selection.y, selection.w, selection.h);
         ctx.strokeStyle = "rgba(255,255,255,0.85)";
@@ -71,7 +143,7 @@ export default function CropApp() {
       }
     };
     img.src = screenshot;
-  }, [screenshot, selection]);
+  }, [accentColor, screenshot, selection]);
 
   useEffect(() => {
     if (!deepDiveLoading && !deepDiveActive) return;
@@ -80,12 +152,12 @@ export default function CropApp() {
       const style = document.createElement("style");
       style.textContent = `
         @keyframes clDeepDiveGlow {
-          0%   { filter: drop-shadow(0 0 0px  rgba(99,102,241,0));    }
-          50%  { filter: drop-shadow(0 0 14px rgba(99,102,241,0.75)); }
-          100% { filter: drop-shadow(0 0 7px  rgba(99,102,241,0.45)); }
+          0%   { filter: drop-shadow(0 0 0px  ${colorWithAlpha(accentColor, 0)});    }
+          50%  { filter: drop-shadow(0 0 14px ${colorWithAlpha(accentColor, 0.75)}); }
+          100% { filter: drop-shadow(0 0 7px  ${colorWithAlpha(accentColor, 0.45)}); }
         }
         .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
-        .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(99,102,241,0.4)); }
+        .cl-deep-dive-active { filter: drop-shadow(0 0 6px ${colorWithAlpha(accentColor, 0.4)}); }
       `;
       document.head.appendChild(style);
     }
@@ -234,6 +306,9 @@ export default function CropApp() {
   }
 
   const showDeepDiveBtn = messages.length === 1 && messages[0].role === "assistant" && !deepDiveActive && !deepDiveLoading;
+  const accentSoft = colorWithAlpha(accentColor, 0.14);
+  const accentBorder = colorWithAlpha(accentColor, 0.38);
+  const accentText = textOnColor(accentColor);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh", background: "#000" }}>
@@ -247,7 +322,7 @@ export default function CropApp() {
 
       {stage === "context" && (
         <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "16px 20px", width: 400, boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
-          <p style={{ color: "#6366f1", fontSize: 12, marginBottom: 8 }}>Region selected</p>
+          <p style={{ color: accentColor, fontSize: 12, marginBottom: 8 }}>Region selected</p>
           <input
             ref={inputRef}
             value={context}
@@ -260,7 +335,7 @@ export default function CropApp() {
             <button onClick={() => window.close()} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#e2e8f0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               Cancel
             </button>
-            <button onClick={() => submit()} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={() => submit()} style={{ flex: 1, background: accentColor, color: accentText, border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               Save
             </button>
           </div>
@@ -279,18 +354,18 @@ export default function CropApp() {
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} style={{ marginBottom: 14 }}>
                 <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, margin: "0 0 3px" }}>{message.role === "assistant" ? "AI" : "You"}</p>
-                <p style={{ color: message.role === "assistant" ? "#e2e8f0" : "#cbd5e1", fontSize: message.role === "assistant" ? 15 : 13, lineHeight: 1.65, margin: 0, whiteSpace: "pre-wrap" }}>
-                  {message.content}
-                </p>
+                <div style={{ color: message.role === "assistant" ? "#e2e8f0" : "#cbd5e1", fontSize: message.role === "assistant" ? 15 : 13, lineHeight: 1.65, margin: 0, whiteSpace: "pre-wrap" }}>
+                  {renderMarkdown(message.content)}
+                </div>
               </div>
             ))}
             {followupLoading && (
-              <div style={{ color: deepDiveActive ? "#818cf8" : "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>
+              <div style={{ color: deepDiveActive ? accentColor : "#94a3b8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>
                 {deepDiveActive ? "Thinking through a deeper answer…" : "Thinking…"}
               </div>
             )}
             {deepDiveLoading && (
-              <div style={{ color: "#818cf8", fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking through a deeper answer…</div>
+              <div style={{ color: accentColor, fontSize: 14, fontStyle: "italic", lineHeight: 1.65 }}>Thinking through a deeper answer…</div>
             )}
           </div>
 
@@ -298,7 +373,7 @@ export default function CropApp() {
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
               <button
                 onClick={handleDeepDive}
-                style={{ background: "transparent", color: "#818cf8", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
+                style={{ background: accentSoft, color: accentColor, border: `1px solid ${accentBorder}`, borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer", letterSpacing: "0.02em" }}
               >
                 ✦ Deep Dive
               </button>
@@ -314,7 +389,7 @@ export default function CropApp() {
               disabled={!captureId || followupLoading || deepDiveLoading}
               style={{ flex: 1, minWidth: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#e2e8f0", fontSize: 13, outline: "none", padding: "8px 10px" }}
             />
-            <button onClick={askFollowup} disabled={!captureId || followupLoading || deepDiveLoading} style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading && !deepDiveLoading ? "pointer" : "default", opacity: captureId && !followupLoading && !deepDiveLoading ? 1 : 0.55 }}>
+            <button onClick={askFollowup} disabled={!captureId || followupLoading || deepDiveLoading} style={{ background: accentColor, color: accentText, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading && !deepDiveLoading ? "pointer" : "default", opacity: captureId && !followupLoading && !deepDiveLoading ? 1 : 0.55 }}>
               Ask
             </button>
           </div>
@@ -322,7 +397,7 @@ export default function CropApp() {
             <button onClick={resetSelection} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#94a3b8", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer" }}>
               New selection
             </button>
-            <button onClick={() => window.close()} style={{ flex: 1, background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={() => window.close()} style={{ flex: 1, background: accentColor, color: accentText, border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               Done
             </button>
           </div>

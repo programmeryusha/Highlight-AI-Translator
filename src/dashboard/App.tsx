@@ -2,11 +2,14 @@ import React, { useEffect, useState } from "react";
 import type { Capture, ContextLensUser, Message } from "../types";
 
 type View = "saves" | "history" | "words" | "settings";
+type ThemeName = "light" | "dark";
+type AppMode = "language_learning" | "student";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth" | "custom";
 const LONG_TEXT_LIMIT = 420;
 const DEFAULT_FLASHCARD_THRESHOLD = 3;
+const DEFAULT_ACCENT_COLOR = "#2563eb";
 const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
   { value: "yesterday", label: "Yesterday" },
   { value: "previous3", label: "Previous 3 days" },
@@ -14,6 +17,56 @@ const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] 
   { value: "lastMonth", label: "Last month" },
   { value: "custom", label: "Custom" },
 ];
+
+type DashboardColors = {
+  bg: string;
+  text: string;
+  muted: string;
+  softText: string;
+  border: string;
+  subtle: string;
+  surface: string;
+  surfaceAlt: string;
+  selectedText: string;
+  accent: string;
+};
+
+function isThemeName(value: unknown): value is ThemeName {
+  return value === "light" || value === "dark";
+}
+
+function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^[0-9a-fA-F]{6}$/.test(trimmed)) return `#${trimmed.toLowerCase()}`;
+  return fallback;
+}
+
+function textOnColor(hex: string): string {
+  const color = normalizeHexColor(hex);
+  const red = parseInt(color.slice(1, 3), 16) / 255;
+  const green = parseInt(color.slice(3, 5), 16) / 255;
+  const blue = parseInt(color.slice(5, 7), 16) / 255;
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return luminance > 0.62 ? "#1f2933" : "#fff";
+}
+
+function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors {
+  const dark = theme === "dark";
+  return {
+    bg: dark ? "#171717" : "#fff",
+    text: dark ? "#f4f1ea" : "#37352f",
+    muted: dark ? "#a8a29e" : "#9b9a97",
+    softText: dark ? "#d6d3cd" : "#6b6b6b",
+    border: dark ? "#34312c" : "#e3e2de",
+    subtle: dark ? "#24221f" : "#f0efec",
+    surface: dark ? "#1d1b18" : "#fff",
+    surfaceAlt: dark ? "#27241f" : "#f7f6f3",
+    selectedText: textOnColor(accentColor),
+    accent: accentColor,
+  };
+}
 
 function normalizeQuestion(question: string): string {
   return question.trim().toLowerCase().replace(/\s+/g, " ");
@@ -60,7 +113,7 @@ function renderMarkdown(text: string): React.ReactNode {
 
   function inlineBold(line: string): React.ReactNode[] {
     return line.split(/\*\*(.*?)\*\*/g).map((part, index) => (
-      index % 2 === 1 ? <strong key={index}>{part}</strong> : part
+      index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{part}</strong> : part
     ));
   }
 
@@ -313,6 +366,7 @@ function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture;
 }
 
 function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle: () => void }) {
+  const accent = `var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})`;
   return (
     <button
       type="button"
@@ -331,8 +385,8 @@ function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle:
         width: 22,
         height: 22,
         borderRadius: 6,
-        border: selected ? "1px solid #6366f1" : "1px solid #d8d7d2",
-        background: selected ? "#6366f1" : "#fff",
+        border: selected ? `1px solid ${accent}` : "1px solid #d8d7d2",
+        background: selected ? accent : "#fff",
         color: "#fff",
         cursor: "pointer",
         fontSize: 14,
@@ -408,7 +462,7 @@ function CapturePreview({ capture }: { capture: Capture }) {
       {isLong && (
         <p
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ fontSize: 14, color: "#6366f1", margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
+          style={{ fontSize: 14, color: `var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})`, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
         >
           Open full save
         </p>
@@ -1014,14 +1068,24 @@ function SettingsView({
   flashcardThreshold,
   onFlashcardThresholdChange,
   account,
+  appMode,
+  onAppModeChange,
   theme,
   onThemeChange,
+  accentColor,
+  onAccentColorChange,
+  colors,
 }: {
   flashcardThreshold: number;
   onFlashcardThresholdChange: (value: number) => void;
   account: ContextLensUser | null;
-  theme: "light" | "dark";
-  onThemeChange: (t: "light" | "dark") => void;
+  appMode: AppMode;
+  onAppModeChange: (mode: AppMode) => void;
+  theme: ThemeName;
+  onThemeChange: (t: ThemeName) => void;
+  accentColor: string;
+  onAccentColorChange: (color: string) => void;
+  colors: DashboardColors;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: true });
@@ -1030,6 +1094,9 @@ function SettingsView({
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [accountStatus, setAccountStatus] = useState("");
   const [accountLoading, setAccountLoading] = useState(false);
+  const [accountFormVisible, setAccountFormVisible] = useState(false);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [accentDraft, setAccentDraft] = useState(accentColor);
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
@@ -1040,6 +1107,17 @@ function SettingsView({
       setScreenshotTriggers({ ...saved, immediate });
     });
   }, []);
+
+  useEffect(() => {
+    setAccentDraft(accentColor);
+  }, [accentColor]);
+
+  useEffect(() => {
+    if (account) {
+      setAccountFormVisible(false);
+      setDeleteConfirmVisible(false);
+    }
+  }, [account]);
 
   function handleTriggerChange(field: keyof SaveTriggers, value: boolean) {
     const updated = { ...triggers, [field]: value };
@@ -1080,81 +1158,182 @@ function SettingsView({
     try {
       await sendRuntimeMessage<void>({ type: "SIGN_OUT" });
       setAccountStatus("");
+      setAccountFormVisible(true);
+      setAuthMode("signin");
     } finally {
       setAccountLoading(false);
     }
   }
 
+  async function handleDeleteAccount() {
+    setAccountLoading(true);
+    setAccountStatus("");
+    try {
+      await sendRuntimeMessage<{ deleted: boolean }>({ type: "DELETE_ACCOUNT" });
+      setAuthEmail("");
+      setAuthPassword("");
+      setDeleteConfirmVisible(false);
+      setAccountFormVisible(false);
+      setAccountStatus("Account deleted. This email cannot be used to create a new account.");
+    } catch (error) {
+      setAccountStatus(error instanceof Error ? error.message : "Delete account failed.");
+    } finally {
+      setAccountLoading(false);
+    }
+  }
+
+  function handleAccentDraft(value: string) {
+    setAccentDraft(value);
+    if (/^#[0-9a-fA-F]{6}$/.test(value) || /^[0-9a-fA-F]{6}$/.test(value)) {
+      onAccentColorChange(normalizeHexColor(value));
+    }
+  }
+
   const inputStyle: React.CSSProperties = {
-    flex: "1 1 200px",
-    border: "1px solid #d8d7d2",
+    width: "100%",
+    height: 40,
+    boxSizing: "border-box",
+    border: `1px solid ${colors.border}`,
     borderRadius: 8,
-    padding: "8px 10px",
+    padding: "0 11px",
     fontSize: 14,
-    color: "#37352f",
+    color: colors.text,
+    background: colors.surface,
     outline: "none",
   };
 
   return (
     <div style={{ maxWidth: 520, paddingTop: 8 }}>
       {/* Account */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Account</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Account</p>
       <div style={{ marginBottom: 40 }}>
-        {account ? (
+        {account && !accountFormVisible ? (
           <div>
-            <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px", fontWeight: 700 }}>
+            <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px", fontWeight: 700 }}>
               {account.email}
             </p>
-            <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 12px", lineHeight: 1.5 }}>
+            <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
               Signed in — saves sync to Railway when the backend is reachable.
             </p>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={accountLoading}
-              style={{
-                background: "#fff",
-                color: "#eb5757",
-                border: "1px solid #fca5a5",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: accountLoading ? "default" : "pointer",
-              }}
-            >
-              Sign out
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={accountLoading}
+                style={{
+                  background: colors.surface,
+                  color: colors.text,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: accountLoading ? "default" : "pointer",
+                }}
+              >
+                Change account
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmVisible(true)}
+                disabled={accountLoading}
+                style={{
+                  background: colors.surface,
+                  color: "#b91c1c",
+                  border: "1px solid #fca5a5",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: accountLoading ? "default" : "pointer",
+                }}
+              >
+                Delete account
+              </button>
+            </div>
+            {deleteConfirmVisible && (
+              <div style={{ marginTop: 12, border: "1px solid #fca5a5", borderRadius: 8, padding: 12, background: theme === "dark" ? "rgba(127,29,29,0.18)" : "#fff7f7" }}>
+                <p style={{ fontSize: 12, color: theme === "dark" ? "#fecaca" : "#991b1b", margin: "0 0 10px", lineHeight: 1.5 }}>
+                  This deletes your account and saved cloud data. This email cannot be used to create another account.
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={handleDeleteAccount}
+                    disabled={accountLoading}
+                    style={{
+                      background: "#b91c1c",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: accountLoading ? "default" : "pointer",
+                    }}
+                  >
+                    {accountLoading ? "Deleting…" : "Delete permanently"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmVisible(false)}
+                    disabled={accountLoading}
+                    style={{
+                      background: colors.surface,
+                      color: colors.text,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: accountLoading ? "default" : "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-              {(["signin", "signup"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setAuthMode(m); setAccountStatus(""); }}
-                  style={{
-                    background: authMode === m ? "#37352f" : "#fff",
-                    color: authMode === m ? "#fff" : "#9b9a97",
-                    border: "1px solid #d8d7d2",
-                    borderRadius: 6,
-                    padding: "5px 14px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  {m === "signin" ? "Sign in" : "Create account"}
-                </button>
-              ))}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <div>
+                <p style={{ fontSize: 14, color: colors.text, margin: "0 0 3px", fontWeight: 700 }}>
+                  {accountFormVisible ? "Change account" : authMode === "signin" ? "Sign in" : "Create account"}
+                </p>
+                <p style={{ fontSize: 12, color: colors.muted, margin: 0, lineHeight: 1.5 }}>
+                  {authMode === "signin" ? "Use an existing ContextLens account." : "Deleted emails cannot be reused."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === "signin" ? "signup" : "signin");
+                  setAccountStatus("");
+                }}
+                style={{
+                  background: colors.surface,
+                  color: colors.text,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {authMode === "signin" ? "Create account" : "Sign in"}
+              </button>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <input
                 type="email"
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
                 placeholder="Email address"
+                autoComplete="email"
                 style={inputStyle}
               />
               <input
@@ -1162,6 +1341,7 @@ function SettingsView({
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
                 placeholder="Password"
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAuth(); }}
                 style={inputStyle}
               />
@@ -1171,11 +1351,11 @@ function SettingsView({
                 disabled={accountLoading || !authEmail.includes("@") || authPassword.length < 6}
                 style={{
                   alignSelf: "flex-start",
-                  background: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "#d8d7d2" : "#37352f",
-                  color: "#fff",
+                  background: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? colors.border : colors.accent,
+                  color: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? colors.muted : colors.selectedText,
                   border: "none",
                   borderRadius: 8,
-                  padding: "9px 16px",
+                  padding: "9px 14px",
                   fontSize: 13,
                   fontWeight: 700,
                   cursor: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "default" : "pointer",
@@ -1187,14 +1367,14 @@ function SettingsView({
           </div>
         )}
         {accountStatus && (
-          <p style={{ fontSize: 12, color: accountStatus.toLowerCase().includes("error") || accountStatus.toLowerCase().includes("failed") || accountStatus.toLowerCase().includes("could not") ? "#eb5757" : "#8d8b86", margin: "10px 0 0", lineHeight: 1.5 }}>
+          <p style={{ fontSize: 12, color: accountStatus.toLowerCase().includes("error") || accountStatus.toLowerCase().includes("failed") || accountStatus.toLowerCase().includes("could not") ? "#eb5757" : colors.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
             {accountStatus}
           </p>
         )}
       </div>
 
       {/* Save triggers */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Save trigger</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
         {([
           { field: "bubble" as const, label: "Show Save button on highlight", desc: "A small button appears over your selection — click it to save." },
@@ -1203,15 +1383,15 @@ function SettingsView({
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
             <input type="checkbox" checked={triggers[opt.field]} onChange={(e) => handleTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
             <div>
-              <p style={{ fontSize: 14, color: "#37352f", margin: 0 }}>{opt.label}</p>
-              <p style={{ fontSize: 12, color: "#9b9a97", margin: "2px 0 0" }}>{opt.desc}</p>
+              <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>{opt.label}</p>
+              <p style={{ fontSize: 12, color: colors.muted, margin: "2px 0 0" }}>{opt.desc}</p>
             </div>
           </label>
         ))}
       </div>
 
       {/* Answer behavior */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Answer behavior</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Answer behavior</p>
       <label style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start", marginBottom: 40 }}>
         <input
           type="checkbox"
@@ -1220,19 +1400,19 @@ function SettingsView({
           style={{ marginTop: 3 }}
         />
         <div>
-          <p style={{ fontSize: 14, color: "#37352f", margin: 0 }}>Show answer immediately</p>
-          <p style={{ fontSize: 12, color: "#9b9a97", margin: "2px 0 0" }}>
+          <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>Show answer immediately</p>
+          <p style={{ fontSize: 12, color: colors.muted, margin: "2px 0 0" }}>
             Shows the AI answer in the popup after pressing Enter, then lets you ask follow-ups.
           </p>
         </div>
       </label>
 
       {/* Flashcards */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Flashcards</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Flashcards</p>
       <div style={{ marginBottom: 40 }}>
         <label style={{ display: "block", marginBottom: 18 }}>
-          <p style={{ fontSize: 14, color: "#37352f", margin: "0 0 4px" }}>Question repeat threshold</p>
-          <p style={{ fontSize: 12, color: "#9b9a97", margin: "0 0 8px" }}>
+          <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Question repeat threshold</p>
+          <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px" }}>
             A question appears in Flashcards after this many saves in the current month, unless it is starred.
           </p>
           <input
@@ -1246,11 +1426,12 @@ function SettingsView({
             }}
             style={{
               width: 92,
-              border: "1px solid #d8d7d2",
+              border: `1px solid ${colors.border}`,
               borderRadius: 8,
               padding: "8px 10px",
               fontSize: 14,
-              color: "#37352f",
+              color: colors.text,
+              background: colors.surface,
             }}
           />
         </label>
@@ -1258,7 +1439,7 @@ function SettingsView({
       </div>
 
       {/* Screenshot triggers */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 12 }}>Screenshot trigger</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Screenshot trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {([
           { field: "floatingButton" as const, label: "Show camera button on pages", desc: "A camera button appears in the corner of every page." },
@@ -1267,8 +1448,8 @@ function SettingsView({
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
             <input type="checkbox" checked={screenshotTriggers[opt.field]} onChange={(e) => handleScreenshotTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
             <div>
-              <p style={{ fontSize: 14, color: "#37352f", margin: 0 }}>{opt.label}</p>
-              <p style={{ fontSize: 12, color: "#9b9a97", margin: "2px 0 0" }}>{opt.desc}</p>
+              <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>{opt.label}</p>
+              <p style={{ fontSize: 12, color: colors.muted, margin: "2px 0 0" }}>{opt.desc}</p>
             </div>
           </label>
         ))}
@@ -1277,9 +1458,9 @@ function SettingsView({
           onClick={openShortcutSettings}
           style={{
             width: "fit-content",
-            background: "#fff",
-            color: "#37352f",
-            border: "1px solid #d8d7d2",
+            background: colors.surface,
+            color: colors.text,
+            border: `1px solid ${colors.border}`,
             borderRadius: 8,
             padding: "8px 12px",
             fontSize: 13,
@@ -1291,30 +1472,112 @@ function SettingsView({
         </button>
       </div>
 
+      {/* Learning mode */}
+      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Learning mode</p>
+      <label style={{ display: "block", marginBottom: 40 }}>
+        <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Default answer style</p>
+        <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px", lineHeight: 1.5 }}>
+          Student mode includes study helpers like analogies.
+        </p>
+        <select
+          value={appMode}
+          onChange={(event) => onAppModeChange(event.target.value as AppMode)}
+          style={{
+            width: 190,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            fontSize: 14,
+            color: colors.text,
+            background: colors.surface,
+            outline: "none",
+          }}
+        >
+          <option value="language_learning">Language</option>
+          <option value="student">Student</option>
+        </select>
+      </label>
+
       {/* Theme */}
-      <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 40, marginBottom: 12 }}>Appearance</p>
-      <div style={{ display: "flex", background: "#f0efec", borderRadius: 999, padding: 3, gap: 2, width: "fit-content" }}>
-        {(["light", "dark"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => onThemeChange(t)}
+      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Appearance</p>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
+        <div style={{ display: "flex", background: colors.subtle, borderRadius: 999, padding: 3, gap: 2, width: "fit-content" }}>
+          {(["light", "dark"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onThemeChange(t)}
+              style={{
+                background: theme === t ? colors.text : "transparent",
+                color: theme === t ? colors.bg : colors.muted,
+                border: "none",
+                borderRadius: 999,
+                padding: "5px 16px",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                textTransform: "capitalize",
+                transition: "background 0.15s, color 0.15s",
+              }}
+            >
+              {t === "light" ? "Light" : "Dark"}
+            </button>
+          ))}
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 12, color: colors.text, fontSize: 14 }}>
+          <input
+            type="color"
+            value={accentColor}
+            onChange={(event) => onAccentColorChange(normalizeHexColor(event.target.value))}
             style={{
-              background: theme === t ? "#37352f" : "transparent",
-              color: theme === t ? "#fff" : "#9b9a97",
-              border: "none",
-              borderRadius: 999,
-              padding: "5px 16px",
-              fontSize: 13,
-              fontWeight: 600,
+              width: 32,
+              height: 32,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              padding: 2,
+              background: colors.surface,
               cursor: "pointer",
-              textTransform: "capitalize",
-              transition: "background 0.15s, color 0.15s",
             }}
-          >
-            {t === "light" ? "☀️ Light" : "🌙 Dark"}
-          </button>
-        ))}
+            aria-label="Accent color"
+          />
+          <span style={{ fontWeight: 600 }}>Accent color</span>
+          <input
+            value={accentDraft}
+            onChange={(event) => handleAccentDraft(event.target.value)}
+            onBlur={() => setAccentDraft(accentColor)}
+            spellCheck={false}
+            style={{
+              width: 96,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              padding: "7px 9px",
+              color: colors.text,
+              background: colors.surface,
+              fontSize: 13,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              outline: "none",
+            }}
+          />
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {["#2563eb", "#0f766e", "#b45309", "#be123c", "#37352f"].map((swatch) => (
+            <button
+              key={swatch}
+              type="button"
+              aria-label={`Use ${swatch}`}
+              onClick={() => onAccentColorChange(swatch)}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 999,
+                border: accentColor === swatch ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
+                background: swatch,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1413,7 +1676,7 @@ function MonthCalendar({
                 width: 34,
                 height: 34,
                 borderRadius: 8,
-                border: isSelected ? "2px solid #6366f1" : "1px solid #e3e2de",
+                border: isSelected ? `2px solid var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})` : "1px solid #e3e2de",
                 background: isFuture ? "#fafafa" : colorFor(count),
                 color: isFuture ? "#d8d7d2" : count > 0 ? "#37352f" : "#9b9a97",
                 fontSize: 12,
@@ -1431,8 +1694,6 @@ function MonthCalendar({
   );
 }
 
-type AppMode = "language_learning" | "student";
-
 export default function App() {
   const [view, setView] = useState<View>("saves");
   const [captures, setCaptures] = useState<Capture[]>([]);
@@ -1441,18 +1702,22 @@ export default function App() {
   const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(new Set());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
-  const [theme, setThemeState] = useState<"light" | "dark">("light");
+  const [theme, setThemeState] = useState<ThemeName>("light");
+  const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme"], (r) => {
+    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color"], (r) => {
       setCaptures(r.captures ?? []);
       setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
       setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
       setAccount(r.contextlens_user ?? null);
       setAppMode(r.app_mode ?? "language_learning");
-      const t = r.theme ?? "light";
+      const t = isThemeName(r.theme) ? r.theme : "light";
+      const accent = normalizeHexColor(r.accent_color);
       setThemeState(t);
+      setAccentColorState(accent);
       document.documentElement.setAttribute("data-theme", t);
+      document.documentElement.style.setProperty("--contextlens-accent", accent);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
@@ -1460,15 +1725,32 @@ export default function App() {
       if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
       if (changes.app_mode) setAppMode(changes.app_mode.newValue ?? "language_learning");
+      if (changes.theme) {
+        const nextTheme = isThemeName(changes.theme.newValue) ? changes.theme.newValue : "light";
+        setThemeState(nextTheme);
+        document.documentElement.setAttribute("data-theme", nextTheme);
+      }
+      if (changes.accent_color) {
+        const nextAccent = normalizeHexColor(changes.accent_color.newValue);
+        setAccentColorState(nextAccent);
+        document.documentElement.style.setProperty("--contextlens-accent", nextAccent);
+      }
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
-  function setTheme(t: "light" | "dark") {
+  function setTheme(t: ThemeName) {
     setThemeState(t);
     chrome.storage.local.set({ theme: t });
     document.documentElement.setAttribute("data-theme", t);
+  }
+
+  function setAccentColor(color: string) {
+    const nextColor = normalizeHexColor(color);
+    setAccentColorState(nextColor);
+    chrome.storage.local.set({ accent_color: nextColor });
+    document.documentElement.style.setProperty("--contextlens-accent", nextColor);
   }
 
   function setMode(mode: AppMode) {
@@ -1485,6 +1767,7 @@ export default function App() {
   const streak = computeStreak(captures);
   const contentMaxWidth = view === "history" ? 1800 : 1100;
   const contentPadding = view === "history" ? "32px 48px 32px 96px" : "32px";
+  const colors = colorsForTheme(theme, accentColor);
 
   function updateFlashcardThreshold(value: number) {
     setFlashcardThreshold(value);
@@ -1538,38 +1821,16 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#fff", color: "#37352f" }}>
-      <div style={{ borderBottom: "1px solid #e3e2de" }}>
+    <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text }}>
+      <div style={{ borderBottom: `1px solid ${colors.border}`, background: colors.bg }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 64 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => setView("saves")}
-              style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: "#37352f", cursor: "pointer" }}
+              style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: colors.text, cursor: "pointer" }}
             >
               ContextLens
             </button>
-            <div style={{ display: "flex", background: "#f0efec", borderRadius: 999, padding: 3, gap: 2 }}>
-              {(["language_learning", "student"] as AppMode[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  style={{
-                    background: appMode === m ? "#37352f" : "transparent",
-                    color: appMode === m ? "#fff" : "#9b9a97",
-                    border: "none",
-                    borderRadius: 999,
-                    padding: "4px 12px",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    transition: "background 0.15s, color 0.15s",
-                  }}
-                >
-                  {m === "language_learning" ? "Language" : "Student"}
-                </button>
-              ))}
-            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
             {streak > 0 && (
@@ -1579,7 +1840,7 @@ export default function App() {
                 title="Go to today"
               >
                 <span style={{ fontSize: 16 }}>🔥</span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#37352f" }}>{streak}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>
               </button>
             )}
             <nav style={{ display: "flex", gap: 18 }}>
@@ -1590,8 +1851,8 @@ export default function App() {
                   style={{
                     background: "none",
                     border: "none",
-                    borderBottom: view === v ? "2px solid #37352f" : "2px solid transparent",
-                    color: view === v ? "#37352f" : "#9b9a97",
+                    borderBottom: view === v ? `2px solid ${colors.text}` : "2px solid transparent",
+                    color: view === v ? colors.text : colors.muted,
                     fontWeight: view === v ? 600 : 400,
                     fontSize: 14,
                     cursor: "pointer",
@@ -1621,9 +1882,9 @@ export default function App() {
                   onClick={clearTodayCaptures}
                   title="Clear today's saves"
                   style={{
-                    background: "#fff",
-                    color: "#8d8b86",
-                    border: "1px solid #d8d7d2",
+                    background: colors.surface,
+                    color: colors.muted,
+                    border: `1px solid ${colors.border}`,
                     borderRadius: 7,
                     padding: "6px 10px",
                     fontSize: 12,
@@ -1651,8 +1912,13 @@ export default function App() {
             flashcardThreshold={flashcardThreshold}
             onFlashcardThresholdChange={updateFlashcardThreshold}
             account={account}
+            appMode={appMode}
+            onAppModeChange={setMode}
             theme={theme}
             onThemeChange={setTheme}
+            accentColor={accentColor}
+            onAccentColorChange={setAccentColor}
+            colors={colors}
           />
         )}
       </div>

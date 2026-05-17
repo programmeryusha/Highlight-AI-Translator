@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-16-triple-click-mode-popup-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-17-camera-visual-viewport-v1";
 const DEFAULT_ACCENT_COLOR = "#2563eb";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
@@ -124,6 +124,10 @@ cleanupTasks.push(() => chrome.storage.onChanged.removeListener(appearanceStorag
 
 // Floating camera button
 let cameraBtn: HTMLElement | null = null;
+let cameraButtonHoverScale = 1;
+let cameraButtonPositionFrame: number | null = null;
+const CAMERA_BUTTON_SIZE = 44;
+const CAMERA_BUTTON_MARGIN = 18;
 
 function appendToPage(element: HTMLElement) {
   (document.body ?? document.documentElement).appendChild(element);
@@ -240,6 +244,37 @@ function appendMarkdownText(container: HTMLElement, text: string) {
   });
 }
 
+function updateCameraButtonPosition() {
+  cameraButtonPositionFrame = null;
+  if (!cameraBtn) return;
+
+  const viewport = window.visualViewport;
+  const scale = Math.max(0.1, viewport?.scale ?? 1);
+  const visibleLeft = viewport?.offsetLeft ?? 0;
+  const visibleTop = viewport?.offsetTop ?? 0;
+  const visibleWidth = viewport?.width ?? window.innerWidth;
+  const visibleHeight = viewport?.height ?? window.innerHeight;
+  const inverseScale = 1 / scale;
+  const visibleButtonSize = CAMERA_BUTTON_SIZE * inverseScale * cameraButtonHoverScale;
+  const left = Math.max(
+    visibleLeft + 4,
+    visibleLeft + visibleWidth - visibleButtonSize - CAMERA_BUTTON_MARGIN,
+  );
+  const top = Math.max(
+    visibleTop + 4,
+    visibleTop + visibleHeight - visibleButtonSize - CAMERA_BUTTON_MARGIN,
+  );
+
+  cameraBtn.style.left = `${Math.round(left)}px`;
+  cameraBtn.style.top = `${Math.round(top)}px`;
+  cameraBtn.style.transform = `scale(${inverseScale * cameraButtonHoverScale})`;
+}
+
+function queueCameraButtonPosition() {
+  if (cameraButtonPositionFrame !== null) return;
+  cameraButtonPositionFrame = window.requestAnimationFrame(updateCameraButtonPosition);
+}
+
 function createCameraButton() {
   if (cameraBtn) return;
   const colors = uiColors();
@@ -248,32 +283,45 @@ function createCameraButton() {
   cameraBtn.textContent = "📷";
   cameraBtn.setAttribute("style", `
     position: fixed;
-    bottom: 24px;
-    right: 24px;
-    width: 44px;
-    height: 44px;
+    left: 0;
+    top: 0;
+    width: ${CAMERA_BUTTON_SIZE}px;
+    height: ${CAMERA_BUTTON_SIZE}px;
     background: ${colors.panel};
     border: 1px solid ${colors.border};
     border-radius: 50%;
     font-size: 20px;
-    line-height: 44px;
+    line-height: ${CAMERA_BUTTON_SIZE}px;
     text-align: center;
     cursor: pointer;
     z-index: 2147483646;
     box-shadow: 0 2px 12px rgba(0,0,0,0.3);
     user-select: none;
+    transform-origin: top left;
     transition: transform 0.1s;
   `);
-  cameraBtn.addEventListener("mouseenter", () => { cameraBtn!.style.transform = "scale(1.1)"; });
-  cameraBtn.addEventListener("mouseleave", () => { cameraBtn!.style.transform = "scale(1)"; });
+  cameraBtn.addEventListener("mouseenter", () => {
+    cameraButtonHoverScale = 1.1;
+    queueCameraButtonPosition();
+  });
+  cameraBtn.addEventListener("mouseleave", () => {
+    cameraButtonHoverScale = 1;
+    queueCameraButtonPosition();
+  });
   cameraBtn.addEventListener("click", () => {
     chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT" } as Message);
   });
   appendToPage(cameraBtn);
+  queueCameraButtonPosition();
 }
 
 function removeCameraButton() {
   if (cameraBtn) { cameraBtn.remove(); cameraBtn = null; }
+  cameraButtonHoverScale = 1;
+  if (cameraButtonPositionFrame !== null) {
+    window.cancelAnimationFrame(cameraButtonPositionFrame);
+    cameraButtonPositionFrame = null;
+  }
 }
 
 // Show/hide camera button based on settings
@@ -292,6 +340,20 @@ const storageChangeHandler = (changes: Record<string, chrome.storage.StorageChan
 };
 chrome.storage.onChanged.addListener(storageChangeHandler);
 cleanupTasks.push(() => chrome.storage.onChanged.removeListener(storageChangeHandler));
+
+const cameraViewportHandler = () => queueCameraButtonPosition();
+window.visualViewport?.addEventListener("resize", cameraViewportHandler);
+window.visualViewport?.addEventListener("scroll", cameraViewportHandler);
+window.addEventListener("resize", cameraViewportHandler);
+window.addEventListener("scroll", cameraViewportHandler, true);
+window.addEventListener("orientationchange", cameraViewportHandler);
+cleanupTasks.push(() => {
+  window.visualViewport?.removeEventListener("resize", cameraViewportHandler);
+  window.visualViewport?.removeEventListener("scroll", cameraViewportHandler);
+  window.removeEventListener("resize", cameraViewportHandler);
+  window.removeEventListener("scroll", cameraViewportHandler, true);
+  window.removeEventListener("orientationchange", cameraViewportHandler);
+});
 
 function removeWidget() {
   if (widgetOutsideHandler) {
@@ -1570,6 +1632,18 @@ function isPageEditableTarget(target: EventTarget | null) {
   return (editable as HTMLElement).isContentEditable;
 }
 
+function editableTextControl(target: EventTarget | null): HTMLInputElement | HTMLTextAreaElement | null {
+  const element = targetElement(target);
+  if (!element || isInContextLensUi(element)) return null;
+
+  const editable = element.closest("input, textarea");
+  if (editable instanceof HTMLTextAreaElement) return editable;
+  if (editable instanceof HTMLInputElement && !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(editable.type)) {
+    return editable;
+  }
+  return null;
+}
+
 function pageHasTypingFocus(target?: EventTarget | null) {
   return isPageEditableTarget(target ?? null) || isPageEditableTarget(document.activeElement);
 }
@@ -1708,13 +1782,38 @@ function extractSelectionText(selection: Selection): string {
   return raw;
 }
 
+function selectedEditableControlText(target?: EventTarget | null): { text: string; rect: RectLike } | null {
+  const control = editableTextControl(target ?? null) ?? editableTextControl(document.activeElement);
+  if (!control) return null;
+
+  const start = control.selectionStart ?? 0;
+  const end = control.selectionEnd ?? 0;
+  if (start === end) return null;
+
+  const text = control.value.slice(Math.min(start, end), Math.max(start, end)).trim();
+  if (!text) return null;
+
+  const rect = control.getBoundingClientRect();
+  if (rect.width <= 1 || rect.height <= 1) return null;
+  return { text, rect };
+}
+
+function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null): { text: string; rect: RectLike } | null {
+  const selection = window.getSelection();
+  const text = selection ? extractSelectionText(selection) : "";
+
+  if (text.length > 0 && selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    const rect = rangeAnchorRect(range, anchor);
+    if (rect) return { text, rect };
+  }
+
+  return selectedEditableControlText(target);
+}
+
 function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (saveBubbleSuppressed()) return;
   if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
-  if (pageHasTypingFocus(event?.target ?? null)) {
-    if (widgetMode === "bubble") removeWidget();
-    return;
-  }
   const recentAnchor = lastSelectionAnchor && performance.now() - lastSelectionAnchor.timestamp < 1000
     ? lastSelectionAnchor
     : null;
@@ -1724,26 +1823,20 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   clearSelectionCheckTimer();
   if (saveBubbleSuppressed()) return;
   if (widgetMode === "input") return;
-  if (pageHasTypingFocus()) {
-    if (widgetMode === "bubble") removeWidget();
-    return;
-  }
-  const selection = window.getSelection();
-  const text = selection ? extractSelectionText(selection) : "";
+  const selected = selectedPageText(anchor && anchor.detail >= 2 ? anchor : undefined, event?.target ?? null);
 
-  if (text.length > 0 && selection && selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    const rect = rangeAnchorRect(range, anchor && anchor.detail >= 2 ? anchor : undefined);
-    if (!rect) return;
-    const x = fixedViewportX(rect.left + rect.width / 2);
-    const y = fixedViewportY(rect.top);
+  if (selected) {
+    const x = fixedViewportX(selected.rect.left + selected.rect.width / 2);
+    const y = fixedViewportY(selected.rect.top);
 
     chrome.storage.local.get("save_triggers", (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
       if (triggers.bubble) {
-        showSaveBubble(x, y, text);
+        showSaveBubble(x, y, selected.text);
       }
     });
+  } else if (pageHasTypingFocus(event?.target ?? null)) {
+    if (widgetMode === "bubble") removeWidget();
   } else if (removeWhenEmpty) {
     const target = event?.target as HTMLElement | undefined;
     if (widget && (!target || !widget.contains(target))) {
@@ -1757,9 +1850,10 @@ const documentMousedownHandler = (event: MouseEvent) => {
   const target = event.target;
   const clickedWidget = target instanceof Node && Boolean(widget?.contains(target));
 
-  if (widgetMode === "bubble" && widget && (!clickedWidget || isPageEditableTarget(target))) {
+  const clickedEditable = isPageEditableTarget(target);
+  if (widgetMode === "bubble" && widget && (!clickedWidget || clickedEditable)) {
     removeWidget();
-    if (event.detail <= 1 || isPageEditableTarget(target)) {
+    if (event.detail <= 1 && !clickedEditable) {
       suppressSaveBubble();
     }
   }
@@ -1788,10 +1882,6 @@ cleanupTasks.push(() => document.removeEventListener("mouseup", documentMouseupH
 const selectionChangeHandler = () => {
   if (pointerIsDown || widgetMode === "input") return;
   if (saveBubbleSuppressed()) return;
-  if (pageHasTypingFocus()) {
-    if (widgetMode === "bubble") removeWidget();
-    return;
-  }
   scheduleSelectionCheck(undefined, false);
 };
 document.addEventListener("selectionchange", selectionChangeHandler);
@@ -1803,6 +1893,12 @@ const documentKeydownHandler = (e: KeyboardEvent) => {
 };
 document.addEventListener("keydown", documentKeydownHandler);
 cleanupTasks.push(() => document.removeEventListener("keydown", documentKeydownHandler));
+
+const documentInputHandler = (event: Event) => {
+  if (widgetMode === "bubble" && pageHasTypingFocus(event.target)) removeWidget();
+};
+document.addEventListener("input", documentInputHandler, true);
+cleanupTasks.push(() => document.removeEventListener("input", documentInputHandler, true));
 
 contextLensGlobal.__contextLensCleanup = () => {
   removeWidget();

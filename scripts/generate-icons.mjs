@@ -10,9 +10,7 @@ mkdirSync(outDir, { recursive: true });
 function drawIcon(size) {
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext("2d");
-  const s = size / 128; // scale factor
 
-  // Background — rounded rect
   const radius = size * 0.22;
   ctx.beginPath();
   ctx.moveTo(radius, 0);
@@ -25,26 +23,54 @@ function drawIcon(size) {
   ctx.lineTo(0, radius);
   ctx.quadraticCurveTo(0, 0, radius, 0);
   ctx.closePath();
-  ctx.fillStyle = "#1a1a2e";
+  const bg = ctx.createLinearGradient(0, 0, size, size);
+  bg.addColorStop(0, "#111827");
+  bg.addColorStop(1, "#253141");
+  ctx.fillStyle = bg;
   ctx.fill();
 
-  // Highlight bar (thick angled stroke) — the "highlighter" motif
-  const pad = size * 0.18;
-  const barY = size * 0.62;
-  const barH = size * 0.13;
-
-  // Purple highlight band across lower portion
-  ctx.fillStyle = "#6366f1";
+  // Highlighted text strip
+  ctx.save();
+  ctx.translate(size * 0.2, size * 0.68);
+  ctx.rotate(-0.13);
+  ctx.fillStyle = "#facc15";
   ctx.beginPath();
-  ctx.roundRect(pad, barY, size - pad * 2, barH, barH * 0.4);
+  ctx.roundRect(0, 0, size * 0.62, size * 0.18, size * 0.04);
   ctx.fill();
+  ctx.restore();
 
-  // Letter "H" in white above the bar
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `700 ${Math.round(size * 0.42)}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("H", size / 2, size * 0.38);
+  // Lens ring
+  const cx = size * 0.48;
+  const cy = size * 0.43;
+  const r = size * 0.23;
+  ctx.lineWidth = Math.max(2, size * 0.085);
+  ctx.strokeStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Lens handle
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = Math.max(2, size * 0.09);
+  ctx.beginPath();
+  ctx.moveTo(cx + r * 0.62, cy + r * 0.62);
+  ctx.lineTo(size * 0.78, size * 0.76);
+  ctx.stroke();
+
+  // Small glint suggests "AI read this"
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.moveTo(size * 0.68, size * 0.18);
+  ctx.lineTo(size * 0.72, size * 0.28);
+  ctx.lineTo(size * 0.82, size * 0.32);
+  ctx.lineTo(size * 0.72, size * 0.36);
+  ctx.lineTo(size * 0.68, size * 0.46);
+  ctx.lineTo(size * 0.64, size * 0.36);
+  ctx.lineTo(size * 0.54, size * 0.32);
+  ctx.lineTo(size * 0.64, size * 0.28);
+  ctx.closePath();
+  ctx.fill();
 
   return canvas;
 }
