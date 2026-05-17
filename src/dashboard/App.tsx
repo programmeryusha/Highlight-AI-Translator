@@ -35,6 +35,11 @@ type DashboardColors = {
   surfaceAlt: string;
   selectedText: string;
   accent: string;
+  accentSoft: string;
+  danger: string;
+  dangerFill: string;
+  dangerSoft: string;
+  dangerBorder: string;
 };
 
 function isThemeName(value: unknown): value is ThemeName {
@@ -70,16 +75,21 @@ function colorWithAlpha(hex: string, alpha: number): string {
 function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors {
   const dark = theme === "dark";
   return {
-    bg: dark ? "#171717" : "#fff",
-    text: dark ? "#f4f1ea" : "#37352f",
-    muted: dark ? "#a8a29e" : "#9b9a97",
-    softText: dark ? "#d6d3cd" : "#6b6b6b",
-    border: dark ? "#34312c" : "#e3e2de",
-    subtle: dark ? "#24221f" : "#f0efec",
-    surface: dark ? "#1d1b18" : "#fff",
-    surfaceAlt: dark ? "#27241f" : "#f7f6f3",
+    bg: dark ? "#141413" : "#fff",
+    text: dark ? "#f5f2ec" : "#37352f",
+    muted: dark ? "#a9a39a" : "#9b9a97",
+    softText: dark ? "#d4cec5" : "#6b6b6b",
+    border: dark ? "#393631" : "#e3e2de",
+    subtle: dark ? "#22211f" : "#f0efec",
+    surface: dark ? "#1b1a18" : "#fff",
+    surfaceAlt: dark ? "#26231f" : "#f7f6f3",
     selectedText: textOnColor(accentColor),
     accent: accentColor,
+    accentSoft: colorWithAlpha(accentColor, dark ? 0.24 : 0.12),
+    danger: dark ? "#fca5a5" : "#b91c1c",
+    dangerFill: dark ? "#dc2626" : "#b91c1c",
+    dangerSoft: dark ? "rgba(127,29,29,0.22)" : "#fff7f7",
+    dangerBorder: dark ? "rgba(252,165,165,0.34)" : "#fca5a5",
   };
 }
 
@@ -344,7 +354,7 @@ function TrashIcon() {
   );
 }
 
-function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture; starred: boolean; onToggle: (id: string) => void }) {
+function FlashcardStarButton({ capture, starred, onToggle, colors }: { capture: Capture; starred: boolean; onToggle: (id: string) => void; colors: DashboardColors }) {
   if (!capture.context.trim()) return null;
 
   return (
@@ -365,9 +375,9 @@ function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture;
         width: 30,
         height: 30,
         borderRadius: 999,
-        border: "1px solid #e3e2de",
-        background: starred ? "#37352f" : "#fff",
-        color: starred ? "#fff" : "#9b9a97",
+        border: `1px solid ${starred ? colors.accent : colors.border}`,
+        background: starred ? colors.accent : colors.surface,
+        color: starred ? colors.selectedText : colors.muted,
         cursor: "pointer",
         fontSize: 15,
         lineHeight: "28px",
@@ -380,8 +390,7 @@ function FlashcardStarButton({ capture, starred, onToggle }: { capture: Capture;
   );
 }
 
-function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle: () => void }) {
-  const accent = `var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})`;
+function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; onToggle: () => void; colors: DashboardColors }) {
   return (
     <button
       type="button"
@@ -400,9 +409,9 @@ function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle:
         width: 22,
         height: 22,
         borderRadius: 6,
-        border: selected ? `1px solid ${accent}` : "1px solid #d8d7d2",
-        background: selected ? accent : "#fff",
-        color: "#fff",
+        border: selected ? `1px solid ${colors.accent}` : `1px solid ${colors.border}`,
+        background: selected ? colors.accent : colors.surface,
+        color: colors.selectedText,
         cursor: "pointer",
         fontSize: 14,
         lineHeight: "20px",
@@ -417,7 +426,7 @@ function SelectSaveButton({ selected, onToggle }: { selected: boolean; onToggle:
   );
 }
 
-function DeleteSaveButton({ onDelete }: { onDelete: () => void }) {
+function DeleteSaveButton({ onDelete, colors }: { onDelete: () => void; colors: DashboardColors }) {
   return (
     <button
       type="button"
@@ -436,9 +445,9 @@ function DeleteSaveButton({ onDelete }: { onDelete: () => void }) {
         width: 30,
         height: 30,
         borderRadius: 999,
-        border: "1px solid #e3e2de",
-        background: "#fff",
-        color: "#9b9a97",
+        border: `1px solid ${colors.border}`,
+        background: colors.surface,
+        color: colors.muted,
         cursor: "pointer",
         display: "inline-flex",
         alignItems: "center",
@@ -451,7 +460,7 @@ function DeleteSaveButton({ onDelete }: { onDelete: () => void }) {
   );
 }
 
-function CapturePreview({ capture }: { capture: Capture }) {
+function CapturePreview({ capture, colors }: { capture: Capture; colors: DashboardColors }) {
   if (capture.imageData) {
     return (
       <img
@@ -470,14 +479,14 @@ function CapturePreview({ capture }: { capture: Capture }) {
     <>
       <p
         onClick={(event) => openCaptureFromClick(event, capture.id)}
-        style={{ fontSize: 21, fontWeight: 650, color: "#2f2e2b", lineHeight: 1.6, margin: 0, cursor: "pointer" }}
+        style={{ fontSize: 21, fontWeight: 650, color: colors.text, lineHeight: 1.6, margin: 0, cursor: "pointer" }}
       >
         {text}
       </p>
       {isLong && (
         <p
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ fontSize: 14, color: `var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})`, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
+          style={{ fontSize: 14, color: colors.accent, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
         >
           Open full save
         </p>
@@ -492,12 +501,14 @@ function SavesView({
   onToggleStar,
   onDeleteCaptures,
   headerAction,
+  colors,
 }: {
   captures: Capture[];
   starredCaptureIds: Set<string>;
   onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
   headerAction?: React.ReactNode;
+  colors: DashboardColors;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -508,7 +519,7 @@ function SavesView({
 
   if (captures.length === 0) {
     return (
-      <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 48 }}>
+      <p style={{ color: colors.muted, fontSize: 15, paddingTop: 48 }}>
         Nothing saved yet. Highlight any text on the web to save it here.
       </p>
     );
@@ -542,27 +553,28 @@ function SavesView({
             alignItems: "center",
             justifyContent: "space-between",
             gap: 12,
-            border: "1px solid #e3e2de",
+            border: `1px solid ${colors.border}`,
             borderRadius: 8,
             padding: "10px 12px",
             marginBottom: 22,
+            background: colors.surface,
           }}
         >
-          <span style={{ fontSize: 13, color: "#37352f", fontWeight: 700 }}>
+          <span style={{ fontSize: 13, color: colors.text, fontWeight: 700 }}>
             {selectedCount} selected
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
               type="button"
               onClick={deleteSelected}
-              style={{ background: "#37352f", color: "#fff", border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
             >
               Delete selected
             </button>
             <button
               type="button"
               onClick={() => setSelectedIds(new Set())}
-              style={{ background: "#fff", color: "#8d8b86", border: "1px solid #d8d7d2", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
             >
               Cancel
             </button>
@@ -572,7 +584,7 @@ function SavesView({
       {groups.map((group) => (
         <div key={group.label} style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-            <p style={{ fontSize: 12, fontWeight: 600, color: "#9b9a97", textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
               {group.label}
             </p>
             {headerAction}
@@ -593,39 +605,39 @@ function SavesView({
                 style={{ padding: "18px 0 28px", maxWidth: "100%", cursor: "pointer", outline: "none" }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} />
+                  <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} colors={colors} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <CapturePreview capture={c} />
+                    <CapturePreview capture={c} colors={colors} />
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                    <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} />
-                    <DeleteSaveButton onDelete={() => onDeleteCaptures([c.id])} />
+                    <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} colors={colors} />
+                    <DeleteSaveButton onDelete={() => onDeleteCaptures([c.id])} colors={colors} />
                   </div>
                 </div>
 
                 {c.context && (
-                  <div style={{ borderLeft: "3px solid #d8d7d2", paddingLeft: 12, margin: "10px 0 0 34px" }}>
-                    <p style={{ fontSize: 12, color: "#8d8b86", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                  <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 12, margin: "10px 0 0 34px" }}>
+                    <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
                       Your question
                     </p>
-                    <p style={{ fontSize: 18, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
+                    <p style={{ fontSize: 18, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
                       {c.context}
                     </p>
                   </div>
                 )}
 
                 {c.status === "pending" && (
-                  <p style={{ fontSize: 16, color: "#8d8b86", margin: "10px 0 0 34px", fontStyle: "italic" }}>
+                  <p style={{ fontSize: 16, color: colors.muted, margin: "10px 0 0 34px", fontStyle: "italic" }}>
                     thinking…
                   </p>
                 )}
                 {c.status === "error" && (
-                  <p style={{ fontSize: 16, color: "#eb5757", margin: "10px 0 0 34px", lineHeight: 1.6 }}>
+                  <p style={{ fontSize: 16, color: colors.danger, margin: "10px 0 0 34px", lineHeight: 1.6 }}>
                     something went wrong — {c.errorMessage ?? "try again"}
                   </p>
                 )}
                 {c.status === "done" && c.explanation && (
-                  <div style={{ fontSize: 19, color: "#4f4d49", margin: "14px 0 0 34px", lineHeight: 1.75 }}>
+                  <div style={{ fontSize: 19, color: colors.softText, margin: "14px 0 0 34px", lineHeight: 1.75 }}>
                     {renderMarkdown(c.explanation)}
                   </div>
                 )}
@@ -701,9 +713,9 @@ function HistoryView({
               width: 34,
               height: 34,
               borderRadius: 999,
-              border: "1px solid #e3e2de",
-              background: "#fff",
-              color: "#37352f",
+              border: `1px solid ${colors.border}`,
+              background: colors.surface,
+              color: colors.text,
               cursor: "pointer",
               fontSize: 18,
             }}
@@ -711,10 +723,10 @@ function HistoryView({
             ‹
           </button>
           <div style={{ minWidth: 220, textAlign: "center" }}>
-            <h2 style={{ fontSize: 22, color: "#37352f", margin: 0, fontWeight: 700 }}>
+            <h2 style={{ fontSize: 22, color: colors.text, margin: 0, fontWeight: 700 }}>
               {selectedDayLabel()}
             </h2>
-            <p style={{ fontSize: 13, color: "#9b9a97", margin: "5px 0 0" }}>
+            <p style={{ fontSize: 13, color: colors.muted, margin: "5px 0 0" }}>
               {selectedCaptures.length} {selectedCaptures.length === 1 ? "save" : "saves"}
             </p>
           </div>
@@ -726,9 +738,9 @@ function HistoryView({
               width: 34,
               height: 34,
               borderRadius: 999,
-              border: "1px solid #e3e2de",
-              background: canGoNext ? "#fff" : "#f7f6f3",
-              color: canGoNext ? "#37352f" : "#c7c6c3",
+              border: `1px solid ${colors.border}`,
+              background: canGoNext ? colors.surface : colors.surfaceAlt,
+              color: canGoNext ? colors.text : colors.muted,
               cursor: canGoNext ? "pointer" : "default",
               fontSize: 18,
             }}
@@ -743,9 +755,10 @@ function HistoryView({
             starredCaptureIds={starredCaptureIds}
             onToggleStar={onToggleStar}
             onDeleteCaptures={onDeleteCaptures}
+            colors={colors}
           />
         ) : (
-          <p style={{ color: "#9b9a97", fontSize: 15, paddingTop: 8, textAlign: "center" }}>
+          <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8, textAlign: "center" }}>
             {emptyDayMessage()}
           </p>
         )}
@@ -812,7 +825,7 @@ function buildFlashcardList(
     .sort((a, b) => Number(b.starred) - Number(a.starred) || b.count - a.count || a.word.localeCompare(b.word));
 }
 
-function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => void }) {
+function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
 
@@ -825,10 +838,10 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", paddingTop: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#9b9a97", fontSize: 14, cursor: "pointer" }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: colors.muted, fontSize: 14, cursor: "pointer" }}>
           ← Back to flashcards
         </button>
-        <span style={{ fontSize: 13, color: "#9b9a97" }}>{index + 1} / {words.length}</span>
+        <span style={{ fontSize: 13, color: colors.muted }}>{index + 1} / {words.length}</span>
       </div>
 
       {/* Card */}
@@ -836,8 +849,8 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
         onClick={() => setFlipped((f) => !f)}
         style={{
           minHeight: 220,
-          background: flipped ? "#f7f6f3" : "#fff",
-          border: "1px solid #e3e2de",
+          background: flipped ? colors.surfaceAlt : colors.surface,
+          border: `1px solid ${colors.border}`,
           borderRadius: 12,
           display: "flex",
           flexDirection: "column",
@@ -852,16 +865,16 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
       >
         {!flipped ? (
           <>
-            <p style={{ fontSize: 28, fontWeight: 700, color: "#37352f", margin: 0 }}>{card.word}</p>
-            <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 16 }}>Click to reveal</p>
+            <p style={{ fontSize: 28, fontWeight: 700, color: colors.text, margin: 0 }}>{card.word}</p>
+            <p style={{ fontSize: 13, color: colors.muted, marginTop: 16 }}>Click to reveal</p>
           </>
         ) : (
           <>
-            <div style={{ fontSize: 16, color: "#37352f", lineHeight: 1.7, margin: 0 }}>
+            <div style={{ fontSize: 16, color: colors.text, lineHeight: 1.7, margin: 0 }}>
               {renderMarkdown(card.explanation || "No explanation yet — save a highlight with this question to get one.")}
             </div>
             {card.exampleText && (
-              <p style={{ fontSize: 13, color: "#9b9a97", marginTop: 16, fontStyle: "italic" }}>
+              <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, fontStyle: "italic" }}>
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
               </p>
             )}
@@ -871,10 +884,10 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
 
       {/* Nav */}
       <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-        <button onClick={prev} style={{ background: "#f7f6f3", border: "1px solid #e3e2de", borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: "#37352f" }}>
+        <button onClick={prev} style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: colors.text }}>
           ← Prev
         </button>
-        <button onClick={next} style={{ background: "#37352f", border: "none", borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: "#fff" }}>
+        <button onClick={next} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: colors.selectedText }}>
           Next →
         </button>
       </div>
@@ -882,7 +895,7 @@ function FlashcardView({ words, onClose }: { words: WordEntry[]; onClose: () => 
   );
 }
 
-function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string> }) {
+function WordsView({ captures, flashcardThreshold, starredCaptureIds, colors }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string>; colors: DashboardColors }) {
   const [flashcard, setFlashcard] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [exportRange, setExportRange] = useState<FlashcardExportRange>("yesterday");
@@ -898,14 +911,14 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
   const exportRangeLabel = FLASHCARD_EXPORT_RANGES.find((range) => range.value === exportRange)?.label ?? "Selected range";
   const exportSummary = exportRange === "custom" ? `${customStartKey} to ${customEndKey}` : exportRangeLabel.toLowerCase();
 
-  if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} />;
+  if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} colors={colors} />;
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <div>
-          <h2 style={{ fontSize: 22, color: "#37352f", margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
-          <p style={{ fontSize: 13, color: "#9b9a97", margin: 0 }}>
+          <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
+          <p style={{ fontSize: 13, color: colors.muted, margin: 0 }}>
             {words.length} ready this month
           </p>
         </div>
@@ -914,9 +927,9 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
             type="button"
             onClick={() => setShowExport((open) => !open)}
             style={{
-              background: showExport ? "#37352f" : "#fff",
-              color: showExport ? "#fff" : "#37352f",
-              border: "1px solid #d8d7d2",
+              background: showExport ? colors.accent : colors.surface,
+              color: showExport ? colors.selectedText : colors.text,
+              border: `1px solid ${showExport ? colors.accent : colors.border}`,
               borderRadius: 6,
               padding: "7px 16px",
               fontSize: 13,
@@ -930,8 +943,8 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
             disabled={words.length === 0}
             onClick={() => setFlashcard(true)}
             style={{
-              background: words.length === 0 ? "#d8d7d2" : "#37352f",
-              color: "#fff",
+              background: words.length === 0 ? colors.border : colors.accent,
+              color: words.length === 0 ? colors.muted : colors.selectedText,
               border: "none",
               borderRadius: 6,
               padding: "7px 16px",
@@ -948,7 +961,8 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
       {showExport && (
         <div
           style={{
-            border: "1px solid #e3e2de",
+            border: `1px solid ${colors.border}`,
+            background: colors.surface,
             borderRadius: 8,
             padding: 16,
             marginBottom: 26,
@@ -960,7 +974,7 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
           }}
         >
           <div>
-            <p style={{ fontSize: 13, color: "#9b9a97", margin: "0 0 8px" }}>Export flashcards</p>
+            <p style={{ fontSize: 13, color: colors.muted, margin: "0 0 8px" }}>Export flashcards</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {FLASHCARD_EXPORT_RANGES.map((range) => (
                 <button
@@ -968,9 +982,9 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
                   type="button"
                   onClick={() => setExportRange(range.value)}
                   style={{
-                    background: exportRange === range.value ? "#37352f" : "#fff",
-                    color: exportRange === range.value ? "#fff" : "#37352f",
-                    border: "1px solid #d8d7d2",
+                    background: exportRange === range.value ? colors.accent : colors.surface,
+                    color: exportRange === range.value ? colors.selectedText : colors.text,
+                    border: `1px solid ${exportRange === range.value ? colors.accent : colors.border}`,
                     borderRadius: 999,
                     padding: "6px 11px",
                     fontSize: 13,
@@ -984,17 +998,17 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
             </div>
             {exportRange === "custom" && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8d8b86", fontWeight: 700 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.muted, fontWeight: 700 }}>
                   From
                   <input
                     type="date"
                     value={customStartKey}
                     max={customEndKey}
                     onChange={(event) => setCustomStartKey(event.target.value)}
-                    style={{ border: "1px solid #d8d7d2", borderRadius: 6, padding: "6px 8px", fontSize: 13, color: "#37352f" }}
+                    style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 13, color: colors.text, background: colors.surface }}
                   />
                 </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8d8b86", fontWeight: 700 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.muted, fontWeight: 700 }}>
                   To
                   <input
                     type="date"
@@ -1002,12 +1016,12 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
                     min={customStartKey}
                     max={todayKey()}
                     onChange={(event) => setCustomEndKey(event.target.value)}
-                    style={{ border: "1px solid #d8d7d2", borderRadius: 6, padding: "6px 8px", fontSize: 13, color: "#37352f" }}
+                    style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 13, color: colors.text, background: colors.surface }}
                   />
                 </label>
               </div>
             )}
-            <p style={{ fontSize: 12, color: "#9b9a97", margin: "10px 0 0" }}>
+            <p style={{ fontSize: 12, color: colors.muted, margin: "10px 0 0" }}>
               {exportWords.length} {exportWords.length === 1 ? "flashcard" : "flashcards"} ready from {exportSummary}.
             </p>
           </div>
@@ -1017,8 +1031,8 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
               disabled={exportWords.length === 0}
               onClick={() => exportFlashcards("anki", exportWords)}
               style={{
-                background: exportWords.length === 0 ? "#d8d7d2" : "#37352f",
-                color: "#fff",
+                background: exportWords.length === 0 ? colors.border : colors.accent,
+                color: exportWords.length === 0 ? colors.muted : colors.selectedText,
                 border: "none",
                 borderRadius: 8,
                 padding: "9px 14px",
@@ -1034,9 +1048,9 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
               disabled={exportWords.length === 0}
               onClick={() => exportFlashcards("quizlet", exportWords)}
               style={{
-                background: "#fff",
-                color: exportWords.length === 0 ? "#b3b1ad" : "#37352f",
-                border: "1px solid #d8d7d2",
+                background: colors.surface,
+                color: exportWords.length === 0 ? colors.muted : colors.text,
+                border: `1px solid ${colors.border}`,
                 borderRadius: 8,
                 padding: "9px 14px",
                 fontSize: 13,
@@ -1051,25 +1065,25 @@ function WordsView({ captures, flashcardThreshold, starredCaptureIds }: { captur
       )}
 
       {words.length === 0 ? (
-        <p style={{ color: "#9b9a97", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+        <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
           No flashcards yet. Ask about the same question {flashcardThreshold} times this month or star a save to add it here.
         </p>
       ) : (
         <div>
           {words.map((w) => (
-            <div key={w.word} style={{ padding: "12px 0", borderBottom: "1px solid #f0efec", display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
+            <div key={w.word} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
               <div>
-                <p style={{ fontSize: 16, fontWeight: 500, color: "#37352f", margin: 0 }}>{w.word}</p>
+                <p style={{ fontSize: 16, fontWeight: 500, color: colors.text, margin: 0 }}>{w.word}</p>
                 {w.starred && (
-                  <p style={{ fontSize: 12, color: "#8d8b86", margin: "3px 0 0", fontWeight: 700 }}>
+                  <p style={{ fontSize: 12, color: colors.muted, margin: "3px 0 0", fontWeight: 700 }}>
                     Starred
                   </p>
                 )}
                 {w.explanation && (
-                  <div style={{ fontSize: 14, color: "#6b6b6b", margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
+                  <div style={{ fontSize: 14, color: colors.softText, margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
                 )}
               </div>
-              <span style={{ fontSize: 12, color: "#9b9a97", background: "#f0efec", borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: colors.muted, background: colors.subtle, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
                 ×{w.count}
               </span>
             </div>
@@ -1095,8 +1109,6 @@ function SettingsView({
   onAccountChange,
   appMode,
   onAppModeChange,
-  theme,
-  onThemeChange,
   accentColor,
   onAccentColorChange,
   colors,
@@ -1107,8 +1119,6 @@ function SettingsView({
   onAccountChange: (account: ContextLensUser | null) => void;
   appMode: AppMode;
   onAppModeChange: (mode: AppMode) => void;
-  theme: ThemeName;
-  onThemeChange: (t: ThemeName) => void;
   accentColor: string;
   onAccentColorChange: (color: string) => void;
   colors: DashboardColors;
@@ -1271,8 +1281,8 @@ function SettingsView({
                 disabled={accountLoading}
                 style={{
                   background: colors.surface,
-                  color: "#b91c1c",
-                  border: "1px solid #fca5a5",
+                  color: colors.danger,
+                  border: `1px solid ${colors.dangerBorder}`,
                   borderRadius: 8,
                   padding: "8px 12px",
                   fontSize: 13,
@@ -1284,8 +1294,8 @@ function SettingsView({
               </button>
             </div>
             {deleteConfirmVisible && (
-              <div style={{ marginTop: 12, border: "1px solid #fca5a5", borderRadius: 8, padding: 12, background: theme === "dark" ? "rgba(127,29,29,0.18)" : "#fff7f7" }}>
-                <p style={{ fontSize: 12, color: theme === "dark" ? "#fecaca" : "#991b1b", margin: "0 0 10px", lineHeight: 1.5 }}>
+              <div style={{ marginTop: 12, border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, padding: 12, background: colors.dangerSoft }}>
+                <p style={{ fontSize: 12, color: colors.danger, margin: "0 0 10px", lineHeight: 1.5 }}>
                   This deletes your account and saved cloud data. This email cannot be used to create another account.
                 </p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1294,7 +1304,7 @@ function SettingsView({
                     onClick={handleDeleteAccount}
                     disabled={accountLoading}
                     style={{
-                      background: "#b91c1c",
+                      background: colors.dangerFill,
                       color: "#fff",
                       border: "none",
                       borderRadius: 8,
@@ -1530,29 +1540,6 @@ function SettingsView({
       {/* Theme */}
       <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Appearance</p>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
-        <div style={{ display: "flex", background: colors.subtle, borderRadius: 999, padding: 3, gap: 2, width: "fit-content" }}>
-          {(["light", "dark"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => onThemeChange(t)}
-              style={{
-                background: theme === t ? colors.text : "transparent",
-                color: theme === t ? colors.bg : colors.muted,
-                border: "none",
-                borderRadius: 999,
-                padding: "5px 16px",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-                textTransform: "capitalize",
-                transition: "background 0.15s, color 0.15s",
-              }}
-            >
-              {t === "light" ? "Light" : "Dark"}
-            </button>
-          ))}
-        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 12, color: colors.text, fontSize: 14 }}>
           <input
             type="color"
@@ -1811,6 +1798,10 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", t);
   }
 
+  function toggleTheme() {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }
+
   function setAccentColor(color: string) {
     const nextColor = normalizeHexColor(color);
     setAccentColorState(nextColor);
@@ -1908,7 +1899,7 @@ export default function App() {
                 <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>
               </button>
             )}
-            <nav style={{ display: "flex", gap: 18 }}>
+            <nav style={{ display: "flex", gap: 16, alignItems: "center" }}>
               {(["saves", "history", "words", "settings"] as View[]).map((v) => (
                 <button
                   key={v}
@@ -1928,6 +1919,28 @@ export default function App() {
                   {v === "saves" ? "Today" : v === "words" ? "Flashcards" : v}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                title={theme === "dark" ? "Light mode" : "Dark mode"}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 999,
+                  border: `1px solid ${colors.border}`,
+                  background: colors.surface,
+                  color: colors.text,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 15,
+                  cursor: "pointer",
+                  boxShadow: theme === "dark" ? "0 0 0 1px rgba(255,255,255,0.02)" : "0 1px 2px rgba(15,15,15,0.05)",
+                }}
+              >
+                {theme === "dark" ? "☀" : "☾"}
+              </button>
             </nav>
           </div>
         </div>
@@ -1961,6 +1974,7 @@ export default function App() {
                 </button>
               ) : null
             }
+            colors={colors}
           />
         )}
         {view === "history" && (
@@ -1974,7 +1988,7 @@ export default function App() {
             accentColor={accentColor}
           />
         )}
-        {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} />}
+        {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} colors={colors} />}
         {view === "settings" && (
           <SettingsView
             flashcardThreshold={flashcardThreshold}
@@ -1983,8 +1997,6 @@ export default function App() {
             onAccountChange={setAccount}
             appMode={appMode}
             onAppModeChange={setMode}
-            theme={theme}
-            onThemeChange={setTheme}
             accentColor={accentColor}
             onAccentColorChange={setAccentColor}
             colors={colors}
