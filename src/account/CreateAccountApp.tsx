@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import type { ContextLensUser, Message } from "../types";
 
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
@@ -19,6 +19,7 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
 }
 
 export default function CreateAccountApp() {
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -54,7 +55,16 @@ export default function CreateAccountApp() {
         window.location.href = chrome.runtime.getURL("src/dashboard/dashboard.html#settings");
       }, 500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create your account.");
+      const message = err instanceof Error ? err.message : "Could not create your account.";
+      if (/already registered|already exists/i.test(message)) {
+        setError("That email is already registered. Enter a different email to create a new account.");
+        window.setTimeout(() => {
+          emailInputRef.current?.focus();
+          emailInputRef.current?.select();
+        }, 0);
+      } else {
+        setError(message);
+      }
       setLoading(false);
     }
   }
@@ -76,6 +86,7 @@ export default function CreateAccountApp() {
           <label style={labelStyle}>
             Email
             <input
+              ref={emailInputRef}
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}

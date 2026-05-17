@@ -316,28 +316,34 @@ function captureToRemotePayload(capture: Capture, token: string) {
 }
 
 async function signUp(email: string, password: string): Promise<ContextLensUser> {
-  const res = await fetch(`${BACKEND_URL}/auth/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-  });
-  if (!res.ok) await throwResponseError("Sign up error", res);
-  const data = await res.json();
-  const account: ContextLensUser = { email: data.email, token: data.token };
-  await chrome.storage.local.set({ contextlens_user: account });
-  await syncCapturesWithRemote(account);
-  return account;
+  return authRequest(["/auth/signup"], "Sign up error", email, password);
 }
 
 async function signIn(email: string, password: string): Promise<ContextLensUser> {
-  const res = await fetch(`${BACKEND_URL}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-  });
-  if (!res.ok) await throwResponseError("Sign in error", res);
-  const data = await res.json();
-  const account: ContextLensUser = { email: data.email, token: data.token };
+  return authRequest(["/auth/login", "/auth/signin", "/auth/sign-in"], "Sign in error", email, password);
+}
+
+async function authRequest(paths: string[], label: string, email: string, password: string): Promise<ContextLensUser> {
+  let sawNotFound = false;
+  for (const path of paths) {
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+    });
+    if (res.status === 404 && paths.length > 1) {
+      sawNotFound = true;
+      continue;
+    }
+    if (!res.ok) await throwResponseError(label, res);
+    const data = await res.json();
+    return storeAccount(data.email, data.token);
+  }
+  throw new Error(sawNotFound ? `${label}: auth endpoint not found. Please update the backend deployment.` : label);
+}
+
+async function storeAccount(email: string, token: string): Promise<ContextLensUser> {
+  const account: ContextLensUser = { email, token };
   await chrome.storage.local.set({ contextlens_user: account });
   await syncCapturesWithRemote(account);
   return account;
@@ -352,6 +358,9 @@ async function signInOrSignUp(email: string, password: string): Promise<ContextL
     } catch (signUpError) {
       const signupMessage = errorMessage(signUpError);
       if (/cannot be used|deleted|blocked/i.test(signupMessage)) throw signUpError;
+      if (/already registered|already exists/i.test(signupMessage)) {
+        throw new Error("That email already has an account. Check the password or use a different email.");
+      }
       throw signInError;
     }
   }
