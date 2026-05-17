@@ -367,8 +367,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
   const colors = uiColors();
 
   const widgetWidth = panelWidthFor();
-  const left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
-  const top = panelTopFor(y - 110, 132);
+  let left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
+  let top = panelTopFor(y - 110, 132);
 
   widget = document.createElement("div");
   widget.setAttribute(
@@ -438,13 +438,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!widget) return;
     const colors = uiColors();
     const maxHeight = Math.min(560, viewportHeight() - 24);
-    const expandedTop = panelTopFor(top, maxHeight);
     widget.setAttribute(
       "style",
       `
       position: fixed;
       left: ${left}px;
-      top: ${expandedTop}px;
+      top: ${top}px;
       background: ${colors.panel};
       border: 1px solid ${colors.border};
       border-radius: 10px;
@@ -490,7 +489,78 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!widget) return;
     styleExpandedWidget();
     const colors = uiColors();
-    const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
+    const listMaxHeight = Math.max(120, Math.min(560, viewportHeight() - 24) - 140);
+
+    // Drag handle
+    const dragHandle = document.createElement("div");
+    dragHandle.setAttribute("style", `
+      cursor: grab;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: -14px -14px 10px -14px;
+      border-bottom: 1px solid ${colors.faintBorder};
+      flex-shrink: 0;
+      user-select: none;
+    `);
+    const dragDots = document.createElement("span");
+    dragDots.textContent = "···";
+    dragDots.setAttribute("style", `color:${colors.muted};font-size:13px;letter-spacing:4px;line-height:1;`);
+    dragHandle.appendChild(dragDots);
+
+    dragHandle.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = left;
+      const startTop = top;
+      dragHandle.style.cursor = "grabbing";
+
+      const onMove = (ev: MouseEvent) => {
+        const maxHeight = Math.min(560, viewportHeight() - 24);
+        left = Math.max(8, Math.min(viewportWidth() - widgetWidth - 8, startLeft + ev.clientX - startX));
+        top = Math.max(8, Math.min(viewportHeight() - maxHeight - 8, startTop + ev.clientY - startY));
+        if (widget) { widget.style.left = `${left}px`; widget.style.top = `${top}px`; }
+      };
+      const onUp = () => {
+        dragHandle.style.cursor = "grab";
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("mouseup", onUp, true);
+      };
+      document.addEventListener("mousemove", onMove, true);
+      document.addEventListener("mouseup", onUp, true);
+    });
+
+    // Original text snippet
+    const SOURCE_LIMIT = 120;
+    const sourceBlock = document.createElement("div");
+    sourceBlock.setAttribute("style", `
+      font-size: 12px;
+      color: ${colors.muted};
+      line-height: 1.5;
+      margin-bottom: 10px;
+      flex-shrink: 0;
+    `);
+    if (selectedText.length <= SOURCE_LIMIT) {
+      sourceBlock.textContent = `"${selectedText}"`;
+    } else {
+      let srcExpanded = false;
+      const textSpan = document.createElement("span");
+      textSpan.textContent = `"${selectedText.slice(0, SOURCE_LIMIT)}…"`;
+      const toggleBtn = document.createElement("button");
+      toggleBtn.textContent = "more";
+      toggleBtn.setAttribute("style", `background:none;border:none;color:${colors.accent};font-size:11px;cursor:pointer;padding:0 0 0 4px;font-family:inherit;`);
+      toggleBtn.addEventListener("click", () => {
+        srcExpanded = !srcExpanded;
+        textSpan.textContent = srcExpanded ? `"${selectedText}"` : `"${selectedText.slice(0, SOURCE_LIMIT)}…"`;
+        toggleBtn.textContent = srcExpanded ? "less" : "more";
+      });
+      sourceBlock.appendChild(textSpan);
+      sourceBlock.appendChild(toggleBtn);
+    }
 
     const list = document.createElement("div");
     list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
@@ -714,7 +784,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (analogyBox) renderChildren.push(analogyBox);
 
     renderChildren.push(row);
-    widget.replaceChildren(...renderChildren);
+    widget.replaceChildren(dragHandle, sourceBlock, ...renderChildren);
     setTimeout(() => followupInput.focus(), 50);
   }
 
