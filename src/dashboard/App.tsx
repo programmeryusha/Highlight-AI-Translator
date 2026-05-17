@@ -187,6 +187,8 @@ function renderMarkdown(text: string): React.ReactNode {
 
 type ParsedError = {
   summary: string;
+  userMessage: string;
+  nextStep: string;
   diagnostic: string;
   detail: string;
 };
@@ -203,7 +205,7 @@ function jsonFromErrorMessage(message: string): Record<string, unknown> | null {
 }
 
 function parseSaveError(message?: string): ParsedError {
-  const raw = message?.trim() || "Unknown error";
+  const raw = (message?.trim() || "Unknown error").replace(/^something went wrong\s*[—-]\s*/i, "");
   const parsed = jsonFromErrorMessage(raw);
   const code = parsed?.code ?? parsed?.status ?? raw.match(/\b(?:HTTP|error:)\s*(\d{3})\b/i)?.[1];
   const requestId = parsed?.request_id ?? parsed?.requestId ?? raw.match(/request[_\s-]*id["']?\s*[:=]\s*["']?([A-Za-z0-9_-]+)/i)?.[1];
@@ -211,14 +213,24 @@ function parseSaveError(message?: string): ParsedError {
   const statusCode = String(code ?? "");
 
   let summary = "Could not generate an explanation.";
+  let userMessage = "Your save is still here, but the AI answer failed.";
+  let nextStep = "Try again. If it keeps failing, copy the details and check the backend logs.";
   if (statusCode === "502" || /failed to respond|timeout|timed out/i.test(String(backendMessage))) {
     summary = "Backend did not respond in time.";
+    userMessage = "Your save is safe. The server took too long to answer.";
+    nextStep = "Try again in a moment. If it repeats, use the request id to find the failing backend log.";
   } else if (statusCode === "401" || statusCode === "403") {
     summary = "Account authorization failed.";
+    userMessage = "Your save is safe, but the backend rejected the account token.";
+    nextStep = "Sign in again from Settings, then retry this save.";
   } else if (statusCode === "429") {
     summary = "Request limit reached.";
+    userMessage = "Your save is safe, but this request hit a usage limit.";
+    nextStep = "Wait a bit, then retry.";
   } else if (/network|failed to fetch|could not reach/i.test(raw)) {
     summary = "Could not reach the backend.";
+    userMessage = "Your save is safe, but the extension could not contact the server.";
+    nextStep = "Check the backend deployment or your network, then retry.";
   }
 
   const diagnostic = [
@@ -230,10 +242,20 @@ function parseSaveError(message?: string): ParsedError {
     String(backendMessage || raw).replace(/\s+/g, " "),
   ].filter(Boolean).join(" — ");
 
-  return { summary, diagnostic, detail };
+  return { summary, userMessage, nextStep, diagnostic, detail };
 }
 
-function SaveErrorNotice({ message, colors }: { message?: string; colors: DashboardColors }) {
+function SaveErrorNotice({
+  message,
+  colors,
+  onRetry,
+  retrying,
+}: {
+  message?: string;
+  colors: DashboardColors;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const parsed = parseSaveError(message);
 
@@ -244,9 +266,15 @@ function SaveErrorNotice({ message, colors }: { message?: string; colors: Dashbo
   }
 
   return (
-    <div style={{ margin: "12px 0 0 34px", border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, background: colors.dangerSoft, padding: "10px 12px", maxWidth: 760 }}>
-      <p style={{ fontSize: 14, color: colors.danger, margin: 0, lineHeight: 1.45, fontWeight: 700 }}>
+    <div role="status" style={{ margin: "12px 0 0 34px", border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, background: colors.dangerSoft, padding: "12px 13px", maxWidth: 780 }}>
+      <p style={{ fontSize: 14, color: colors.danger, margin: 0, lineHeight: 1.45, fontWeight: 800 }}>
         {parsed.summary}
+      </p>
+      <p style={{ fontSize: 13, color: colors.text, margin: "5px 0 0", lineHeight: 1.55 }}>
+        {parsed.userMessage}
+      </p>
+      <p style={{ fontSize: 12, color: colors.muted, margin: "4px 0 0", lineHeight: 1.5 }}>
+        {parsed.nextStep}
       </p>
       {parsed.diagnostic && (
         <p style={{ fontSize: 12, color: colors.muted, margin: "4px 0 0", lineHeight: 1.45 }}>
@@ -254,6 +282,18 @@ function SaveErrorNotice({ message, colors }: { message?: string; colors: Dashbo
         </p>
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <button
+          type="button"
+          disabled={retrying}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRetry();
+          }}
+          style={{ background: retrying ? colors.border : colors.accent, color: retrying ? colors.muted : colors.selectedText, border: "none", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 800, cursor: retrying ? "default" : "pointer" }}
+        >
+          {retrying ? "Retrying..." : "Try again"}
+        </button>
         <button
           type="button"
           onClick={(event) => {
@@ -361,6 +401,16 @@ function todayKey(): string {
 function dayLabelFromKey(key: string): string {
   const [year, month, day] = key.split("-").map(Number);
   return dayLabel(new Date(year, month - 1, day).toISOString());
+}
+
+function hasRawBackendError(message?: string) {
+  return Boolean(message && (message.includes("{\"status\"") || message.includes("request_id") || /^something went wrong\s*[—-]/i.test(message)));
+}
+
+function normalizeStoredErrorMessage(message?: string) {
+  if (!message) return message;
+  const parsed = parseSaveError(message);
+  return parsed.detail || parsed.summary;
 }
 
 function dateFromDayKey(key: string): Date {
@@ -613,6 +663,7 @@ function SavesView({
   starredCaptureIds,
   onToggleStar,
   onDeleteCaptures,
+  onRetryCapture,
   headerAction,
   colors,
   cardFontSize,
@@ -621,11 +672,13 @@ function SavesView({
   starredCaptureIds: Set<string>;
   onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
+  onRetryCapture: (id: string) => void;
   headerAction?: React.ReactNode;
   colors: DashboardColors;
   cardFontSize: CardFontSize;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -658,6 +711,18 @@ function SavesView({
     if (ids.length === 0) return;
     onDeleteCaptures(ids);
     setSelectedIds(new Set());
+  }
+
+  function retryCapture(id: string) {
+    setRetryingIds((current) => new Set(current).add(id));
+    onRetryCapture(id);
+    window.setTimeout(() => {
+      setRetryingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }, 1200);
   }
 
   return (
@@ -748,7 +813,12 @@ function SavesView({
                   </p>
                 )}
                 {c.status === "error" && (
-                  <SaveErrorNotice message={c.errorMessage} colors={colors} />
+                  <SaveErrorNotice
+                    message={c.errorMessage}
+                    colors={colors}
+                    onRetry={() => retryCapture(c.id)}
+                    retrying={retryingIds.has(c.id)}
+                  />
                 )}
                 {c.status === "done" && c.explanation && (
                   <div style={{ fontSize: typography.answer, color: colors.softText, margin: "14px 0 0 34px", lineHeight: 1.75 }}>
@@ -769,6 +839,7 @@ function HistoryView({
   starredCaptureIds,
   onToggleStar,
   onDeleteCaptures,
+  onRetryCapture,
   colors,
   theme,
   accentColor,
@@ -778,6 +849,7 @@ function HistoryView({
   starredCaptureIds: Set<string>;
   onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
+  onRetryCapture: (id: string) => void;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
@@ -871,6 +943,7 @@ function HistoryView({
             starredCaptureIds={starredCaptureIds}
             onToggleStar={onToggleStar}
             onDeleteCaptures={onDeleteCaptures}
+            onRetryCapture={onRetryCapture}
             colors={colors}
             cardFontSize={cardFontSize}
           />
@@ -1919,7 +1992,16 @@ export default function App() {
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
-      setCaptures(r.captures ?? []);
+      const storedCaptures: Capture[] = r.captures ?? [];
+      const normalizedCaptures = storedCaptures.map((capture) => (
+        capture.status === "error" && hasRawBackendError(capture.errorMessage)
+          ? { ...capture, errorMessage: normalizeStoredErrorMessage(capture.errorMessage) }
+          : capture
+      ));
+      setCaptures(normalizedCaptures);
+      if (normalizedCaptures.some((capture, index) => capture.errorMessage !== storedCaptures[index]?.errorMessage)) {
+        chrome.storage.local.set({ captures: normalizedCaptures });
+      }
       setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
       setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
       setAccount(r.contextlens_user ?? null);
@@ -2048,6 +2130,27 @@ export default function App() {
     });
   }
 
+  function retryCaptureById(id: string) {
+    setCaptures((current) => {
+      const next = current.map((capture) => (
+        capture.id === id ? { ...capture, status: "pending" as const, errorMessage: undefined } : capture
+      ));
+      chrome.storage.local.set({ captures: next });
+      return next;
+    });
+
+    sendRuntimeMessage<{ captureId: string; explanation: string }>({ type: "RETRY_CAPTURE", captureId: id }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error || "Retry failed.");
+      setCaptures((current) => {
+        const next = current.map((capture) => (
+          capture.id === id ? { ...capture, status: "error" as const, errorMessage: message } : capture
+        ));
+        chrome.storage.local.set({ captures: next });
+        return next;
+      });
+    });
+  }
+
   function clearTodayCaptures() {
     if (todayCaptures.length === 0) return;
     if (todayCaptures.length > 5) {
@@ -2134,6 +2237,7 @@ export default function App() {
             starredCaptureIds={starredCaptureIds}
             onToggleStar={toggleFlashcardStar}
             onDeleteCaptures={deleteCapturesByIds}
+            onRetryCapture={retryCaptureById}
             headerAction={
               todayCaptures.length > 0 ? (
                 <button
@@ -2165,6 +2269,7 @@ export default function App() {
             starredCaptureIds={starredCaptureIds}
             onToggleStar={toggleFlashcardStar}
             onDeleteCaptures={deleteCapturesByIds}
+            onRetryCapture={retryCaptureById}
             colors={colors}
             theme={theme}
             accentColor={accentColor}

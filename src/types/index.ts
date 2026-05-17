@@ -37,6 +37,7 @@ export type Message =
   | { type: "SHOW_CROP_OVERLAY"; imageData: string }
   | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
+  | { type: "RETRY_CAPTURE"; captureId: string }
   | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean }
   | { type: "SIGN_UP"; email: string; password: string }
   | { type: "SIGN_IN"; email: string; password: string }

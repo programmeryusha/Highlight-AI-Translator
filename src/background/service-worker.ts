@@ -204,6 +204,12 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "RETRY_CAPTURE") {
+    retryCapture(message.captureId)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
   if (message.type === "ASK_FOLLOWUP") {
     askFollowup(message.captureId, message.question, Boolean(message.deepDive))
       .then(sendResponse)
@@ -566,6 +572,32 @@ async function askFollowup(captureId: string, question: string, deepDiveRequeste
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
   return { reply, messages };
+}
+
+async function retryCapture(captureId: string): Promise<{ captureId: string; explanation: string }> {
+  const storage = await chrome.storage.local.get("captures");
+  const captures: Capture[] = storage.captures ?? [];
+  const capture = captures.find((c) => c.id === captureId);
+  if (!capture) throw new Error("Saved item not found.");
+
+  await updateCapture(captureId, { status: "pending", errorMessage: undefined });
+
+  try {
+    const imageBase64 = capture.imageData?.split(",")[1];
+    const explanation = await fetchExplanation(capture.imageData ? "" : capture.text, capture.context, imageBase64);
+    const updated = await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
+    if (updated) {
+      void saveCaptureRemote(updated).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
+    await seedChat(captureId, explanation);
+    return { captureId, explanation };
+  } catch (error) {
+    console.error("ContextLens failed to retry capture", error);
+    await updateCapture(captureId, { status: "error", errorMessage: errorMessage(error) });
+    throw error;
+  }
 }
 
 async function deepDive(captureId: string): Promise<{ explanation: string; messages: ChatMessage[] }> {
