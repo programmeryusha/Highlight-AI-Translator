@@ -715,7 +715,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
     renderChildren.push(row);
     widget.replaceChildren(...renderChildren);
-    list.scrollTop = list.scrollHeight;
     setTimeout(() => followupInput.focus(), 50);
   }
 
@@ -1244,7 +1243,6 @@ function showCropOverlay(screenshotDataUrl: string) {
 
       panelChildren.push(row);
       contextPanel.replaceChildren(...panelChildren);
-      list.scrollTop = list.scrollHeight;
       setTimeout(() => input.focus(), 50);
       closeContextPanelOnOutsideClick();
     }
