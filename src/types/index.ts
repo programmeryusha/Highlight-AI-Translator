@@ -39,6 +39,7 @@ export type Message =
   | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean }
   | { type: "SIGN_UP"; email: string; password: string }
   | { type: "SIGN_IN"; email: string; password: string }
+  | { type: "SIGN_IN_OR_SIGN_UP"; email: string; password: string }
   | { type: "SIGN_OUT" }
   | { type: "DELETE_ACCOUNT" }
   | { type: "DEEP_DIVE"; captureId: string }

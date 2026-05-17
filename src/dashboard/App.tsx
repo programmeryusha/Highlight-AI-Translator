@@ -18,6 +18,12 @@ const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] 
   { value: "custom", label: "Custom" },
 ];
 
+function viewFromHash(): View {
+  const hash = window.location.hash.replace(/^#/, "").toLowerCase();
+  if (hash === "history" || hash === "words" || hash === "settings") return hash;
+  return "saves";
+}
+
 type DashboardColors = {
   bg: string;
   text: string;
@@ -1068,6 +1074,7 @@ function SettingsView({
   flashcardThreshold,
   onFlashcardThresholdChange,
   account,
+  onAccountChange,
   appMode,
   onAppModeChange,
   theme,
@@ -1079,6 +1086,7 @@ function SettingsView({
   flashcardThreshold: number;
   onFlashcardThresholdChange: (value: number) => void;
   account: ContextLensUser | null;
+  onAccountChange: (account: ContextLensUser | null) => void;
   appMode: AppMode;
   onAppModeChange: (mode: AppMode) => void;
   theme: ThemeName;
@@ -1091,7 +1099,6 @@ function SettingsView({
   const [screenshotTriggers, setScreenshotTriggers] = useState<ScreenshotTriggers>({ floatingButton: true, shortcut: true, immediate: true });
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [accountStatus, setAccountStatus] = useState("");
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountFormVisible, setAccountFormVisible] = useState(false);
@@ -1137,12 +1144,18 @@ function SettingsView({
     chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
   }
 
+  function openCreateAccountPage() {
+    chrome.tabs.create({ url: chrome.runtime.getURL("src/account/create-account.html") });
+  }
+
   async function handleAuth() {
+    const email = authEmail.trim().toLowerCase();
+    if (!email.includes("@") || authPassword.length < 6) return;
     setAccountLoading(true);
     setAccountStatus("");
     try {
-      const type = authMode === "signup" ? "SIGN_UP" : "SIGN_IN";
-      const result = await sendRuntimeMessage<ContextLensUser>({ type, email: authEmail, password: authPassword });
+      const result = await sendRuntimeMessage<ContextLensUser>({ type: "SIGN_IN_OR_SIGN_UP", email, password: authPassword });
+      onAccountChange(result);
       setAuthEmail("");
       setAuthPassword("");
       setAccountStatus(`Signed in as ${result.email}.`);
@@ -1157,9 +1170,9 @@ function SettingsView({
     setAccountLoading(true);
     try {
       await sendRuntimeMessage<void>({ type: "SIGN_OUT" });
+      onAccountChange(null);
       setAccountStatus("");
       setAccountFormVisible(true);
-      setAuthMode("signin");
     } finally {
       setAccountLoading(false);
     }
@@ -1170,6 +1183,7 @@ function SettingsView({
     setAccountStatus("");
     try {
       await sendRuntimeMessage<{ deleted: boolean }>({ type: "DELETE_ACCOUNT" });
+      onAccountChange(null);
       setAuthEmail("");
       setAuthPassword("");
       setDeleteConfirmVisible(false);
@@ -1300,18 +1314,15 @@ function SettingsView({
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
               <div>
                 <p style={{ fontSize: 14, color: colors.text, margin: "0 0 3px", fontWeight: 700 }}>
-                  {accountFormVisible ? "Change account" : authMode === "signin" ? "Sign in" : "Create account"}
+                  {accountFormVisible ? "Change account" : "Sign in"}
                 </p>
                 <p style={{ fontSize: 12, color: colors.muted, margin: 0, lineHeight: 1.5 }}>
-                  {authMode === "signin" ? "Use an existing ContextLens account." : "Deleted emails cannot be reused."}
+                  Use your ContextLens account. If this email is new, we'll create the account and keep you signed in.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setAuthMode(authMode === "signin" ? "signup" : "signin");
-                  setAccountStatus("");
-                }}
+                onClick={openCreateAccountPage}
                 style={{
                   background: colors.surface,
                   color: colors.text,
@@ -1324,7 +1335,7 @@ function SettingsView({
                   whiteSpace: "nowrap",
                 }}
               >
-                {authMode === "signin" ? "Create account" : "Sign in"}
+                Create account page
               </button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1341,7 +1352,7 @@ function SettingsView({
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
                 placeholder="Password"
-                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                autoComplete="current-password"
                 onKeyDown={(e) => { if (e.key === "Enter") handleAuth(); }}
                 style={inputStyle}
               />
@@ -1361,7 +1372,7 @@ function SettingsView({
                   cursor: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "default" : "pointer",
                 }}
               >
-                {authMode === "signin" ? "Sign in" : "Create account"}
+                {accountLoading ? "Signing in…" : "Continue"}
               </button>
             </div>
           </div>
@@ -1695,7 +1706,7 @@ function MonthCalendar({
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("saves");
+  const [view, setView] = useState<View>(() => viewFromHash());
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
   const [flashcardThreshold, setFlashcardThreshold] = useState(DEFAULT_FLASHCARD_THRESHOLD);
@@ -1739,6 +1750,20 @@ export default function App() {
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
+
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  function navigateView(nextView: View) {
+    setView(nextView);
+    const nextHash = nextView === "saves" ? "" : `#${nextView}`;
+    if (window.location.hash !== nextHash) {
+      history.replaceState(null, "", `${window.location.pathname}${nextHash}`);
+    }
+  }
 
   function setTheme(t: ThemeName) {
     setThemeState(t);
@@ -1826,7 +1851,7 @@ export default function App() {
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 64 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
-              onClick={() => setView("saves")}
+              onClick={() => navigateView("saves")}
               style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 600, color: colors.text, cursor: "pointer" }}
             >
               ContextLens
@@ -1835,7 +1860,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
             {streak > 0 && (
               <button
-                onClick={() => setView("saves")}
+                onClick={() => navigateView("saves")}
                 style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
                 title="Go to today"
               >
@@ -1847,7 +1872,7 @@ export default function App() {
               {(["saves", "history", "words", "settings"] as View[]).map((v) => (
                 <button
                   key={v}
-                  onClick={() => setView(v)}
+                  onClick={() => navigateView(v)}
                   style={{
                     background: "none",
                     border: "none",
@@ -1912,6 +1937,7 @@ export default function App() {
             flashcardThreshold={flashcardThreshold}
             onFlashcardThresholdChange={updateFlashcardThreshold}
             account={account}
+            onAccountChange={setAccount}
             appMode={appMode}
             onAppModeChange={setMode}
             theme={theme}

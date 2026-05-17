@@ -1,138 +1,94 @@
-import React, { useState } from "react";
+import React from "react";
 
 export default function WelcomeApp() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"signup" | "signin">("signup");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmedEmail = email.trim().toLowerCase();
-    if (!trimmedEmail.includes("@")) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const type = mode === "signup" ? "SIGN_UP" : "SIGN_IN";
-      await chrome.runtime.sendMessage({ type, email: trimmedEmail, password });
-      window.close();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
-      setLoading(false);
-    }
-  }
+  const createAccountUrl = chrome.runtime.getURL("src/account/create-account.html");
+  const signInUrl = chrome.runtime.getURL("src/dashboard/dashboard.html#settings");
+  const dashboardUrl = chrome.runtime.getURL("src/dashboard/dashboard.html");
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#fafaf9" }}>
-      <div style={{ maxWidth: 520, width: "100%", padding: "0 24px" }}>
-        <div style={{ marginBottom: 36 }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>🖊️</div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, color: "#37352f", marginBottom: 8 }}>
+    <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#fafaf9", padding: "40px 20px" }}>
+      <section style={{ maxWidth: 560, width: "100%" }}>
+        <div style={{ marginBottom: 34 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 12, background: "#37352f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 23, marginBottom: 16 }}>
+            ◐
+          </div>
+          <h1 style={{ fontSize: 32, fontWeight: 800, color: "#37352f", margin: "0 0 10px", letterSpacing: 0 }}>
             Welcome to ContextLens
           </h1>
-          <p style={{ fontSize: 16, color: "#6b7280", lineHeight: 1.6 }}>
-            Highlight any text on any page and instantly understand it — in any language.
+          <p style={{ fontSize: 16, color: "#6b7280", lineHeight: 1.65, margin: 0 }}>
+            Highlight text on any page, add what confused you, and get a clear explanation saved to your dashboard.
           </p>
         </div>
 
-        {mode === "signup" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20, marginBottom: 36 }}>
-            <Step number={1} title="Select any text" description="Highlight a word, sentence, or paragraph on any webpage." />
-            <Step number={2} title='Hit "Save" in the bubble' description="A small button appears above your selection. Type what you don't understand and press Enter." />
-            <Step number={3} title="Get an instant explanation" description="AI explains it clearly. Open the dashboard anytime to review everything you've saved." />
-          </div>
-        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 34 }}>
+          <Step number={1} title="Select text" description="Highlight a word, sentence, paragraph, or screenshot region on a page." />
+          <Step number={2} title="Ask what it means" description="Use the save bubble or right-click menu to add a quick note." />
+          <Step number={3} title="Review it later" description="Your explanations, history, and flashcards live in the dashboard." />
+        </div>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="Email address"
-            disabled={loading}
-            required
-            style={inputStyle}
-          />
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Password (min. 6 characters)"
-            disabled={loading}
-            required
-            style={inputStyle}
-          />
-          {error && (
-            <p style={{ fontSize: 13, color: "#dc2626", margin: 0 }}>{error}</p>
-          )}
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              background: loading ? "#9b9a97" : "#37352f",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "14px 0",
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: loading ? "default" : "pointer",
-            }}
-          >
-            {loading
-              ? (mode === "signup" ? "Creating account…" : "Signing in…")
-              : (mode === "signup" ? "Create account" : "Sign in")}
-          </button>
-        </form>
-
-        <p style={{ marginTop: 16, fontSize: 13, color: "#9b9a97", textAlign: "center" }}>
-          {mode === "signup" ? (
-            <>Already have an account?{" "}
-              <button onClick={() => { setMode("signin"); setError(""); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
-                Sign in
-              </button>
-            </>
-          ) : (
-            <>New here?{" "}
-              <button onClick={() => { setMode("signup"); setError(""); }} style={{ background: "none", border: "none", color: "#2563eb", fontSize: 13, cursor: "pointer", padding: 0, fontWeight: 600 }}>
-                Create account
-              </button>
-            </>
-          )}
-        </p>
-      </div>
-    </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <a href={createAccountUrl} style={primaryLinkStyle}>
+            Create account
+          </a>
+          <a href={signInUrl} style={secondaryLinkStyle}>
+            Sign in
+          </a>
+          <a href={dashboardUrl} style={quietLinkStyle}>
+            Open dashboard
+          </a>
+        </div>
+      </section>
+    </main>
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  boxSizing: "border-box",
-  padding: "12px 14px",
-  fontSize: 15,
-  border: "1.5px solid #e0ddd9",
+const primaryLinkStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 138,
+  height: 42,
   borderRadius: 8,
-  outline: "none",
+  background: "#37352f",
+  color: "#fff",
+  fontSize: 14,
+  fontWeight: 800,
+  textDecoration: "none",
+  padding: "0 16px",
+};
+
+const secondaryLinkStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 96,
+  height: 42,
+  borderRadius: 8,
   background: "#fff",
   color: "#37352f",
+  border: "1px solid #d8d7d2",
+  fontSize: 14,
+  fontWeight: 800,
+  textDecoration: "none",
+  padding: "0 16px",
+};
+
+const quietLinkStyle: React.CSSProperties = {
+  color: "#6b7280",
+  fontSize: 13,
+  fontWeight: 700,
+  textDecoration: "none",
+  padding: "10px 4px",
 };
 
 function Step({ number, title, description }: { number: number; title: string; description: string }) {
   return (
-    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#37352f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
+    <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#37352f", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0, marginTop: 2 }}>
         {number}
       </div>
       <div>
-        <p style={{ fontSize: 15, fontWeight: 600, color: "#37352f", margin: "0 0 3px" }}>{title}</p>
+        <p style={{ fontSize: 15, fontWeight: 800, color: "#37352f", margin: "0 0 3px" }}>{title}</p>
         <p style={{ fontSize: 14, color: "#6b7280", lineHeight: 1.6, margin: 0 }}>{description}</p>
       </div>
     </div>

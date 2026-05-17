@@ -211,6 +211,12 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "SIGN_IN_OR_SIGN_UP") {
+    signInOrSignUp(message.email, message.password)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
   if (message.type === "SIGN_OUT") {
     signOut()
       .then(sendResponse)
@@ -335,6 +341,20 @@ async function signIn(email: string, password: string): Promise<ContextLensUser>
   await chrome.storage.local.set({ contextlens_user: account });
   await syncCapturesWithRemote(account);
   return account;
+}
+
+async function signInOrSignUp(email: string, password: string): Promise<ContextLensUser> {
+  try {
+    return await signIn(email, password);
+  } catch (signInError) {
+    try {
+      return await signUp(email, password);
+    } catch (signUpError) {
+      const signupMessage = errorMessage(signUpError);
+      if (/cannot be used|deleted|blocked/i.test(signupMessage)) throw signUpError;
+      throw signInError;
+    }
+  }
 }
 
 async function signOut(): Promise<void> {
