@@ -1,6 +1,6 @@
 import type { ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-17-camera-visual-viewport-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-17-quran-selection-v1";
 const DEFAULT_ACCENT_COLOR = "#2563eb";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
@@ -1588,7 +1588,8 @@ const runtimeMessageHandler = (message: Message) => {
     const rect = getVisualViewportRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    showContextInput(x, y, message.text);
+    const selected = selectedPageText();
+    showContextInput(x, y, selected?.text || message.text);
   }
   if (message.type === "SHOW_CROP_OVERLAY") {
     showCropOverlay(message.imageData);
@@ -1714,6 +1715,145 @@ function groupRectsByLine(rects: RectLike[]) {
   return groups;
 }
 
+function normalizeCandidateText(value: string) {
+  return value
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasArabicScript(value: string) {
+  return /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u.test(value);
+}
+
+function normalizeArabicForCompare(value: string) {
+  return normalizeCandidateText(value)
+    .normalize("NFKC")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640\s]/g, "");
+}
+
+function isSuspiciousSelectionText(value: string) {
+  const text = normalizeCandidateText(value);
+  if (!text) return true;
+  if (/[\uE000-\uF8FF]/u.test(text)) return true;
+  if (/^[\sـ۝۞۩.,:;!?()[\]{}'"`´’‘“”«»\-–—\d٠-٩۰-۹]+$/u.test(text)) return true;
+  return normalizeArabicForCompare(text).length === 0;
+}
+
+function candidateAttributeValues(element: Element) {
+  const preferredAttributes = [
+    "aria-label",
+    "aria-description",
+    "data-arabic",
+    "data-arabic-text",
+    "data-uthmani",
+    "data-uthmani-text",
+    "data-ayah",
+    "data-ayah-text",
+    "data-aya",
+    "data-aya-text",
+    "data-verse",
+    "data-verse-text",
+    "data-word",
+    "data-word-text",
+    "data-text",
+    "data-normalized",
+    "data-normalized-text",
+    "title",
+  ];
+  const values: string[] = [];
+
+  preferredAttributes.forEach((name) => {
+    const value = element.getAttribute(name);
+    if (value) values.push(value);
+  });
+
+  Array.from(element.attributes).forEach((attribute) => {
+    const name = attribute.name.toLowerCase();
+    if (!name.startsWith("data-")) return;
+    if (preferredAttributes.includes(name)) return;
+    if (!/(arabic|uthmani|ayah|aya|verse|word|text|label|original|source)/i.test(name)) return;
+    if (/(translation|transliteration|meaning|audio|url|href|id|key|test)/i.test(name)) return;
+    values.push(attribute.value);
+  });
+
+  const seen = new Set<string>();
+  return values
+    .map(normalizeCandidateText)
+    .filter((value) => value.length > 0)
+    .filter((value) => {
+      const key = value.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function elementSemanticText(element: Element) {
+  const values = candidateAttributeValues(element);
+  if (values.length === 0) return "";
+  return values.find(hasArabicScript) ?? values[0];
+}
+
+function rangeIntersectsElement(range: Range, element: Element) {
+  try {
+    return range.intersectsNode(element);
+  } catch {
+    return false;
+  }
+}
+
+function semanticTextFromRange(range: Range) {
+  const container = range.commonAncestorContainer;
+  const root = container instanceof Element ? container : container.parentElement;
+  if (!root) return "";
+
+  const candidates: Array<{ element: Element; text: string }> = [];
+  const addCandidate = (element: Element) => {
+    if (isInContextLensUi(element) || !rangeIntersectsElement(range, element)) return;
+    const text = elementSemanticText(element);
+    if (text) candidates.push({ element, text });
+  };
+
+  addCandidate(root);
+  root.querySelectorAll("*").forEach(addCandidate);
+
+  const leafCandidates = candidates.filter((candidate) => (
+    !candidates.some((other) => other !== candidate && candidate.element.contains(other.element))
+  ));
+  const source = leafCandidates.length > 0 ? leafCandidates : candidates;
+  const seen = new Set<string>();
+  return source
+    .map((candidate) => candidate.text)
+    .filter((text) => {
+      const key = normalizeArabicForCompare(text) || text.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(" ")
+    .trim();
+}
+
+function shouldUseSemanticSelectionText(raw: string, semantic: string) {
+  if (!semantic) return false;
+  if (isSuspiciousSelectionText(raw)) return true;
+  if (!hasArabicScript(semantic)) return false;
+
+  const rawComparable = normalizeArabicForCompare(raw);
+  const semanticComparable = normalizeArabicForCompare(semantic);
+  if (!rawComparable || !semanticComparable) return false;
+  if (rawComparable === semanticComparable) return true;
+  if (/[\uE000-\uF8FF\uFB50-\uFDFF\uFE70-\uFEFF]/u.test(raw)) return true;
+  if (semanticComparable.includes(rawComparable) || rawComparable.includes(semanticComparable)) {
+    return semanticComparable.length <= rawComparable.length * 2.4;
+  }
+
+  const rawWordCount = normalizeCandidateText(raw).split(/\s+/).filter(Boolean).length;
+  const semanticWordCount = normalizeCandidateText(semantic).split(/\s+/).filter(Boolean).length;
+  return semanticWordCount >= rawWordCount && semanticComparable.length <= rawComparable.length * 2.2;
+}
+
 function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | null {
   const rects = visibleSelectionRects(range);
   if (rects.length > 0) {
@@ -1750,14 +1890,15 @@ function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | nul
 }
 
 function extractSelectionText(selection: Selection): string {
-  const raw = selection.toString().trim();
-  if (!raw) return "";
+  const raw = normalizeCandidateText(selection.toString());
+  const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  const semantic = range ? semanticTextFromRange(range) : "";
+  if (shouldUseSemanticSelectionText(raw, semantic)) return semantic;
 
   // If text is ONLY tatweel/kashida (ـ) characters plus whitespace, the site is likely
   // using a Quran calligraphy font where a single placeholder character renders as Arabic.
   // Try aria-label attributes on elements within the selection as a fallback.
-  if (/^[ـ\s]+$/.test(raw) && selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
+  if (/^[ـ\s]+$/.test(raw) && range) {
     const container = range.commonAncestorContainer;
     const el = container instanceof Element ? container : container.parentElement;
     if (el) {
