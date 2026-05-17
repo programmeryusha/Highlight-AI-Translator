@@ -58,6 +58,15 @@ function textOnColor(hex: string): string {
   return luminance > 0.62 ? "#1f2933" : "#fff";
 }
 
+function rgbTriplet(hex: string): string {
+  const color = normalizeHexColor(hex);
+  return `${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}`;
+}
+
+function colorWithAlpha(hex: string, alpha: number): string {
+  return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
 function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors {
   const dark = theme === "dark";
   return {
@@ -634,11 +643,17 @@ function HistoryView({
   starredCaptureIds,
   onToggleStar,
   onDeleteCaptures,
+  colors,
+  theme,
+  accentColor,
 }: {
   captures: Capture[];
   starredCaptureIds: Set<string>;
   onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
+  colors: DashboardColors;
+  theme: ThemeName;
+  accentColor: string;
 }) {
   const windowWidth = useWindowWidth();
   const [selectedDay, setSelectedDay] = useState(todayKey());
@@ -751,6 +766,9 @@ function HistoryView({
           visibleMonth={visibleMonth}
           onVisibleMonthChange={setVisibleMonth}
           onSelectDay={selectDay}
+          colors={colors}
+          theme={theme}
+          accentColor={accentColor}
         />
       </div>
     </div>
@@ -1600,12 +1618,18 @@ function MonthCalendar({
   visibleMonth,
   onVisibleMonthChange,
   onSelectDay,
+  colors,
+  theme,
+  accentColor,
 }: {
   captures: Capture[];
   selectedDay: string;
   visibleMonth: string;
   onVisibleMonthChange: (month: string) => void;
   onSelectDay: (day: string) => void;
+  colors: DashboardColors;
+  theme: ThemeName;
+  accentColor: string;
 }) {
   const counts = captureCountsByDay(captures);
   const days = calendarDayKeys(visibleMonth);
@@ -1616,10 +1640,25 @@ function MonthCalendar({
   const canGoNextMonth = nextMonth <= currentMonthKey();
 
   function colorFor(count: number) {
-    if (count === 0) return "#f0efec";
-    const t = Math.sqrt(count / max);
-    const opacity = 0.12 + t * 0.78;
-    return `rgba(99, 102, 241, ${opacity.toFixed(2)})`;
+    if (count === 0) return colors.surfaceAlt;
+    const cappedMax = Math.max(12, Math.min(48, max));
+    const intensity = Math.min(1, Math.log1p(count) / Math.log1p(cappedMax));
+    const alpha = theme === "dark"
+      ? 0.16 + intensity * 0.42
+      : 0.07 + intensity * 0.34;
+    return colorWithAlpha(accentColor, alpha);
+  }
+
+  function borderFor(count: number, isSelected: boolean) {
+    if (isSelected) return `2px solid ${colors.accent}`;
+    if (count > 0) return `1px solid ${colorWithAlpha(accentColor, theme === "dark" ? 0.42 : 0.28)}`;
+    return `1px solid ${colors.border}`;
+  }
+
+  function textFor(count: number, isFuture: boolean) {
+    if (isFuture) return theme === "dark" ? "#5f5a51" : "#d8d7d2";
+    if (count === 0) return colors.muted;
+    return colors.text;
   }
 
   return (
@@ -1632,16 +1671,16 @@ function MonthCalendar({
             width: 28,
             height: 28,
             borderRadius: 999,
-            border: "1px solid #e3e2de",
-            background: "#fff",
-            color: "#37352f",
+            border: `1px solid ${colors.border}`,
+            background: colors.surface,
+            color: colors.text,
             cursor: "pointer",
             fontSize: 16,
           }}
         >
           ‹
         </button>
-        <p style={{ fontSize: 15, color: "#37352f", margin: 0, fontWeight: 700 }}>
+        <p style={{ fontSize: 15, color: colors.text, margin: 0, fontWeight: 700 }}>
           {monthLabelFromKey(visibleMonth)}
         </p>
         <button
@@ -1652,9 +1691,9 @@ function MonthCalendar({
             width: 28,
             height: 28,
             borderRadius: 999,
-            border: "1px solid #e3e2de",
-            background: canGoNextMonth ? "#fff" : "#f7f6f3",
-            color: canGoNextMonth ? "#37352f" : "#c7c6c3",
+            border: `1px solid ${colors.border}`,
+            background: canGoNextMonth ? colors.surface : colors.surfaceAlt,
+            color: canGoNextMonth ? colors.text : colors.muted,
             cursor: canGoNextMonth ? "pointer" : "default",
             fontSize: 16,
           }}
@@ -1664,7 +1703,7 @@ function MonthCalendar({
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, marginBottom: 8 }}>
         {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
-          <span key={`${label}-${index}`} style={{ fontSize: 11, color: "#9b9a97", fontWeight: 700, textAlign: "center" }}>
+          <span key={`${label}-${index}`} style={{ fontSize: 11, color: colors.muted, fontWeight: 700, textAlign: "center" }}>
             {label}
           </span>
         ))}
@@ -1687,13 +1726,14 @@ function MonthCalendar({
                 width: 34,
                 height: 34,
                 borderRadius: 8,
-                border: isSelected ? `2px solid var(--contextlens-accent, ${DEFAULT_ACCENT_COLOR})` : "1px solid #e3e2de",
-                background: isFuture ? "#fafafa" : colorFor(count),
-                color: isFuture ? "#d8d7d2" : count > 0 ? "#37352f" : "#9b9a97",
+                border: borderFor(count, isSelected),
+                background: isFuture ? colors.surfaceAlt : colorFor(count),
+                color: textFor(count, isFuture),
                 fontSize: 12,
                 fontWeight: isSelected ? 700 : 600,
                 cursor: isFuture ? "default" : "pointer",
                 padding: 0,
+                boxShadow: isSelected ? `0 0 0 2px ${colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.14)}` : "none",
               }}
             >
               {date.getDate()}
@@ -1929,6 +1969,9 @@ export default function App() {
             starredCaptureIds={starredCaptureIds}
             onToggleStar={toggleFlashcardStar}
             onDeleteCaptures={deleteCapturesByIds}
+            colors={colors}
+            theme={theme}
+            accentColor={accentColor}
           />
         )}
         {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} />}
