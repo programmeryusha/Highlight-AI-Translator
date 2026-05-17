@@ -18,6 +18,9 @@ interface RemoteCapture {
 }
 
 function errorMessage(error: unknown): string {
+  if (error instanceof TypeError && /fetch|network|failed/i.test(error.message)) {
+    return "Network error: Could not reach the ContextLens backend. Check the connection and backend deployment.";
+  }
   if (error instanceof Error) return error.message;
   return String(error || "Unknown error");
 }
@@ -29,7 +32,15 @@ async function throwResponseError(label: string, res: Response): Promise<never> 
     if (body) {
       try {
         const parsed = JSON.parse(body);
-        detail = parsed.detail ?? parsed.error?.message ?? parsed.error?.type ?? body;
+        const requestId = parsed.request_id ?? parsed.requestId;
+        const code = parsed.code ?? parsed.status ?? res.status;
+        const message = parsed.detail ?? parsed.message ?? parsed.error?.message ?? parsed.error?.type;
+        const diagnostic = [
+          `HTTP ${res.status}`,
+          code && String(code) !== String(res.status) ? `code ${code}` : "",
+          requestId ? `request ${requestId}` : "",
+        ].filter(Boolean).join(" • ");
+        detail = [diagnostic, message].filter(Boolean).join(" — ") || body;
       } catch {
         detail = body;
       }
@@ -38,8 +49,8 @@ async function throwResponseError(label: string, res: Response): Promise<never> 
     // Ignore secondary failures while reporting the primary HTTP status.
   }
 
-  const shortDetail = detail ? ` — ${detail.slice(0, 240)}` : "";
-  throw new Error(`${label}: ${res.status}${shortDetail}`);
+  const shortDetail = detail ? detail.slice(0, 240) : `HTTP ${res.status}`;
+  throw new Error(`${label}: ${shortDetail}`);
 }
 
 void injectIntoOpenTabs();

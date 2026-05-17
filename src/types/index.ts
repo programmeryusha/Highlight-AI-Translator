@@ -19,6 +19,7 @@ export interface ChatMessage {
 export interface StorageSchema {
   captures: Capture[];
   flashcard_threshold?: number;
+  card_font_size?: "default" | "large" | "extra_large";
   flashcard_starred_capture_ids?: string[];
   deep_dive_capture_ids?: string[];
   contextlens_user?: ContextLensUser;

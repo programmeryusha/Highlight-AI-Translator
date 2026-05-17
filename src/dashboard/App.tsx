@@ -7,9 +7,11 @@ type AppMode = "language_learning" | "student";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth" | "custom";
+type CardFontSize = "default" | "large" | "extra_large";
 const LONG_TEXT_LIMIT = 420;
 const DEFAULT_FLASHCARD_THRESHOLD = 3;
 const DEFAULT_ACCENT_COLOR = "#2563eb";
+const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
   { value: "yesterday", label: "Yesterday" },
   { value: "previous3", label: "Previous 3 days" },
@@ -17,6 +19,16 @@ const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] 
   { value: "lastMonth", label: "Last month" },
   { value: "custom", label: "Custom" },
 ];
+const CARD_FONT_OPTIONS: { value: CardFontSize; label: string; note: string }[] = [
+  { value: "default", label: "Default", note: "Comfortable reading size." },
+  { value: "large", label: "Large", note: "Bigger save text and answers." },
+  { value: "extra_large", label: "Extra large", note: "Maximum readability." },
+];
+const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; answer: number; status: number; link: number }> = {
+  default: { source: 21, context: 18, answer: 19, status: 16, link: 14 },
+  large: { source: 24, context: 21, answer: 21, status: 18, link: 15 },
+  extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
+};
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
@@ -44,6 +56,10 @@ type DashboardColors = {
 
 function isThemeName(value: unknown): value is ThemeName {
   return value === "light" || value === "dark";
+}
+
+function isCardFontSize(value: unknown): value is CardFontSize {
+  return value === "default" || value === "large" || value === "extra_large";
 }
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
@@ -167,6 +183,103 @@ function renderMarkdown(text: string): React.ReactNode {
   flushList();
 
   return <>{nodes}</>;
+}
+
+type ParsedError = {
+  summary: string;
+  diagnostic: string;
+  detail: string;
+};
+
+function jsonFromErrorMessage(message: string): Record<string, unknown> | null {
+  const jsonStart = message.indexOf("{");
+  if (jsonStart === -1) return null;
+  try {
+    const parsed = JSON.parse(message.slice(jsonStart));
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSaveError(message?: string): ParsedError {
+  const raw = message?.trim() || "Unknown error";
+  const parsed = jsonFromErrorMessage(raw);
+  const code = parsed?.code ?? parsed?.status ?? raw.match(/\b(?:HTTP|error:)\s*(\d{3})\b/i)?.[1];
+  const requestId = parsed?.request_id ?? parsed?.requestId ?? raw.match(/request[_\s-]*id["']?\s*[:=]\s*["']?([A-Za-z0-9_-]+)/i)?.[1];
+  const backendMessage = parsed?.message ?? parsed?.detail ?? raw.replace(/^Backend error:\s*/i, "").trim();
+  const statusCode = String(code ?? "");
+
+  let summary = "Could not generate an explanation.";
+  if (statusCode === "502" || /failed to respond|timeout|timed out/i.test(String(backendMessage))) {
+    summary = "Backend did not respond in time.";
+  } else if (statusCode === "401" || statusCode === "403") {
+    summary = "Account authorization failed.";
+  } else if (statusCode === "429") {
+    summary = "Request limit reached.";
+  } else if (/network|failed to fetch|could not reach/i.test(raw)) {
+    summary = "Could not reach the backend.";
+  }
+
+  const diagnostic = [
+    statusCode ? `HTTP ${statusCode}` : "",
+    requestId ? `request ${requestId}` : "",
+  ].filter(Boolean).join(" • ");
+  const detail = [
+    diagnostic,
+    String(backendMessage || raw).replace(/\s+/g, " "),
+  ].filter(Boolean).join(" — ");
+
+  return { summary, diagnostic, detail };
+}
+
+function SaveErrorNotice({ message, colors }: { message?: string; colors: DashboardColors }) {
+  const [open, setOpen] = useState(false);
+  const parsed = parseSaveError(message);
+
+  function copyDetails(event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    void navigator.clipboard?.writeText(parsed.detail).catch(() => {});
+  }
+
+  return (
+    <div style={{ margin: "12px 0 0 34px", border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, background: colors.dangerSoft, padding: "10px 12px", maxWidth: 760 }}>
+      <p style={{ fontSize: 14, color: colors.danger, margin: 0, lineHeight: 1.45, fontWeight: 700 }}>
+        {parsed.summary}
+      </p>
+      {parsed.diagnostic && (
+        <p style={{ fontSize: 12, color: colors.muted, margin: "4px 0 0", lineHeight: 1.45 }}>
+          {parsed.diagnostic}
+        </p>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen((value) => !value);
+          }}
+          style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+        >
+          {open ? "Hide details" : "Show details"}
+        </button>
+        <button
+          type="button"
+          onClick={copyDetails}
+          style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+        >
+          Copy details
+        </button>
+      </div>
+      {open && (
+        <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", color: colors.softText, fontSize: 12, lineHeight: 1.45, margin: "9px 0 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+          {parsed.detail}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function useWindowWidth(): number {
@@ -460,7 +573,7 @@ function DeleteSaveButton({ onDelete, colors }: { onDelete: () => void; colors: 
   );
 }
 
-function CapturePreview({ capture, colors }: { capture: Capture; colors: DashboardColors }) {
+function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
   if (capture.imageData) {
     return (
       <img
@@ -479,14 +592,14 @@ function CapturePreview({ capture, colors }: { capture: Capture; colors: Dashboa
     <>
       <p
         onClick={(event) => openCaptureFromClick(event, capture.id)}
-        style={{ fontSize: 21, fontWeight: 650, color: colors.text, lineHeight: 1.6, margin: 0, cursor: "pointer" }}
+        style={{ fontSize: typography.source, fontWeight: 650, color: colors.text, lineHeight: 1.6, margin: 0, cursor: "pointer" }}
       >
         {text}
       </p>
       {isLong && (
         <p
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ fontSize: 14, color: colors.accent, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
+          style={{ fontSize: typography.link, color: colors.accent, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
         >
           Open full save
         </p>
@@ -502,6 +615,7 @@ function SavesView({
   onDeleteCaptures,
   headerAction,
   colors,
+  cardFontSize,
 }: {
   captures: Capture[];
   starredCaptureIds: Set<string>;
@@ -509,8 +623,10 @@ function SavesView({
   onDeleteCaptures: (ids: string[]) => void;
   headerAction?: React.ReactNode;
   colors: DashboardColors;
+  cardFontSize: CardFontSize;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     const visibleIds = new Set(captures.map((capture) => capture.id));
@@ -607,7 +723,7 @@ function SavesView({
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                   <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} colors={colors} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <CapturePreview capture={c} colors={colors} />
+                    <CapturePreview capture={c} colors={colors} typography={typography} />
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
                     <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} colors={colors} />
@@ -620,24 +736,22 @@ function SavesView({
                     <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
                       Your question
                     </p>
-                    <p style={{ fontSize: 18, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
+                    <p style={{ fontSize: typography.context, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
                       {c.context}
                     </p>
                   </div>
                 )}
 
                 {c.status === "pending" && (
-                  <p style={{ fontSize: 16, color: colors.muted, margin: "10px 0 0 34px", fontStyle: "italic" }}>
+                  <p style={{ fontSize: typography.status, color: colors.muted, margin: "10px 0 0 34px", fontStyle: "italic" }}>
                     thinking…
                   </p>
                 )}
                 {c.status === "error" && (
-                  <p style={{ fontSize: 16, color: colors.danger, margin: "10px 0 0 34px", lineHeight: 1.6 }}>
-                    something went wrong — {c.errorMessage ?? "try again"}
-                  </p>
+                  <SaveErrorNotice message={c.errorMessage} colors={colors} />
                 )}
                 {c.status === "done" && c.explanation && (
-                  <div style={{ fontSize: 19, color: colors.softText, margin: "14px 0 0 34px", lineHeight: 1.75 }}>
+                  <div style={{ fontSize: typography.answer, color: colors.softText, margin: "14px 0 0 34px", lineHeight: 1.75 }}>
                     {renderMarkdown(c.explanation)}
                   </div>
                 )}
@@ -658,6 +772,7 @@ function HistoryView({
   colors,
   theme,
   accentColor,
+  cardFontSize,
 }: {
   captures: Capture[];
   starredCaptureIds: Set<string>;
@@ -666,6 +781,7 @@ function HistoryView({
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
+  cardFontSize: CardFontSize;
 }) {
   const windowWidth = useWindowWidth();
   const [selectedDay, setSelectedDay] = useState(todayKey());
@@ -756,6 +872,7 @@ function HistoryView({
             onToggleStar={onToggleStar}
             onDeleteCaptures={onDeleteCaptures}
             colors={colors}
+            cardFontSize={cardFontSize}
           />
         ) : (
           <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8, textAlign: "center" }}>
@@ -1109,6 +1226,8 @@ function SettingsView({
   onAccountChange,
   appMode,
   onAppModeChange,
+  cardFontSize,
+  onCardFontSizeChange,
   accentColor,
   onAccentColorChange,
   colors,
@@ -1119,6 +1238,8 @@ function SettingsView({
   onAccountChange: (account: ContextLensUser | null) => void;
   appMode: AppMode;
   onAppModeChange: (mode: AppMode) => void;
+  cardFontSize: CardFontSize;
+  onCardFontSizeChange: (size: CardFontSize) => void;
   accentColor: string;
   onAccentColorChange: (color: string) => void;
   colors: DashboardColors;
@@ -1194,16 +1315,19 @@ function SettingsView({
     }
   }
 
-  async function handleSignOut() {
-    setAccountLoading(true);
-    try {
-      await sendRuntimeMessage<void>({ type: "SIGN_OUT" });
-      onAccountChange(null);
-      setAccountStatus("");
-      setAccountFormVisible(true);
-    } finally {
-      setAccountLoading(false);
-    }
+  function beginChangeAccount() {
+    setAuthEmail("");
+    setAuthPassword("");
+    setDeleteConfirmVisible(false);
+    setAccountStatus("Current account stays active until another account signs in.");
+    setAccountFormVisible(true);
+  }
+
+  function cancelChangeAccount() {
+    setAuthEmail("");
+    setAuthPassword("");
+    setAccountStatus("");
+    setAccountFormVisible(false);
   }
 
   async function handleDeleteAccount() {
@@ -1260,7 +1384,7 @@ function SettingsView({
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={handleSignOut}
+                onClick={beginChangeAccount}
                 disabled={accountLoading}
                 style={{
                   background: colors.surface,
@@ -1400,8 +1524,28 @@ function SettingsView({
                   cursor: accountLoading || !authEmail.includes("@") || authPassword.length < 6 ? "default" : "pointer",
                 }}
               >
-                {accountLoading ? "Signing in…" : "Continue"}
+                {accountLoading ? "Signing in…" : accountFormVisible ? "Switch account" : "Continue"}
               </button>
+              {account && accountFormVisible && (
+                <button
+                  type="button"
+                  onClick={cancelChangeAccount}
+                  disabled={accountLoading}
+                  style={{
+                    alignSelf: "flex-start",
+                    background: colors.surface,
+                    color: colors.text,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 8,
+                    padding: "9px 14px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: accountLoading ? "default" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1444,6 +1588,35 @@ function SettingsView({
             Shows the AI answer in the popup after pressing Enter, then lets you ask follow-ups.
           </p>
         </div>
+      </label>
+
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Card text size</p>
+      <label style={{ display: "block", marginBottom: 40 }}>
+        <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Today and History cards</p>
+        <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px", lineHeight: 1.5 }}>
+          Increase the saved text and answer size in Today and History.
+        </p>
+        <select
+          value={cardFontSize}
+          onChange={(event) => onCardFontSizeChange(event.target.value as CardFontSize)}
+          style={{
+            width: 190,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            fontSize: 14,
+            color: colors.text,
+            background: colors.surface,
+            outline: "none",
+          }}
+        >
+          {CARD_FONT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+        <p style={{ fontSize: 12, color: colors.muted, margin: "7px 0 0", lineHeight: 1.5 }}>
+          {CARD_FONT_OPTIONS.find((option) => option.value === cardFontSize)?.note}
+        </p>
       </label>
 
       {/* Flashcards */}
@@ -1742,14 +1915,16 @@ export default function App() {
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
   const [theme, setThemeState] = useState<ThemeName>("light");
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
+  const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color"], (r) => {
+    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
       setCaptures(r.captures ?? []);
       setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
       setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
       setAccount(r.contextlens_user ?? null);
       setAppMode(r.app_mode ?? "language_learning");
+      setCardFontSizeState(isCardFontSize(r.card_font_size) ? r.card_font_size : DEFAULT_CARD_FONT_SIZE);
       const t = isThemeName(r.theme) ? r.theme : "light";
       const accent = normalizeHexColor(r.accent_color);
       setThemeState(t);
@@ -1763,6 +1938,7 @@ export default function App() {
       if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
       if (changes.app_mode) setAppMode(changes.app_mode.newValue ?? "language_learning");
+      if (changes.card_font_size) setCardFontSizeState(isCardFontSize(changes.card_font_size.newValue) ? changes.card_font_size.newValue : DEFAULT_CARD_FONT_SIZE);
       if (changes.theme) {
         const nextTheme = isThemeName(changes.theme.newValue) ? changes.theme.newValue : "light";
         setThemeState(nextTheme);
@@ -1812,6 +1988,11 @@ export default function App() {
   function setMode(mode: AppMode) {
     setAppMode(mode);
     chrome.storage.local.set({ app_mode: mode });
+  }
+
+  function setCardFontSize(size: CardFontSize) {
+    setCardFontSizeState(size);
+    chrome.storage.local.set({ card_font_size: size });
   }
 
   useEffect(() => {
@@ -1975,6 +2156,7 @@ export default function App() {
               ) : null
             }
             colors={colors}
+            cardFontSize={cardFontSize}
           />
         )}
         {view === "history" && (
@@ -1986,6 +2168,7 @@ export default function App() {
             colors={colors}
             theme={theme}
             accentColor={accentColor}
+            cardFontSize={cardFontSize}
           />
         )}
         {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} colors={colors} />}
@@ -1997,6 +2180,8 @@ export default function App() {
             onAccountChange={setAccount}
             appMode={appMode}
             onAppModeChange={setMode}
+            cardFontSize={cardFontSize}
+            onCardFontSizeChange={setCardFontSize}
             accentColor={accentColor}
             onAccentColorChange={setAccentColor}
             colors={colors}
