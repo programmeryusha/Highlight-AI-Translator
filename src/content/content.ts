@@ -64,6 +64,7 @@ let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
 let widgetDeepDiveActive = false;
 let appMode: "language_learning" | "student" = "language_learning";
+let cardFontSize: "sm" | "md" | "lg" = "md";
 let appearanceTheme: ThemeName = "light";
 let accentColor = DEFAULT_ACCENT_COLOR;
 let skipNextMouseup = false;
@@ -105,13 +106,15 @@ function uiColors() {
   };
 }
 
-chrome.storage.local.get(["app_mode", "theme", "accent_color"], (r) => {
+chrome.storage.local.get(["app_mode", "theme", "accent_color", "card_font_size"], (r) => {
   appMode = r.app_mode ?? "language_learning";
+  cardFontSize = r.card_font_size ?? "md";
   applyAppearance(r.theme, r.accent_color);
 });
 
 const appearanceStorageHandler = (changes: Record<string, chrome.storage.StorageChange>) => {
   if (changes.app_mode) appMode = changes.app_mode.newValue ?? "language_learning";
+  if (changes.card_font_size) cardFontSize = changes.card_font_size.newValue ?? "md";
   if (changes.theme || changes.accent_color) {
     applyAppearance(
       changes.theme?.newValue ?? appearanceTheme,
@@ -635,9 +638,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
       const body = document.createElement("div");
       appendMarkdownText(body, message.content);
+      const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
       body.setAttribute("style", `
         color: ${message.role === "assistant" ? colors.text : colors.userText};
-        font-size: ${message.role === "assistant" ? "16px" : "14px"};
+        font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
         line-height: 1.65;
         margin-bottom: 12px;
         white-space: pre-wrap;
@@ -1163,9 +1167,10 @@ function showCropOverlay(screenshotDataUrl: string) {
 
         const body = document.createElement("div");
         appendMarkdownText(body, message.content);
+        const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? colors.text : colors.userText};
-          font-size: ${message.role === "assistant" ? "16px" : "14px"};
+          font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
           line-height: 1.65;
           margin-bottom: 12px;
           white-space: pre-wrap;
@@ -1952,6 +1957,53 @@ function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null)
   return selectedEditableControlText(target);
 }
 
+async function resolveQuranText(rawText: string, range: Range): Promise<string> {
+  let el: Element | null = range.commonAncestorContainer instanceof Element
+    ? range.commonAncestorContainer
+    : (range.commonAncestorContainer as Node).parentElement;
+  if (!el) return rawText;
+
+  // Walk up until we find a container with [data-word-location] children (quran.com signature)
+  let searchRoot: Element | null = el;
+  for (let i = 0; i < 15 && searchRoot; i++) {
+    if (searchRoot.querySelector("[data-word-location]")) break;
+    searchRoot = searchRoot.parentElement;
+  }
+  if (!searchRoot) return rawText;
+
+  const wordEls = searchRoot.querySelectorAll("[data-word-location]");
+  if (wordEls.length === 0) return rawText;
+
+  const verseKeys = new Set<string>();
+  for (const wordEl of Array.from(wordEls)) {
+    try { if (!range.intersectsNode(wordEl)) continue; } catch { continue; }
+    const loc = (wordEl as HTMLElement).dataset.wordLocation ?? "";
+    const [surah, verse] = loc.split(":");
+    if (surah && verse) verseKeys.add(`${surah}:${verse}`);
+  }
+  if (verseKeys.size === 0) return rawText;
+
+  try {
+    const texts: string[] = [];
+    const sortedKeys = Array.from(verseKeys).sort((a, b) => {
+      const [as, av] = a.split(":").map(Number);
+      const [bs, bv] = b.split(":").map(Number);
+      return as !== bs ? as - bs : av - bv;
+    });
+    for (const key of sortedKeys) {
+      const res = await fetch(
+        `https://api.qurancdn.com/api/qdc/verses/by_key/${encodeURIComponent(key)}?fields=text_uthmani`,
+      );
+      if (!res.ok) continue;
+      const json = await res.json() as { verse?: { text_uthmani?: string } };
+      if (json.verse?.text_uthmani) texts.push(json.verse.text_uthmani);
+    }
+    return texts.length > 0 ? texts.join("\n") : rawText;
+  } catch {
+    return rawText;
+  }
+}
+
 function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (saveBubbleSuppressed()) return;
   if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
@@ -1963,18 +2015,19 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
     : recentAnchor;
   clearSelectionCheckTimer();
   if (saveBubbleSuppressed()) return;
-  if (widgetMode === "input") return;
   const selected = selectedPageText(anchor && anchor.detail >= 2 ? anchor : undefined, event?.target ?? null);
 
   if (selected) {
     const x = fixedViewportX(selected.rect.left + selected.rect.width / 2);
     const y = fixedViewportY(selected.rect.top);
+    const sel = window.getSelection();
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
 
-    chrome.storage.local.get("save_triggers", (result) => {
+    chrome.storage.local.get("save_triggers", async (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
-      if (triggers.bubble) {
-        showSaveBubble(x, y, selected.text);
-      }
+      if (!triggers.bubble) return;
+      const text = range ? await resolveQuranText(selected.text, range) : selected.text;
+      showSaveBubble(x, y, text);
     });
   } else if (pageHasTypingFocus(event?.target ?? null)) {
     if (widgetMode === "bubble") removeWidget();

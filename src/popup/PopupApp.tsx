@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 
 type AppMode = "language_learning" | "student";
 type ThemeName = "light" | "dark";
+type FontSize = "sm" | "md" | "lg";
 
 const DEFAULT_ACCENT_COLOR = "#2563eb";
 
@@ -34,18 +35,25 @@ export default function PopupApp() {
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
   const [theme, setTheme] = useState<ThemeName>("light");
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
+  const [fontSize, setFontSize] = useState<FontSize>("md");
 
   useEffect(() => {
-    chrome.storage.local.get(["app_mode", "theme", "accent_color"], (result) => {
+    chrome.storage.local.get(["app_mode", "theme", "accent_color", "card_font_size"], (result) => {
       setAppMode(result.app_mode ?? "language_learning");
       setTheme(isThemeName(result.theme) ? result.theme : "light");
       setAccentColor(normalizeHexColor(result.accent_color));
+      setFontSize(result.card_font_size ?? "md");
     });
   }, []);
 
   function updateMode(mode: AppMode) {
     setAppMode(mode);
     chrome.storage.local.set({ app_mode: mode });
+  }
+
+  function updateFontSize(size: FontSize) {
+    setFontSize(size);
+    chrome.storage.local.set({ card_font_size: size });
   }
 
   function openDashboard() {
@@ -82,6 +90,32 @@ export default function PopupApp() {
           <option value="student">Student</option>
         </select>
       </label>
+
+      <div style={{ marginBottom: 12 }}>
+        <span style={{ display: "block", fontSize: 12, color: colors.muted, marginBottom: 6, fontWeight: 650 }}>Text size</span>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["sm", "md", "lg"] as FontSize[]).map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => updateFontSize(size)}
+              style={{
+                flex: 1,
+                border: `1px solid ${fontSize === size ? colors.accent : colors.border}`,
+                borderRadius: 8,
+                background: fontSize === size ? colors.accent : colors.surface,
+                color: fontSize === size ? "#fff" : colors.text,
+                padding: "7px 0",
+                fontSize: size === "sm" ? 12 : size === "lg" ? 16 : 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {size === "sm" ? "S" : size === "md" ? "M" : "L"}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <button
         type="button"
