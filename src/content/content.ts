@@ -63,7 +63,6 @@ function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
 let widgetDeepDiveActive = false;
-let appMode: "language_learning" | "student" = "language_learning";
 let cardFontSize: "sm" | "md" | "lg" = "md";
 let appearanceTheme: ThemeName = "light";
 let accentColor = DEFAULT_ACCENT_COLOR;
@@ -106,14 +105,12 @@ function uiColors() {
   };
 }
 
-chrome.storage.local.get(["app_mode", "theme", "accent_color", "card_font_size"], (r) => {
-  appMode = r.app_mode ?? "language_learning";
+chrome.storage.local.get(["theme", "accent_color", "card_font_size"], (r) => {
   cardFontSize = r.card_font_size ?? "md";
   applyAppearance(r.theme, r.accent_color);
 });
 
 const appearanceStorageHandler = (changes: Record<string, chrome.storage.StorageChange>) => {
-  if (changes.app_mode) appMode = changes.app_mode.newValue ?? "language_learning";
   if (changes.card_font_size) cardFontSize = changes.card_font_size.newValue ?? "md";
   if (changes.theme || changes.accent_color) {
     applyAppearance(
@@ -754,7 +751,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     `);
     let analogyBox: HTMLElement | null = null;
 
-    if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+    if (!loading && messages.length === 1 && messages[0].role === "assistant") {
       if (analogyLoading) {
         const analogyStatus = document.createElement("div");
         analogyStatus.textContent = "Finding an analogy…";
@@ -1283,7 +1280,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       `);
       let analogyBox: HTMLElement | null = null;
 
-      if (appMode === "student" && !loading && messages.length === 1 && messages[0].role === "assistant") {
+      if (!loading && messages.length === 1 && messages[0].role === "assistant") {
         if (panelAnalogyLoading) {
           const analogyStatus = document.createElement("div");
           analogyStatus.textContent = "Finding an analogy…";
