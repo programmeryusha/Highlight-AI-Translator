@@ -225,22 +225,69 @@ function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
+const TERM_DEF_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
+
 function appendMarkdownText(container: HTMLElement, text: string) {
   const lines = text.split("\n");
-  lines.forEach((line, lineIndex) => {
-    if (lineIndex > 0) container.appendChild(document.createElement("br"));
-    line.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
-      if (!part) return;
-      if (partIndex % 2 === 1) {
-        const strong = document.createElement("strong");
-        strong.textContent = part;
-        strong.style.fontWeight = "800";
-        strong.style.color = "inherit";
-        container.appendChild(strong);
-      } else {
-        container.appendChild(document.createTextNode(part));
-      }
-    });
+  let lastWasInline = false;
+
+  lines.forEach((line) => {
+    const match = line.match(TERM_DEF_RE);
+
+    if (match) {
+      lastWasInline = false;
+      const [, term, definition] = match;
+
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "margin:3px 0;";
+
+      const chip = document.createElement("button");
+      chip.style.cssText = [
+        "display:inline-flex;align-items:center;gap:5px;",
+        "background:rgba(var(--contextlens-accent-rgb,37,99,235),0.1);",
+        "border:1px solid rgba(var(--contextlens-accent-rgb,37,99,235),0.28);",
+        "border-radius:999px;padding:3px 11px 3px 10px;",
+        "font-size:12px;font-weight:700;color:inherit;cursor:pointer;font-family:inherit;",
+        "transition:background 120ms;",
+      ].join("");
+      chip.innerHTML = `${term} <span style="font-size:10px;opacity:0.6;">▾</span>`;
+
+      const defDiv = document.createElement("div");
+      defDiv.textContent = definition;
+      defDiv.style.cssText = "display:none;font-size:12px;line-height:1.5;margin:5px 0 2px 10px;opacity:0.85;";
+
+      let open = false;
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        open = !open;
+        defDiv.style.display = open ? "block" : "none";
+        chip.style.background = open
+          ? "rgba(var(--contextlens-accent-rgb,37,99,235),0.18)"
+          : "rgba(var(--contextlens-accent-rgb,37,99,235),0.1)";
+        const arrow = chip.querySelector("span");
+        if (arrow) arrow.textContent = open ? "▴" : "▾";
+      });
+
+      wrap.appendChild(chip);
+      wrap.appendChild(defDiv);
+      container.appendChild(wrap);
+    } else {
+      if (lastWasInline) container.appendChild(document.createElement("br"));
+      lastWasInline = true;
+
+      line.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
+        if (!part) return;
+        if (partIndex % 2 === 1) {
+          const strong = document.createElement("strong");
+          strong.textContent = part;
+          strong.style.fontWeight = "800";
+          strong.style.color = "inherit";
+          container.appendChild(strong);
+        } else {
+          container.appendChild(document.createTextNode(part));
+        }
+      });
+    }
   });
 }
 
