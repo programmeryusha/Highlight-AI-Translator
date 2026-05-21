@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Capture, ChatMessage, Message } from "../types";
 
-const DEFAULT_ACCENT_COLOR = "#2563eb";
+type ThemeName = "light" | "dark";
+const DEFAULT_ACCENT_COLOR = "#6466f1";
+
+function isThemeName(v: unknown): v is ThemeName { return v === "light" || v === "dark"; }
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
   if (typeof value !== "string") return fallback;
@@ -24,21 +27,14 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
       const lastError = chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      if (response?.error) {
-        reject(new Error(response.error));
-        return;
-      }
+      if (lastError) { reject(new Error(lastError.message)); return; }
+      if (response?.error) { reject(new Error(response.error)); return; }
       resolve(response as T);
     });
   });
 }
 
 function renderMarkdown(text: string): React.ReactNode {
-  // Split into lines, group consecutive list items into a <ul>
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
   let listItems: React.ReactNode[] = [];
@@ -50,27 +46,22 @@ function renderMarkdown(text: string): React.ReactNode {
     }
   }
 
-  function inlineBold(line: string, key: number): React.ReactNode {
+  function inlineBold(line: string, _key: number): React.ReactNode {
     const parts = line.split(/\*\*(.*?)\*\*/g);
     return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ fontWeight: 800 }}>{part}</strong> : part);
   }
 
   lines.forEach((line, i) => {
     const trimmed = line.trim();
-    if (!trimmed) {
-      flushList();
-      return;
-    }
+    if (!trimmed) { flushList(); return; }
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
-      const content = trimmed.slice(2);
-      listItems.push(<li key={i} style={{ marginBottom: 4 }}>{inlineBold(content, i)}</li>);
+      listItems.push(<li key={i} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2), i)}</li>);
     } else {
       flushList();
       nodes.push(<p key={i} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineBold(trimmed, i)}</p>);
     }
   });
   flushList();
-
   return <>{nodes}</>;
 }
 
@@ -85,15 +76,19 @@ export default function ChatApp() {
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
+  const [theme, setTheme] = useState<ThemeName>("light");
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollOnNextUpdate = useRef(false);
 
   useEffect(() => {
-    chrome.storage.local.get("accent_color", (result) => {
+    chrome.storage.local.get(["accent_color", "theme"], (result) => {
       setAccentColor(normalizeHexColor(result.accent_color));
+      if (isThemeName(result.theme)) setTheme(result.theme);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.accent_color) setAccentColor(normalizeHexColor(changes.accent_color.newValue));
+      if (changes.theme && isThemeName(changes.theme.newValue)) setTheme(changes.theme.newValue);
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -110,7 +105,6 @@ export default function ChatApp() {
 
       const prior: ChatMessage[] = result[`chat_${captureId}`] ?? [];
       if (prior.length === 0 && found?.explanation) {
-        // Seed with the initial explanation
         const seed: ChatMessage[] = [{ role: "assistant", content: found.explanation }];
         setMessages(seed);
         chrome.storage.local.set({ [`chat_${captureId}`]: seed });
@@ -120,8 +114,12 @@ export default function ChatApp() {
     });
   }, [captureId]);
 
+  // Only auto-scroll when explicitly triggered by user action, never on initial load
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (scrollOnNextUpdate.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollOnNextUpdate.current = false;
+    }
   }, [messages, loading, deepDiveLoading]);
 
   useEffect(() => {
@@ -130,8 +128,16 @@ export default function ChatApp() {
     setDeepDiveLoading(false);
   }, [capture?.id]);
 
+  // Apply background color to document body
+  useEffect(() => {
+    const dark = theme === "dark";
+    document.body.style.background = dark ? "#111113" : "#fff";
+    return () => { document.body.style.background = ""; };
+  }, [theme]);
+
   async function handleDeepDive() {
     if (!capture || deepDiveActive || deepDiveLoading) return;
+    scrollOnNextUpdate.current = true;
     setDeepDiveLoading(true);
     try {
       const data = await sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
@@ -157,6 +163,7 @@ export default function ChatApp() {
     const text = input.trim();
     if (!text || loading || deepDiveLoading || !capture) return;
     setInput("");
+    scrollOnNextUpdate.current = true;
 
     const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(updated);
@@ -173,17 +180,30 @@ export default function ChatApp() {
       setMessages(final);
       chrome.storage.local.set({ [`chat_${captureId}`]: final });
     } catch (error) {
-      console.error("ContextLens chat failed", error);
       const message = error instanceof Error ? error.message : "Something went wrong. Try again.";
-      const errMsgs: ChatMessage[] = [...updated, { role: "assistant", content: message }];
-      setMessages(errMsgs);
+      setMessages([...updated, { role: "assistant", content: message }]);
     }
     setLoading(false);
   }
 
+  const dark = theme === "dark";
+  const colors = {
+    bg:          dark ? "#111113"   : "#fff",
+    text:        dark ? "#e8e6e2"   : "#37352f",
+    muted:       dark ? "#6b6a67"   : "#9b9a97",
+    border:      dark ? "#2a2928"   : "#e3e2de",
+    inputBorder: dark ? "#3a3937"   : "#d8d7d2",
+    surface:     dark ? "#1a1918"   : "#fff",
+    sourceBg:    dark ? "#161514"   : "transparent",
+    stickyBg:    dark ? "#111113"   : "#fff",
+  };
+
+  const accentSoft   = colorWithAlpha(accentColor, 0.14);
+  const accentBorder = colorWithAlpha(accentColor, 0.38);
+
   if (!capture) {
     return (
-      <div style={{ padding: "60px 48px", color: "#9b9a97" }}>
+      <div style={{ padding: "60px 48px", color: colors.muted, background: colors.bg, minHeight: "100vh" }}>
         Loading…
       </div>
     );
@@ -193,27 +213,25 @@ export default function ChatApp() {
   const sourceIsLong = !hasScreenshot && capture.text.length > 700;
   const sourcePreview = sourceIsLong && !sourceExpanded;
   const showDeepDiveBtn = capture.status === "done" && !deepDiveActive && !deepDiveLoading;
-  const accentSoft = colorWithAlpha(accentColor, 0.14);
-  const accentBorder = colorWithAlpha(accentColor, 0.38);
 
   return (
-    <div style={{ minHeight: "100vh", maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column", background: colors.bg }}>
       {/* Header */}
       <div style={{ padding: "32px 48px 0" }}>
         <a
           href={chrome.runtime.getURL("src/dashboard/dashboard.html")}
-          style={{ fontSize: 13, color: "#9b9a97", textDecoration: "none", display: "inline-block", marginBottom: 24 }}
+          style={{ fontSize: 13, color: colors.muted, textDecoration: "none", display: "inline-block", marginBottom: 24 }}
         >
           ← Back
         </a>
-        {/* Highlighted text */}
         <div
           style={{
-            border: "1px solid #e3e2de",
-            borderLeft: "3px solid #e3e2de",
+            border: `1px solid ${colors.border}`,
+            borderLeft: `3px solid ${colors.border}`,
             borderRadius: 8,
             padding: "14px 16px",
             marginBottom: 24,
+            background: colors.sourceBg,
           }}
         >
           {hasScreenshot ? (
@@ -226,19 +244,20 @@ export default function ChatApp() {
                 maxHeight: 460,
                 objectFit: "contain",
                 borderRadius: 6,
-                background: "#f7f6f3",
+                background: dark ? "#1e1d1b" : "#f7f6f3",
               }}
             />
           ) : (
             <p
               style={{
                 fontSize: 21,
-                color: "#2f2e2b",
+                color: colors.text,
                 lineHeight: 1.6,
                 fontWeight: 650,
                 maxHeight: sourcePreview ? 220 : undefined,
                 overflow: sourcePreview ? "hidden" : undefined,
                 marginBottom: sourceIsLong ? 8 : undefined,
+                margin: 0,
               }}
             >
               {capture.text}
@@ -246,34 +265,34 @@ export default function ChatApp() {
           )}
           {sourceIsLong && (
             <button
-              onClick={() => setSourceExpanded((value) => !value)}
+              onClick={() => setSourceExpanded((v) => !v)}
               style={{ background: "none", border: "none", color: accentColor, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 6 }}
             >
               {sourceExpanded ? "Collapse text" : "Show full text"}
             </button>
           )}
           {capture.context && (
-            <div style={{ borderTop: "1px solid #e3e2de", marginTop: 12, paddingTop: 12 }}>
-              <p style={{ fontSize: 12, color: "#9b9a97", fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: 12, paddingTop: 12 }}>
+              <p style={{ fontSize: 12, color: colors.muted, fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Your question
               </p>
-              <p style={{ fontSize: 18, color: "#37352f", lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
+              <p style={{ fontSize: 18, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
                 {capture.context}
               </p>
             </div>
           )}
         </div>
-        <div style={{ borderBottom: "1px solid #e3e2de", marginBottom: 0 }} />
+        <div style={{ borderBottom: `1px solid ${colors.border}`, marginBottom: 0 }} />
       </div>
 
       {/* Messages */}
       <div style={{ padding: "24px 48px 96px", flex: 1 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 12, color: "#9b9a97", marginBottom: 4, fontWeight: 500 }}>
+            <p style={{ fontSize: 12, color: colors.muted, marginBottom: 4, fontWeight: 500 }}>
               {m.role === "assistant" ? "AI" : "You"}
             </p>
-            <div style={{ fontSize: m.role === "assistant" ? 19 : 16, color: "#37352f", lineHeight: m.role === "assistant" ? 1.8 : 1.7 }}>
+            <div style={{ fontSize: m.role === "assistant" ? 19 : 16, color: colors.text, lineHeight: m.role === "assistant" ? 1.8 : 1.7 }}>
               {renderMarkdown(m.content)}
             </div>
           </div>
@@ -297,8 +316,8 @@ export default function ChatApp() {
         )}
         {loading && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: 12, color: deepDiveActive ? accentColor : "#9b9a97", marginBottom: 4, fontWeight: 500 }}>AI</p>
-            <p style={{ fontSize: 15, color: deepDiveActive ? accentColor : "#9b9a97", fontStyle: deepDiveActive ? "italic" : undefined }}>
+            <p style={{ fontSize: 12, color: deepDiveActive ? accentColor : colors.muted, marginBottom: 4, fontWeight: 500 }}>AI</p>
+            <p style={{ fontSize: 15, color: deepDiveActive ? accentColor : colors.muted, fontStyle: deepDiveActive ? "italic" : undefined }}>
               {deepDiveActive ? "Thinking through a deeper answer…" : "…"}
             </p>
           </div>
@@ -307,12 +326,9 @@ export default function ChatApp() {
       </div>
 
       {/* Input */}
-      <div style={{ position: "sticky", bottom: 0, padding: "14px 48px 24px", background: "#fff", borderTop: "1px solid #e3e2de" }}>
+      <div style={{ position: "sticky", bottom: 0, padding: "14px 48px 24px", background: colors.stickyBg, borderTop: `1px solid ${colors.border}` }}>
         <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            send();
-          }}
+          onSubmit={(e) => { e.preventDefault(); send(); }}
           style={{ display: "flex", gap: 10, alignItems: "center" }}
         >
           <input
@@ -324,13 +340,13 @@ export default function ChatApp() {
               flex: 1,
               minHeight: 52,
               fontSize: 17,
-              color: "#37352f",
-              background: "#fff",
-              border: "1px solid #d8d7d2",
+              color: colors.text,
+              background: colors.surface,
+              border: `1px solid ${colors.inputBorder}`,
               borderRadius: 14,
               outline: "none",
               padding: "0 16px",
-              boxShadow: "0 1px 6px rgba(15, 15, 15, 0.06)",
+              boxShadow: dark ? "none" : "0 1px 6px rgba(15,15,15,0.06)",
             }}
           />
           <button
@@ -341,8 +357,10 @@ export default function ChatApp() {
               padding: "0 18px",
               border: "none",
               borderRadius: 14,
-              background: loading || deepDiveLoading || !input.trim() ? "#d8d7d2" : "#37352f",
-              color: "#fff",
+              background: loading || deepDiveLoading || !input.trim()
+                ? (dark ? "#2a2928" : "#d8d7d2")
+                : (dark ? "#e8e6e2" : "#37352f"),
+              color: dark ? "#111113" : "#fff",
               fontSize: 15,
               fontWeight: 700,
               cursor: loading || deepDiveLoading || !input.trim() ? "default" : "pointer",
