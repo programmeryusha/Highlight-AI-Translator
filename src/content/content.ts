@@ -1,7 +1,7 @@
 import type { ChatMessage, Message } from "../types";
 
 const CONTENT_SCRIPT_VERSION = "2026-05-17-quran-selection-v1";
-const DEFAULT_ACCENT_COLOR = "#2563eb";
+const DEFAULT_ACCENT_COLOR = "#6466f1";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
@@ -24,6 +24,18 @@ function rgbTriplet(hex: string): string {
 
 function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
+function relativeLuminance(hex: string): number {
+  const c = normalizeHexColor(hex);
+  const lin = (v: number) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * lin(parseInt(c.slice(1, 3), 16) / 255)
+       + 0.7152 * lin(parseInt(c.slice(3, 5), 16) / 255)
+       + 0.0722 * lin(parseInt(c.slice(5, 7), 16) / 255);
+}
+
+function tooDarkForDarkMode(hex: string): boolean {
+  return relativeLuminance(hex) < 0.05;
 }
 
 function textOnColor(hex: string): string {
@@ -81,15 +93,16 @@ function isThemeName(value: unknown): value is ThemeName {
 
 function applyAppearance(theme: unknown, accent: unknown) {
   appearanceTheme = isThemeName(theme) ? theme : "light";
-  accentColor = normalizeHexColor(accent);
+  const resolved = normalizeHexColor(accent);
+  accentColor = appearanceTheme === "dark" && tooDarkForDarkMode(resolved) ? DEFAULT_ACCENT_COLOR : resolved;
   document.documentElement.style.setProperty("--contextlens-accent-rgb", rgbTriplet(accentColor));
 }
 
 function uiColors() {
   const dark = appearanceTheme === "dark";
   return {
-    panel: dark ? "rgba(30,30,40,0.96)" : "rgba(255,255,255,0.98)",
-    panelSoft: dark ? "rgba(30,30,40,0.92)" : "rgba(255,255,255,0.94)",
+    panel: dark ? "rgba(18,19,28,0.96)" : "rgba(255,255,255,0.98)",
+    panelSoft: dark ? "rgba(18,19,28,0.94)" : "rgba(255,255,255,0.96)",
     border: dark ? "rgba(255,255,255,0.14)" : "rgba(55,53,47,0.16)",
     faintBorder: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.09)",
     text: dark ? "#e8e8ef" : "#2f2e2b",
@@ -105,16 +118,16 @@ function uiColors() {
   };
 }
 
-chrome.storage.local.get(["theme", "accent_color", "card_font_size"], (r) => {
+chrome.storage.local.get(["overlay_theme", "accent_color", "card_font_size"], (r) => {
   cardFontSize = r.card_font_size ?? "md";
-  applyAppearance(r.theme, r.accent_color);
+  applyAppearance(r.overlay_theme ?? "dark", r.accent_color);
 });
 
 const appearanceStorageHandler = (changes: Record<string, chrome.storage.StorageChange>) => {
   if (changes.card_font_size) cardFontSize = changes.card_font_size.newValue ?? "md";
-  if (changes.theme || changes.accent_color) {
+  if (changes.overlay_theme || changes.accent_color) {
     applyAppearance(
-      changes.theme?.newValue ?? appearanceTheme,
+      changes.overlay_theme?.newValue ?? appearanceTheme,
       changes.accent_color?.newValue ?? accentColor,
     );
   }
@@ -227,50 +240,32 @@ function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
 
 const TERM_DEF_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
 
-function appendMarkdownText(container: HTMLElement, text: string) {
+function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
   let lastWasInline = false;
+  let hardWordsDiv: HTMLElement | null = null;
 
   lines.forEach((line) => {
-    const match = line.match(TERM_DEF_RE);
+    const match = renderChips ? line.match(TERM_DEF_RE) : null;
 
     if (match) {
       lastWasInline = false;
       const [, term, definition] = match;
 
-      const wrap = document.createElement("div");
-      wrap.style.cssText = "margin:3px 0;";
+      if (!hardWordsDiv) {
+        hardWordsDiv = document.createElement("div");
+        hardWordsDiv.style.cssText = `display:${showHardWords ? "block" : "none"};margin-top:8px;`;
+        container.appendChild(hardWordsDiv);
+      }
 
-      const chip = document.createElement("button");
-      chip.style.cssText = [
-        "display:inline-flex;align-items:center;gap:5px;",
-        "background:rgba(var(--contextlens-accent-rgb,37,99,235),0.1);",
-        "border:1px solid rgba(var(--contextlens-accent-rgb,37,99,235),0.28);",
-        "border-radius:999px;padding:3px 11px 3px 10px;",
-        "font-size:12px;font-weight:700;color:inherit;cursor:pointer;font-family:inherit;",
-        "transition:background 120ms;",
-      ].join("");
-      chip.innerHTML = `${term} <span style="font-size:10px;opacity:0.6;">▾</span>`;
-
-      const defDiv = document.createElement("div");
-      defDiv.textContent = definition;
-      defDiv.style.cssText = "display:none;font-size:12px;line-height:1.5;margin:5px 0 2px 10px;opacity:0.85;";
-
-      let open = false;
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        open = !open;
-        defDiv.style.display = open ? "block" : "none";
-        chip.style.background = open
-          ? "rgba(var(--contextlens-accent-rgb,37,99,235),0.18)"
-          : "rgba(var(--contextlens-accent-rgb,37,99,235),0.1)";
-        const arrow = chip.querySelector("span");
-        if (arrow) arrow.textContent = open ? "▴" : "▾";
-      });
-
-      wrap.appendChild(chip);
-      wrap.appendChild(defDiv);
-      container.appendChild(wrap);
+      const termRow = document.createElement("div");
+      termRow.style.cssText = "margin:2px 0;font-size:12px;line-height:1.5;";
+      const strong = document.createElement("strong");
+      strong.textContent = term;
+      strong.style.fontWeight = "700";
+      termRow.appendChild(strong);
+      termRow.appendChild(document.createTextNode(` — ${definition}`));
+      hardWordsDiv.appendChild(termRow);
     } else {
       if (lastWasInline) container.appendChild(document.createElement("br"));
       lastWasInline = true;
@@ -289,6 +284,8 @@ function appendMarkdownText(container: HTMLElement, text: string) {
       });
     }
   });
+
+  return hardWordsDiv;
 }
 
 function updateCameraButtonPosition() {
@@ -419,7 +416,12 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
   if (widgetMode === "input") return;
   removeWidget();
   widgetMode = "bubble";
-  const colors = uiColors();
+
+  const mobile = viewportWidth() <= 600;
+  const btnHeight  = mobile ? 32 : 34;
+  const btnMinW    = mobile ? 68 : 74;
+  const btnPad     = mobile ? "0 13px" : "0 15px";
+  const btnFont    = mobile ? "14.5px" : "15.5px";
 
   widget = document.createElement("div");
   widget.textContent = "Save";
@@ -428,32 +430,42 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     `
     position: fixed;
     left: ${x}px;
-    top: ${y - 34}px;
-    transform: translate(-50%, 2px);
+    top: ${y - 12}px;
+    transform: translate(-50%, calc(-100% + 4px));
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 52px;
-    height: 25px;
+    height: ${btnHeight}px;
+    min-width: ${btnMinW}px;
     box-sizing: border-box;
-    background: ${appearanceTheme === "dark" ? "rgba(38, 39, 52, 0.84)" : "rgba(255,255,255,0.92)"};
-    color: ${colors.text};
+    background: #202231;
+    color: #f5f6ff;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 12px;
+    font-size: ${btnFont};
     line-height: 1;
-    font-weight: 650;
-    padding: 0 10px;
+    font-weight: 700;
+    padding: ${btnPad};
     border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.12);
     cursor: pointer;
     z-index: 2147483647;
-    box-shadow: ${appearanceTheme === "dark" ? "0 3px 10px rgba(15,15,24,0.16)" : "0 3px 10px rgba(15,15,15,0.10)"};
+    box-shadow: 0 5px 14px rgba(0,0,0,0.24);
     user-select: none;
-    border: 1px solid ${colors.border};
-    backdrop-filter: blur(8px);
     opacity: 0;
-    transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+    transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
   `
   );
+
+  widget.addEventListener("mouseenter", () => {
+    if (!widget) return;
+    widget.style.background = "#282b3d";
+    widget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.28)";
+  });
+  widget.addEventListener("mouseleave", () => {
+    if (!widget) return;
+    widget.style.background = "#202231";
+    widget.style.boxShadow = "0 5px 14px rgba(0,0,0,0.24)";
+  });
 
   widget.addEventListener("mousedown", (e) => {
     e.preventDefault();
@@ -466,7 +478,7 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
   requestAnimationFrame(() => {
     if (!widget || widgetMode !== "bubble") return;
     widget.style.opacity = "1";
-    widget.style.transform = "translate(-50%, 0)";
+    widget.style.transform = "translate(-50%, -100%)";
   });
 }
 
@@ -504,7 +516,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     "style",
     `
     font-size: 13px;
-    color: ${colors.accent};
+    color: #6466f1;
     padding: 8px 12px 6px;
     border-bottom: 1px solid ${colors.faintBorder};
     white-space: nowrap;
@@ -540,6 +552,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
   trapScroll(input);
 
   let submitted = false;
+  let submitting = false;
+  let widgetHasContext = false;
+  let hardWordsOpen = false;
   let analogyText = "";
   let analogyLoading = false;
 
@@ -554,6 +569,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       left: ${left}px;
       top: ${top}px;
       background: ${colors.panel};
+      backdrop-filter: blur(28px);
       border: 1px solid ${colors.border};
       border-radius: 10px;
       box-shadow: ${colors.shadow};
@@ -563,7 +579,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       overflow: hidden;
       box-sizing: border-box;
-      padding: 14px;
+      padding: 8px 12px 12px;
       display: flex;
       flex-direction: column;
     `
@@ -594,6 +610,28 @@ function showContextInput(x: number, y: number, selectedText: string) {
     widget.replaceChildren(message, closeBtn);
   }
 
+  function renderSignInRequired() {
+    if (!widget) return;
+    styleExpandedWidget();
+    const colors = uiColors();
+    const msg = document.createElement("div");
+    msg.textContent = "Sign in to save highlights and get explanations.";
+    msg.setAttribute("style", `color:${colors.text};font-size:14px;line-height:1.6;margin-bottom:14px;`);
+    const signInBtn = document.createElement("button");
+    signInBtn.textContent = "Sign In";
+    signInBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;`);
+    signInBtn.addEventListener("click", () => { chrome.runtime.openOptionsPage(); removeWidget(); });
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Dismiss";
+    closeBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
+    closeBtn.addEventListener("click", removeWidget);
+    const row = document.createElement("div");
+    row.setAttribute("style", "display:flex;gap:0;");
+    row.appendChild(signInBtn);
+    row.appendChild(closeBtn);
+    widget.replaceChildren(msg, row);
+  }
+
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
     if (!widget) return;
     styleExpandedWidget();
@@ -608,7 +646,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       display: flex;
       align-items: center;
       justify-content: center;
-      margin: -14px -14px 10px -14px;
+      margin: -8px -12px 8px -12px;
       border-bottom: 1px solid ${colors.faintBorder};
       flex-shrink: 0;
       user-select: none;
@@ -643,51 +681,25 @@ function showContextInput(x: number, y: number, selectedText: string) {
       document.addEventListener("mouseup", onUp, true);
     });
 
-    // Original text snippet
-    const SOURCE_LIMIT = 120;
-    const sourceBlock = document.createElement("div");
-    sourceBlock.setAttribute("style", `
-      font-size: 12px;
-      color: ${colors.muted};
-      line-height: 1.5;
-      margin-bottom: 10px;
-      flex-shrink: 0;
-    `);
-    if (selectedText.length <= SOURCE_LIMIT) {
-      sourceBlock.textContent = `"${selectedText}"`;
-    } else {
-      let srcExpanded = false;
-      const textSpan = document.createElement("span");
-      textSpan.textContent = `"${selectedText.slice(0, SOURCE_LIMIT)}…"`;
-      const toggleBtn = document.createElement("button");
-      toggleBtn.textContent = "more";
-      toggleBtn.setAttribute("style", `background:none;border:none;color:${colors.accent};font-size:11px;cursor:pointer;padding:0 0 0 4px;font-family:inherit;`);
-      toggleBtn.addEventListener("click", () => {
-        srcExpanded = !srcExpanded;
-        textSpan.textContent = srcExpanded ? `"${selectedText}"` : `"${selectedText.slice(0, SOURCE_LIMIT)}…"`;
-        toggleBtn.textContent = srcExpanded ? "less" : "more";
-      });
-      sourceBlock.appendChild(textSpan);
-      sourceBlock.appendChild(toggleBtn);
-    }
-
     const list = document.createElement("div");
     list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
     trapScroll(list);
 
-    messages.forEach((message) => {
+    let hardWordsDivRef: HTMLElement | null = null;
+    messages.forEach((message, index) => {
       const label = document.createElement("div");
       label.textContent = message.role === "assistant" ? "AI" : "You";
       label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
 
       const body = document.createElement("div");
-      appendMarkdownText(body, message.content);
+      const hwEl = appendMarkdownText(body, message.content, !widgetHasContext && index === 0, hardWordsOpen);
+      if (index === 0) hardWordsDivRef = hwEl;
       const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
       body.setAttribute("style", `
         color: ${message.role === "assistant" ? colors.text : colors.userText};
         font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
         line-height: 1.65;
-        margin-bottom: 12px;
+        margin-bottom: 8px;
         white-space: pre-wrap;
       `);
 
@@ -794,9 +806,42 @@ function showContextInput(x: number, y: number, selectedText: string) {
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      margin-bottom: 10px;
+      margin-top: 16px;
+      margin-bottom: 16px;
     `);
     let analogyBox: HTMLElement | null = null;
+
+    if (!loading && messages.length === 1 && messages[0].role === "assistant" && hardWordsDivRef) {
+      const hwBtn = document.createElement("button");
+      hwBtn.textContent = "📘 Hard Words";
+      const hwBase = `
+        align-self: flex-start;
+        background: rgba(255,255,255,0.075);
+        color: #e5e7f0;
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        letter-spacing: 0.02em;
+      `;
+      hwBtn.setAttribute("style", hwBase);
+      hwBtn.addEventListener("mouseenter", () => {
+        hwBtn.style.background = "rgba(255,255,255,0.12)";
+        hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
+      });
+      hwBtn.addEventListener("mouseleave", () => {
+        hwBtn.style.background = "rgba(255,255,255,0.075)";
+        hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
+      });
+      const capturedDiv = hardWordsDivRef as HTMLElement;
+      hwBtn.addEventListener("click", () => {
+        hardWordsOpen = !hardWordsOpen;
+        capturedDiv.style.display = hardWordsOpen ? "block" : "none";
+      });
+      actionRow.appendChild(hwBtn);
+    }
 
     if (!loading && messages.length === 1 && messages[0].role === "assistant") {
       if (analogyLoading) {
@@ -836,8 +881,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
           analogyLoading = true;
           renderConversation(captureId, messages, false);
           sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
-            .then((response) => { analogyText = response.analogy; analogyLoading = false; renderConversation(captureId, messages, false); })
-            .catch(() => { analogyLoading = false; renderConversation(captureId, messages, false); });
+            .then((response) => { analogyText = response.analogy; analogyLoading = false; if (!widgetDeepDiveActive) renderConversation(captureId, messages, false); })
+            .catch(() => { analogyLoading = false; if (!widgetDeepDiveActive) renderConversation(captureId, messages, false); });
         });
         actionRow.appendChild(analogyBtn);
       }
@@ -847,9 +892,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
       const deepDiveBtn = document.createElement("button");
       deepDiveBtn.textContent = "✦ Deep Dive";
       deepDiveBtn.setAttribute("style", `
-        background: ${colors.accentSoft};
-        color: ${colors.accent};
-        border: 1px solid ${colors.accentBorder};
+        background: rgba(255,255,255,0.06);
+        color: #6466f1;
+        border: 1px solid rgba(100,102,241,0.35);
         border-radius: 6px;
         padding: 5px 10px;
         font-size: 12px;
@@ -857,8 +902,18 @@ function showContextInput(x: number, y: number, selectedText: string) {
         cursor: pointer;
         letter-spacing: 0.02em;
       `);
+      deepDiveBtn.addEventListener("mouseenter", () => {
+        deepDiveBtn.style.background = "rgba(255,255,255,0.1)";
+        deepDiveBtn.style.borderColor = "rgba(148,168,232,0.52)";
+      });
+      deepDiveBtn.addEventListener("mouseleave", () => {
+        deepDiveBtn.style.background = "rgba(255,255,255,0.06)";
+        deepDiveBtn.style.borderColor = "rgba(148,168,232,0.32)";
+      });
       deepDiveBtn.addEventListener("click", () => {
         widgetDeepDiveActive = true;
+        analogyText = "";
+        analogyLoading = false;
         ensureDeepDiveStyles();
         renderConversation(captureId, messages, true, "Thinking through a deeper answer…");
         widget?.classList.add("cl-deep-dive-glow");
@@ -894,43 +949,55 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (analogyBox) renderChildren.push(analogyBox);
 
     renderChildren.push(row);
-    widget.replaceChildren(dragHandle, sourceBlock, ...renderChildren);
+    widget.replaceChildren(dragHandle, ...renderChildren);
     setTimeout(() => followupInput.focus(), 50);
   }
 
   function doSave(closeAfterSave = false) {
-    if (submitted) {
+    if (submitted || submitting) {
       if (closeAfterSave) removeWidget();
       return;
     }
-    submitted = true;
-    const context = input.value.trim();
-    const message: Message = {
-      type: "SAVE_HIGHLIGHT",
-      text: selectedText,
-      url: location.href,
-      title: document.title,
-      context,
-    };
-    window.getSelection()?.removeAllRanges();
+    submitting = true;
 
-    if (closeAfterSave) {
-      chrome.runtime.sendMessage(message);
-      removeWidget();
-      return;
-    }
+    chrome.storage.local.get("contextlens_user", (result) => {
+      submitting = false;
+      if (!result.contextlens_user) {
+        if (closeAfterSave) { removeWidget(); return; }
+        renderSignInRequired();
+        return;
+      }
 
-    getShowAnswerImmediately((immediate) => {
-      if (!immediate) {
+      submitted = true;
+      const context = input.value.trim();
+      widgetHasContext = context.length > 0;
+      const message: Message = {
+        type: "SAVE_HIGHLIGHT",
+        text: selectedText,
+        url: location.href,
+        title: document.title,
+        context,
+      };
+      window.getSelection()?.removeAllRanges();
+
+      if (closeAfterSave) {
         chrome.runtime.sendMessage(message);
         removeWidget();
         return;
       }
 
-      renderLoading();
-      sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
-        .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
-        .catch((error) => renderError(error.message));
+      getShowAnswerImmediately((immediate) => {
+        if (!immediate) {
+          chrome.runtime.sendMessage(message);
+          removeWidget();
+          return;
+        }
+
+        renderLoading();
+        sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
+          .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
+          .catch((error) => renderError(error.message));
+      });
     });
   }
 
@@ -1082,6 +1149,8 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelTop = 8;
     let contextPanelWidth = panelWidthFor();
     let panelDeepDiveActive = false;
+    let panelHasContext = false;
+    let panelHardWordsOpen = false;
     let panelAnalogyText = "";
     let panelAnalogyLoading = false;
 
@@ -1194,6 +1263,28 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(message, closeBtn);
     }
 
+    function renderSignInRequiredPanel() {
+      if (!contextPanel) return;
+      styleAnswerPanel();
+      const colors = uiColors();
+      const msg = document.createElement("div");
+      msg.textContent = "Sign in to save screenshots and get explanations.";
+      msg.setAttribute("style", `color:${colors.text};font-size:14px;line-height:1.6;margin-bottom:14px;`);
+      const signInBtn = document.createElement("button");
+      signInBtn.textContent = "Sign In";
+      signInBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;`);
+      signInBtn.addEventListener("click", () => { chrome.runtime.openOptionsPage(); removeCropOverlay(); });
+      const closeBtn = document.createElement("button");
+      closeBtn.textContent = "Dismiss";
+      closeBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
+      closeBtn.addEventListener("click", removeCropOverlay);
+      const row = document.createElement("div");
+      row.setAttribute("style", "display:flex;gap:0;");
+      row.appendChild(signInBtn);
+      row.appendChild(closeBtn);
+      contextPanel.replaceChildren(msg, row);
+    }
+
     function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
       if (!contextPanel) return;
       styleAnswerPanel();
@@ -1204,13 +1295,15 @@ function showCropOverlay(screenshotDataUrl: string) {
       list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
       trapScroll(list);
 
-      messages.forEach((message) => {
+      let panelHardWordsDivRef: HTMLElement | null = null;
+      messages.forEach((message, index) => {
         const label = document.createElement("div");
         label.textContent = message.role === "assistant" ? "AI" : "You";
         label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
 
         const body = document.createElement("div");
-        appendMarkdownText(body, message.content);
+        const hwEl = appendMarkdownText(body, message.content, !panelHasContext && index === 0, panelHardWordsOpen);
+        if (index === 0) panelHardWordsDivRef = hwEl;
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? colors.text : colors.userText};
@@ -1323,9 +1416,42 @@ function showCropOverlay(screenshotDataUrl: string) {
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        margin-top: 16px;
         margin-bottom: 10px;
       `);
       let analogyBox: HTMLElement | null = null;
+
+      if (!loading && messages.length === 1 && messages[0].role === "assistant" && panelHardWordsDivRef) {
+        const hwBtn = document.createElement("button");
+        hwBtn.textContent = "📘 Hard Words";
+        const hwBase = `
+          align-self: flex-start;
+          background: rgba(255,255,255,0.075);
+          color: #e5e7f0;
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          letter-spacing: 0.02em;
+        `;
+        hwBtn.setAttribute("style", hwBase);
+        hwBtn.addEventListener("mouseenter", () => {
+          hwBtn.style.background = "rgba(255,255,255,0.12)";
+          hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
+        });
+        hwBtn.addEventListener("mouseleave", () => {
+          hwBtn.style.background = "rgba(255,255,255,0.075)";
+          hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
+        });
+        const capturedPanelDiv = panelHardWordsDivRef as HTMLElement;
+        hwBtn.addEventListener("click", () => {
+          panelHardWordsOpen = !panelHardWordsOpen;
+          capturedPanelDiv.style.display = panelHardWordsOpen ? "block" : "none";
+        });
+        actionRow.appendChild(hwBtn);
+      }
 
       if (!loading && messages.length === 1 && messages[0].role === "assistant") {
         if (panelAnalogyLoading) {
@@ -1365,8 +1491,8 @@ function showCropOverlay(screenshotDataUrl: string) {
             panelAnalogyLoading = true;
             renderConversationPanel(captureId, messages, false);
             sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
-              .then((response) => { panelAnalogyText = response.analogy; panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); })
-              .catch(() => { panelAnalogyLoading = false; renderConversationPanel(captureId, messages, false); });
+              .then((response) => { panelAnalogyText = response.analogy; panelAnalogyLoading = false; if (!panelDeepDiveActive) renderConversationPanel(captureId, messages, false); })
+              .catch(() => { panelAnalogyLoading = false; if (!panelDeepDiveActive) renderConversationPanel(captureId, messages, false); });
           });
           actionRow.appendChild(analogyBtn);
         }
@@ -1376,9 +1502,9 @@ function showCropOverlay(screenshotDataUrl: string) {
         const deepDiveBtn = document.createElement("button");
         deepDiveBtn.textContent = "✦ Deep Dive";
         deepDiveBtn.setAttribute("style", `
-          background: ${colors.accentSoft};
-          color: ${colors.accent};
-          border: 1px solid ${colors.accentBorder};
+          background: rgba(255,255,255,0.06);
+          color: #a8b4e8;
+          border: 1px solid rgba(148,168,232,0.32);
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -1386,8 +1512,18 @@ function showCropOverlay(screenshotDataUrl: string) {
           cursor: pointer;
           letter-spacing: 0.02em;
         `);
+        deepDiveBtn.addEventListener("mouseenter", () => {
+          deepDiveBtn.style.background = "rgba(100,102,241,0.12)";
+          deepDiveBtn.style.borderColor = "rgba(100,102,241,0.55)";
+        });
+        deepDiveBtn.addEventListener("mouseleave", () => {
+          deepDiveBtn.style.background = "rgba(255,255,255,0.06)";
+          deepDiveBtn.style.borderColor = "rgba(100,102,241,0.35)";
+        });
         deepDiveBtn.addEventListener("click", () => {
           panelDeepDiveActive = true;
+          panelAnalogyText = "";
+          panelAnalogyLoading = false;
           ensureDeepDiveStyles();
           renderConversationPanel(captureId, messages, true, "Thinking through a deeper answer…");
           contextPanel?.classList.add("cl-deep-dive-glow");
@@ -1430,22 +1566,32 @@ function showCropOverlay(screenshotDataUrl: string) {
 
     function cropAndSend(context: string) {
       if (contextPanelSubmitted) return;
-      contextPanelSubmitted = true;
-      removeContextPanelOutsideHandler();
       const croppedDataUrl = cropSelection();
       if (!croppedDataUrl) return;
 
-      getShowAnswerImmediately((immediate) => {
-        if (!immediate) {
-          chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context } as Message);
-          removeCropOverlay();
+      chrome.storage.local.get("contextlens_user", (result) => {
+        if (!result.contextlens_user) {
+          contextPanelSubmitted = false;
+          renderSignInRequiredPanel();
           return;
         }
 
-        renderLoadingPanel();
-        sendRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT", imageData: croppedDataUrl, context })
-          .then((response) => renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]))
-          .catch((error) => renderErrorPanel(error.message));
+        contextPanelSubmitted = true;
+        panelHasContext = context.length > 0;
+        removeContextPanelOutsideHandler();
+
+        getShowAnswerImmediately((immediate) => {
+          if (!immediate) {
+            chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context } as Message);
+            removeCropOverlay();
+            return;
+          }
+
+          renderLoadingPanel();
+          sendRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT", imageData: croppedDataUrl, context })
+            .then((response) => renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]))
+            .catch((error) => renderErrorPanel(error.message));
+        });
       });
     }
 
@@ -1975,6 +2121,7 @@ function extractSelectionText(selection: Selection): string {
 function selectedEditableControlText(target?: EventTarget | null): { text: string; rect: RectLike } | null {
   const control = editableTextControl(target ?? null) ?? editableTextControl(document.activeElement);
   if (!control) return null;
+  if (control instanceof HTMLInputElement) return null;
 
   const start = control.selectionStart ?? 0;
   const end = control.selectionEnd ?? 0;
@@ -1994,6 +2141,11 @@ function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null)
 
   if (text.length > 0 && selection && selection.rangeCount > 0) {
     const range = selection.getRangeAt(0);
+    // Skip selections that live inside any editable field (input, textarea, contenteditable).
+    const ancestor = range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    if (ancestor?.closest("input, textarea, [contenteditable]")) return null;
     const rect = rangeAnchorRect(range, anchor);
     if (rect) return { text, rect };
   }
@@ -2064,13 +2216,14 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (selected) {
     const vp = getVisualViewportRect();
     const rawX = selected.rect.left + selected.rect.width / 2;
-    const rawY = selected.rect.top;
-    // Use raw client coords for the bubble — fixedViewportY over-corrects on desktop
-    // Chrome with pinch/browser zoom. Clamp to viewport so it never goes offscreen.
-    const x = Math.max(vp.left + 30, Math.min(vp.left + vp.width - 30, fixedViewportX(rawX)));
-    const y = Math.max(vp.top + 40, Math.min(vp.top + vp.height - 10, rawY));
+    // Use the topmost visible selection rect so the bubble appears above the first selected line.
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    const allRects = range ? Array.from(range.getClientRects()).filter(r => r.width > 1 && r.height > 1) : [];
+    const topmostY = allRects.length > 0 ? Math.min(...allRects.map(r => r.top)) : selected.rect.top;
+    const rawY = topmostY;
+    const x = Math.max(vp.left + 30, Math.min(vp.left + vp.width - 30, fixedViewportX(rawX)));
+    const y = Math.max(vp.top + 60, Math.min(vp.top + vp.height - 10, rawY));
 
     chrome.storage.local.get("save_triggers", async (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
@@ -2097,8 +2250,15 @@ const documentMousedownHandler = (event: MouseEvent) => {
   if (widgetMode === "bubble" && widget && (!clickedWidget || clickedEditable)) {
     removeWidget();
     if (event.detail <= 1 && !clickedEditable) {
-      suppressSaveBubble();
+      const isRapidMultiClick = lastSelectionAnchor !== null
+        && lastSelectionAnchor.detail >= 2
+        && performance.now() - lastSelectionAnchor.timestamp < 400;
+      if (!isRapidMultiClick) suppressSaveBubble();
     }
+  }
+
+  if (event.detail >= 2 && !isInContextLensUi(target)) {
+    suppressSaveBubbleUntil = 0;
   }
 
   if (!isInContextLensUi(target)) return;

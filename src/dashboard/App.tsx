@@ -10,7 +10,7 @@ type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth"
 type CardFontSize = "default" | "large" | "extra_large";
 const LONG_TEXT_LIMIT = 420;
 const DEFAULT_FLASHCARD_THRESHOLD = 3;
-const DEFAULT_ACCENT_COLOR = "#2563eb";
+const DEFAULT_ACCENT_COLOR = "#6466f1";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
   { value: "yesterday", label: "Yesterday" },
@@ -86,6 +86,18 @@ function rgbTriplet(hex: string): string {
 
 function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
+function relativeLuminance(hex: string): number {
+  const c = normalizeHexColor(hex);
+  const lin = (v: number) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * lin(parseInt(c.slice(1, 3), 16) / 255)
+       + 0.7152 * lin(parseInt(c.slice(3, 5), 16) / 255)
+       + 0.0722 * lin(parseInt(c.slice(5, 7), 16) / 255);
+}
+
+function tooDarkForDarkMode(hex: string): boolean {
+  return relativeLuminance(hex) < 0.05;
 }
 
 function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors {
@@ -518,8 +530,6 @@ function TrashIcon() {
 }
 
 function FlashcardStarButton({ capture, starred, onToggle, colors }: { capture: Capture; starred: boolean; onToggle: (id: string) => void; colors: DashboardColors }) {
-  if (!capture.context.trim()) return null;
-
   return (
     <button
       type="button"
@@ -999,11 +1009,12 @@ function buildFlashcardList(
     if (!isInScope && !isStarred) continue;
 
     const question = c.context?.trim();
-    if (!question) continue;
+    if (!question && !isStarred) continue;
 
-    const key = normalizeQuestion(question);
+    const word = question || c.text.slice(0, 120).trim();
+    const key = normalizeQuestion(word);
     if (!map.has(key)) {
-      map.set(key, { count: 0, word: question, explanation: c.explanation ?? "", exampleText: c.text, starred: false });
+      map.set(key, { count: 0, word, explanation: c.explanation ?? "", exampleText: c.text, starred: false });
     }
     const entry = map.get(key)!;
     entry.count++;
@@ -1303,6 +1314,7 @@ function SettingsView({
   onCardFontSizeChange,
   accentColor,
   onAccentColorChange,
+  theme,
   colors,
 }: {
   flashcardThreshold: number;
@@ -1315,6 +1327,7 @@ function SettingsView({
   onCardFontSizeChange: (size: CardFontSize) => void;
   accentColor: string;
   onAccentColorChange: (color: string) => void;
+  theme: ThemeName;
   colors: DashboardColors;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
@@ -1332,6 +1345,19 @@ function SettingsView({
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotStatus, setForgotStatus] = useState("");
   const [accentDraft, setAccentDraft] = useState(accentColor);
+  const [overlayTheme, setOverlayTheme] = useState<ThemeName>("dark");
+
+  useEffect(() => {
+    chrome.storage.local.get("overlay_theme", (r) => {
+      setOverlayTheme(isThemeName(r.overlay_theme) ? r.overlay_theme : "dark");
+    });
+  }, []);
+
+  function toggleOverlayTheme() {
+    const next: ThemeName = overlayTheme === "dark" ? "light" : "dark";
+    setOverlayTheme(next);
+    chrome.storage.local.set({ overlay_theme: next });
+  }
 
   useEffect(() => {
     chrome.storage.local.remove("anthropic_api_key");
@@ -1868,33 +1894,61 @@ function SettingsView({
       </div>
 
       {/* Learning mode */}
-      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Learning mode</p>
-      <label style={{ display: "block", marginBottom: 40 }}>
-        <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Default answer style</p>
-        <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px", lineHeight: 1.5 }}>
-          Student mode includes study helpers like analogies.
-        </p>
-        <select
-          value={appMode}
-          onChange={(event) => onAppModeChange(event.target.value as AppMode)}
-          style={{
-            width: 190,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            padding: "8px 10px",
-            fontSize: 14,
-            color: colors.text,
-            background: colors.surface,
-            outline: "none",
-          }}
-        >
-          <option value="language_learning">Language</option>
-          <option value="student">Student</option>
-        </select>
-      </label>
+      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Default mode</p>
+      <div style={{ display: "flex", gap: 10, marginBottom: 40 }}>
+        {([
+          { value: "language_learning", label: "Language", desc: "Clear explanations for text, words, and concepts." },
+          { value: "student", label: "Student", desc: "Kid-friendly explanations with analogies and simple words." },
+        ] as { value: AppMode; label: string; desc: string }[]).map(({ value, label, desc }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onAppModeChange(value)}
+            style={{
+              flex: 1,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: appMode === value ? `2px solid ${colors.accent}` : `1px solid ${colors.border}`,
+              background: appMode === value ? colorWithAlpha(colors.accent, 0.08) : colors.surface,
+              color: appMode === value ? colors.accent : colors.text,
+              textAlign: "left",
+              cursor: "pointer",
+              transition: "border 120ms, background 120ms",
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 12, color: appMode === value ? colors.accent : colors.muted, lineHeight: 1.5, opacity: appMode === value ? 0.85 : 1 }}>{desc}</div>
+          </button>
+        ))}
+      </div>
 
       {/* Theme */}
       <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Appearance</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Overlay theme</span>
+        <button
+          type="button"
+          onClick={toggleOverlayTheme}
+          aria-label={overlayTheme === "dark" ? "Switch overlay to light" : "Switch overlay to dark"}
+          title={overlayTheme === "dark" ? "Overlay: dark" : "Overlay: light"}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 999,
+            border: `1px solid ${colors.border}`,
+            background: colors.surface,
+            color: colors.text,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 15,
+            cursor: "pointer",
+          }}
+        >
+          {overlayTheme === "dark" ? "☀" : "☾"}
+        </button>
+        <span style={{ fontSize: 12, color: colors.muted }}>{overlayTheme === "dark" ? "Dark" : "Light"}</span>
+      </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 12, color: colors.text, fontSize: 14 }}>
           <input
@@ -1932,7 +1986,7 @@ function SettingsView({
           />
         </label>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {["#2563eb", "#0f766e", "#b45309", "#be123c", "#37352f"].map((swatch) => (
+          {["#6466f1", "#0f766e", "#b45309", "#be123c", "#37352f"].filter(s => theme !== "dark" || !tooDarkForDarkMode(s)).map((swatch) => (
             <button
               key={swatch}
               type="button"
@@ -2001,7 +2055,7 @@ function MonthCalendar({
   function textFor(count: number, isFuture: boolean) {
     if (isFuture) return theme === "dark" ? "#5f5a51" : "#d8d7d2";
     if (count === 0) return colors.muted;
-    return colors.text;
+    return theme === "dark" ? "#f0ede6" : "#1a1916";
   }
 
   return (
@@ -2167,7 +2221,11 @@ export default function App() {
   }
 
   function toggleTheme() {
-    setTheme(theme === "dark" ? "light" : "dark");
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    if (nextTheme === "dark" && tooDarkForDarkMode(accentColor)) {
+      setAccentColor(DEFAULT_ACCENT_COLOR);
+    }
+    setTheme(nextTheme);
   }
 
   function setAccentColor(color: string) {
@@ -2399,6 +2457,7 @@ export default function App() {
             onCardFontSizeChange={setCardFontSize}
             accentColor={accentColor}
             onAccentColorChange={setAccentColor}
+            theme={theme}
             colors={colors}
           />
         )}
