@@ -259,7 +259,7 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
       }
 
       const termRow = document.createElement("div");
-      termRow.style.cssText = "margin:2px 0;font-size:12px;line-height:1.5;";
+      termRow.style.cssText = "margin:2px 0;font-size:inherit;line-height:1.65;";
       const strong = document.createElement("strong");
       strong.textContent = term;
       strong.style.fontWeight = "700";
@@ -487,7 +487,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
   widgetMode = "input";
   const colors = uiColors();
 
-  const widgetWidth = panelWidthFor();
+  let widgetWidth = panelWidthFor();
+  let widgetHeight = 0;
   let left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
   let top = panelTopFor(y - 110, 132);
 
@@ -516,7 +517,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     "style",
     `
     font-size: 13px;
-    color: #6466f1;
+    color: ${accentColor};
     padding: 8px 12px 6px;
     border-bottom: 1px solid ${colors.faintBorder};
     white-space: nowrap;
@@ -561,7 +562,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function styleExpandedWidget() {
     if (!widget) return;
     const colors = uiColors();
-    const maxHeight = Math.min(560, viewportHeight() - 24);
+    const maxH = Math.min(560, viewportHeight() - 24);
+    const heightCss = widgetHeight > 0
+      ? `height: ${widgetHeight}px; max-height: none;`
+      : `max-height: ${maxH}px;`;
     widget.setAttribute(
       "style",
       `
@@ -575,7 +579,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       box-shadow: ${colors.shadow};
       z-index: 2147483647;
       width: ${widgetWidth}px;
-      max-height: ${maxHeight}px;
+      ${heightCss}
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       overflow: hidden;
       box-sizing: border-box;
@@ -584,6 +588,50 @@ function showContextInput(x: number, y: number, selectedText: string) {
       flex-direction: column;
     `
     );
+  }
+
+  function addResizeHandles() {
+    if (!widget) return;
+    widget.querySelectorAll("[data-cl-resize]").forEach(el => el.remove());
+
+    function makeHandle(cursor: string, edgeStyle: string, onResize: (dx: number, dy: number, sw: number, sh: number) => void) {
+      const handle = document.createElement("div");
+      handle.setAttribute("data-cl-resize", "1");
+      handle.setAttribute("style", `position:absolute;${edgeStyle}cursor:${cursor};z-index:2;`);
+      handle.addEventListener("mousedown", (e: MouseEvent) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const sx = e.clientX, sy = e.clientY;
+        const sw = widgetWidth;
+        const sh = widgetHeight > 0 ? widgetHeight : (widget?.offsetHeight ?? 400);
+        const mv = (ev: MouseEvent) => {
+          onResize(ev.clientX - sx, ev.clientY - sy, sw, sh);
+          styleExpandedWidget();
+          addResizeHandles();
+        };
+        const up = () => {
+          document.removeEventListener("mousemove", mv, true);
+          document.removeEventListener("mouseup", up, true);
+        };
+        document.addEventListener("mousemove", mv, true);
+        document.addEventListener("mouseup", up, true);
+      });
+      widget!.appendChild(handle);
+    }
+
+    const minW = 240, maxW = Math.min(640, viewportWidth() - 16);
+    const minH = 180, maxH = Math.min(720, viewportHeight() - 16);
+    makeHandle("ew-resize", "top:0;right:0;width:6px;height:100%;", (dx, _dy, sw) => {
+      widgetWidth = Math.max(minW, Math.min(maxW, sw + dx));
+    });
+    makeHandle("ns-resize", "bottom:0;left:0;width:100%;height:6px;", (_dx, dy, _sw, sh) => {
+      widgetHeight = Math.max(minH, Math.min(maxH, sh + dy));
+    });
+    makeHandle("nwse-resize", "bottom:0;right:0;width:12px;height:12px;", (dx, dy, sw, sh) => {
+      widgetWidth = Math.max(minW, Math.min(maxW, sw + dx));
+      widgetHeight = Math.max(minH, Math.min(maxH, sh + dy));
+    });
   }
 
   function renderLoading() {
@@ -636,7 +684,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!widget) return;
     styleExpandedWidget();
     const colors = uiColors();
-    const listMaxHeight = Math.max(120, Math.min(560, viewportHeight() - 24) - 140);
 
     // Drag handle
     const dragHandle = document.createElement("div");
@@ -682,7 +729,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     });
 
     const list = document.createElement("div");
-    list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
     trapScroll(list);
 
     let hardWordsDivRef: HTMLElement | null = null;
@@ -772,7 +819,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     doneBtn.addEventListener("click", removeWidget);
 
     const row = document.createElement("div");
-    row.setAttribute("style", "display:flex;gap:8px;align-items:center;");
+    row.setAttribute("style", "display:flex;gap:8px;align-items:center;flex-shrink:0;");
     row.appendChild(followupInput);
     row.appendChild(askBtn);
     row.appendChild(doneBtn);
@@ -806,6 +853,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+      flex-shrink: 0;
       margin-top: 16px;
       margin-bottom: 16px;
     `);
@@ -892,9 +940,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
       const deepDiveBtn = document.createElement("button");
       deepDiveBtn.textContent = "✦ Deep Dive";
       deepDiveBtn.setAttribute("style", `
-        background: rgba(255,255,255,0.06);
-        color: #6466f1;
-        border: 1px solid rgba(100,102,241,0.35);
+        background: ${colorWithAlpha(accentColor, 0.06)};
+        color: ${accentColor};
+        border: 1px solid ${colorWithAlpha(accentColor, 0.35)};
         border-radius: 6px;
         padding: 5px 10px;
         font-size: 12px;
@@ -903,12 +951,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
         letter-spacing: 0.02em;
       `);
       deepDiveBtn.addEventListener("mouseenter", () => {
-        deepDiveBtn.style.background = "rgba(255,255,255,0.1)";
-        deepDiveBtn.style.borderColor = "rgba(148,168,232,0.52)";
+        deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.12);
+        deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.55);
       });
       deepDiveBtn.addEventListener("mouseleave", () => {
-        deepDiveBtn.style.background = "rgba(255,255,255,0.06)";
-        deepDiveBtn.style.borderColor = "rgba(148,168,232,0.32)";
+        deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.06);
+        deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.35);
       });
       deepDiveBtn.addEventListener("click", () => {
         widgetDeepDiveActive = true;
@@ -950,6 +998,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
     renderChildren.push(row);
     widget.replaceChildren(dragHandle, ...renderChildren);
+    addResizeHandles();
     setTimeout(() => followupInput.focus(), 50);
   }
 
@@ -1289,10 +1338,9 @@ function showCropOverlay(screenshotDataUrl: string) {
       if (!contextPanel) return;
       styleAnswerPanel();
       const colors = uiColors();
-      const listMaxHeight = Math.max(160, Math.min(560, viewportHeight() - 24) - 92);
 
       const list = document.createElement("div");
-      list.setAttribute("style", `max-height:${listMaxHeight}px;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
       trapScroll(list);
 
       let panelHardWordsDivRef: HTMLElement | null = null;
@@ -1382,7 +1430,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       closeBtn.addEventListener("click", removeCropOverlay);
 
       const row = document.createElement("div");
-      row.setAttribute("style", "display:flex;gap:8px;align-items:center;");
+      row.setAttribute("style", "display:flex;gap:8px;align-items:center;flex-shrink:0;");
       row.appendChild(input);
       row.appendChild(askBtn);
       row.appendChild(closeBtn);
@@ -1416,6 +1464,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        flex-shrink: 0;
         margin-top: 16px;
         margin-bottom: 10px;
       `);
@@ -1502,9 +1551,9 @@ function showCropOverlay(screenshotDataUrl: string) {
         const deepDiveBtn = document.createElement("button");
         deepDiveBtn.textContent = "✦ Deep Dive";
         deepDiveBtn.setAttribute("style", `
-          background: rgba(255,255,255,0.06);
-          color: #a8b4e8;
-          border: 1px solid rgba(148,168,232,0.32);
+          background: ${colorWithAlpha(accentColor, 0.06)};
+          color: ${accentColor};
+          border: 1px solid ${colorWithAlpha(accentColor, 0.35)};
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -1513,12 +1562,12 @@ function showCropOverlay(screenshotDataUrl: string) {
           letter-spacing: 0.02em;
         `);
         deepDiveBtn.addEventListener("mouseenter", () => {
-          deepDiveBtn.style.background = "rgba(100,102,241,0.12)";
-          deepDiveBtn.style.borderColor = "rgba(100,102,241,0.55)";
+          deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.12);
+          deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.55);
         });
         deepDiveBtn.addEventListener("mouseleave", () => {
-          deepDiveBtn.style.background = "rgba(255,255,255,0.06)";
-          deepDiveBtn.style.borderColor = "rgba(100,102,241,0.35)";
+          deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.06);
+          deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.35);
         });
         deepDiveBtn.addEventListener("click", () => {
           panelDeepDiveActive = true;
