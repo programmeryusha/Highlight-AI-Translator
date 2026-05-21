@@ -2255,6 +2255,10 @@ const documentMousedownHandler = (event: MouseEvent) => {
         && performance.now() - lastSelectionAnchor.timestamp < 400;
       if (!isRapidMultiClick) suppressSaveBubble();
     }
+  } else if (!isInContextLensUi(target) && event.detail <= 1) {
+    // A fresh single-click that isn't dismissing the bubble clears any
+    // lingering suppression so the next selection works immediately.
+    suppressSaveBubbleUntil = 0;
   }
 
   if (event.detail >= 2 && !isInContextLensUi(target)) {
