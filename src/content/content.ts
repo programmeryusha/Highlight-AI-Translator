@@ -742,7 +742,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     ensureBaseStyles();
     const list = document.createElement("div");
     list.className = "cl-scroll";
-    list.setAttribute("style", `flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
     trapScroll(list);
 
     let hardWordsDivRef: HTMLElement | null = null;
@@ -897,6 +897,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
         hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
       });
       const capturedDiv = hardWordsDivRef as HTMLElement;
+      capturedDiv.style.maxHeight = "160px";
+      capturedDiv.style.overflowY = "auto";
       hwBtn.addEventListener("click", () => {
         hardWordsOpen = !hardWordsOpen;
         capturedDiv.style.display = hardWordsOpen ? "block" : "none";
@@ -1356,7 +1358,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       ensureBaseStyles();
       const list = document.createElement("div");
       list.className = "cl-scroll";
-      list.setAttribute("style", `flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
       trapScroll(list);
 
       let panelHardWordsDivRef: HTMLElement | null = null;
@@ -1511,6 +1513,8 @@ function showCropOverlay(screenshotDataUrl: string) {
           hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
         });
         const capturedPanelDiv = panelHardWordsDivRef as HTMLElement;
+        capturedPanelDiv.style.maxHeight = "160px";
+        capturedPanelDiv.style.overflowY = "auto";
         hwBtn.addEventListener("click", () => {
           panelHardWordsOpen = !panelHardWordsOpen;
           capturedPanelDiv.style.display = panelHardWordsOpen ? "block" : "none";
