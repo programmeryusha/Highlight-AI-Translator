@@ -350,7 +350,7 @@ function createCameraButton() {
     text-align: center;
     cursor: pointer;
     z-index: 2147483646;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 1px 5px rgba(0,0,0,0.18);
     user-select: none;
     transform-origin: top left;
     transition: transform 0.1s;
@@ -742,7 +742,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     ensureBaseStyles();
     const list = document.createElement("div");
     list.className = "cl-scroll";
-    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+    list.setAttribute("style", `flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
     trapScroll(list);
 
     let hardWordsDivRef: HTMLElement | null = null;
@@ -914,6 +914,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyBox = document.createElement("div");
         analogyBox.textContent = analogyText;
         analogyBox.setAttribute("style", `
+          flex-shrink: 0;
           background: rgba(251,191,36,0.08);
           border: 1px solid rgba(251,191,36,0.2);
           border-radius: 7px;
@@ -1355,7 +1356,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       ensureBaseStyles();
       const list = document.createElement("div");
       list.className = "cl-scroll";
-      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+      list.setAttribute("style", `flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
       trapScroll(list);
 
       let panelHardWordsDivRef: HTMLElement | null = null;
@@ -1527,6 +1528,7 @@ function showCropOverlay(screenshotDataUrl: string) {
           analogyBox = document.createElement("div");
           analogyBox.textContent = panelAnalogyText;
           analogyBox.setAttribute("style", `
+            flex-shrink: 0;
             background: rgba(251,191,36,0.08);
             border: 1px solid rgba(251,191,36,0.2);
             border-radius: 7px;
