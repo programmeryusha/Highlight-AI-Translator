@@ -1325,6 +1325,12 @@ function SettingsView({
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountFormVisible, setAccountFormVisible] = useState(false);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [forgotStep, setForgotStep] = useState<"off" | "email" | "code">("off");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotCode, setForgotCode] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotStatus, setForgotStatus] = useState("");
   const [accentDraft, setAccentDraft] = useState(accentColor);
 
   useEffect(() => {
@@ -1401,6 +1407,42 @@ function SettingsView({
     setAuthPassword("");
     setAccountStatus("");
     setAccountFormVisible(false);
+  }
+
+  async function handleForgotSubmit() {
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email.includes("@")) return;
+    setForgotLoading(true);
+    setForgotStatus("");
+    try {
+      await sendRuntimeMessage<{ sent: boolean }>({ type: "FORGOT_PASSWORD", email });
+      setForgotStep("code");
+      setForgotStatus("Check your email for a 6-digit reset code.");
+    } catch (error) {
+      setForgotStatus(error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function handleResetSubmit() {
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email.includes("@") || forgotCode.length !== 6 || forgotNewPassword.length < 6) return;
+    setForgotLoading(true);
+    setForgotStatus("");
+    try {
+      const result = await sendRuntimeMessage<ContextLensUser>({ type: "RESET_PASSWORD", email, code: forgotCode, newPassword: forgotNewPassword });
+      onAccountChange(result);
+      setForgotStep("off");
+      setForgotEmail("");
+      setForgotCode("");
+      setForgotNewPassword("");
+      setAccountStatus(`Password reset. Signed in as ${result.email}.`);
+    } catch (error) {
+      setForgotStatus(error instanceof Error ? error.message : "Reset failed.");
+    } finally {
+      setForgotLoading(false);
+    }
   }
 
   async function handleDeleteAccount() {
@@ -1618,6 +1660,74 @@ function SettingsView({
                 >
                   Cancel
                 </button>
+              )}
+              {forgotStep === "off" && (
+                <button
+                  type="button"
+                  onClick={() => { setForgotStep("email"); setForgotEmail(authEmail); setForgotStatus(""); }}
+                  style={{ alignSelf: "flex-start", background: "none", border: "none", color: colors.muted, fontSize: 12, cursor: "pointer", padding: 0, textDecoration: "underline" }}
+                >
+                  Forgot password?
+                </button>
+              )}
+              {forgotStep !== "off" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4, paddingTop: 12, borderTop: `1px solid ${colors.border}` }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: colors.text, margin: 0 }}>Reset password</p>
+                  {forgotStep === "email" && (
+                    <>
+                      <input
+                        type="email"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        placeholder="Your email address"
+                        onKeyDown={(e) => { if (e.key === "Enter") handleForgotSubmit(); }}
+                        style={inputStyle}
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={handleForgotSubmit}
+                          disabled={forgotLoading || !forgotEmail.includes("@")}
+                          style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: forgotLoading || !forgotEmail.includes("@") ? "default" : "pointer", opacity: forgotLoading || !forgotEmail.includes("@") ? 0.5 : 1 }}
+                        >
+                          {forgotLoading ? "Sending…" : "Send reset code"}
+                        </button>
+                        <button type="button" onClick={() => { setForgotStep("off"); setForgotStatus(""); }} style={{ background: "none", border: "none", color: colors.muted, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Cancel</button>
+                      </div>
+                    </>
+                  )}
+                  {forgotStep === "code" && (
+                    <>
+                      <input
+                        type="text"
+                        value={forgotCode}
+                        onChange={(e) => setForgotCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="6-digit code from email"
+                        style={inputStyle}
+                      />
+                      <input
+                        type="password"
+                        value={forgotNewPassword}
+                        onChange={(e) => setForgotNewPassword(e.target.value)}
+                        placeholder="New password (6+ characters)"
+                        onKeyDown={(e) => { if (e.key === "Enter") handleResetSubmit(); }}
+                        style={inputStyle}
+                      />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={handleResetSubmit}
+                          disabled={forgotLoading || forgotCode.length !== 6 || forgotNewPassword.length < 6}
+                          style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: forgotLoading || forgotCode.length !== 6 || forgotNewPassword.length < 6 ? "default" : "pointer", opacity: forgotLoading || forgotCode.length !== 6 || forgotNewPassword.length < 6 ? 0.5 : 1 }}
+                        >
+                          {forgotLoading ? "Resetting…" : "Reset password"}
+                        </button>
+                        <button type="button" onClick={() => setForgotStep("email")} style={{ background: "none", border: "none", color: colors.muted, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Back</button>
+                      </div>
+                    </>
+                  )}
+                  {forgotStatus && <p style={{ fontSize: 12, color: forgotStatus.toLowerCase().includes("check") ? colors.muted : "#eb5757", margin: 0, lineHeight: 1.5 }}>{forgotStatus}</p>}
+                </div>
               )}
             </div>
           </div>

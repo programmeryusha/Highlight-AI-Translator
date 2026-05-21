@@ -48,4 +48,6 @@ export type Message =
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "OPEN_DASHBOARD" }
-  | { type: "ANALOGY"; text: string };
+  | { type: "ANALOGY"; text: string }
+  | { type: "FORGOT_PASSWORD"; email: string }
+  | { type: "RESET_PASSWORD"; email: string; code: string; newPassword: string };

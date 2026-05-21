@@ -270,6 +270,18 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "FORGOT_PASSWORD") {
+    forgotPassword(message.email)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "RESET_PASSWORD") {
+    resetPassword(message.email, message.code, message.newPassword)
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
 });
 
 async function getAppMode(): Promise<string> {
@@ -617,6 +629,27 @@ async function deepDive(captureId: string): Promise<{ explanation: string; messa
   await chrome.storage.local.set({ [chatKey]: messages });
 
   return { explanation, messages };
+}
+
+async function forgotPassword(email: string): Promise<{ sent: boolean }> {
+  const res = await fetch(`${BACKEND_URL}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  });
+  if (!res.ok) await throwResponseError("Forgot password error", res);
+  return res.json();
+}
+
+async function resetPassword(email: string, code: string, newPassword: string): Promise<ContextLensUser> {
+  const res = await fetch(`${BACKEND_URL}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), code, new_password: newPassword }),
+  });
+  if (!res.ok) await throwResponseError("Reset password error", res);
+  const data = await res.json();
+  return storeAccount(data.email, data.token);
 }
 
 async function generateAnalogy(text: string): Promise<{ analogy: string }> {
