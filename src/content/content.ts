@@ -2015,8 +2015,13 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   const selected = selectedPageText(anchor && anchor.detail >= 2 ? anchor : undefined, event?.target ?? null);
 
   if (selected) {
-    const x = fixedViewportX(selected.rect.left + selected.rect.width / 2);
-    const y = fixedViewportY(selected.rect.top);
+    const vp = getVisualViewportRect();
+    const rawX = selected.rect.left + selected.rect.width / 2;
+    const rawY = selected.rect.top;
+    // Use raw client coords for the bubble — fixedViewportY over-corrects on desktop
+    // Chrome with pinch/browser zoom. Clamp to viewport so it never goes offscreen.
+    const x = Math.max(vp.left + 30, Math.min(vp.left + vp.width - 30, fixedViewportX(rawX)));
+    const y = Math.max(vp.top + 40, Math.min(vp.top + vp.height - 10, rawY));
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
 
