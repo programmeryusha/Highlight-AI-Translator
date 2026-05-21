@@ -54,10 +54,10 @@ if (contextLensGlobal.__contextLensContentVersion !== CONTENT_SCRIPT_VERSION) {
   initContextLensContentScript();
 }
 
-let deepDiveStylesInjected = false;
-function ensureDeepDiveStyles() {
-  if (deepDiveStylesInjected) return;
-  deepDiveStylesInjected = true;
+let baseStylesInjected = false;
+function ensureBaseStyles() {
+  if (baseStylesInjected) return;
+  baseStylesInjected = true;
   const style = document.createElement("style");
   style.textContent = `
     @keyframes clDeepDiveGlow {
@@ -67,8 +67,19 @@ function ensureDeepDiveStyles() {
     }
     .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
     .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.4)); }
+    .cl-scroll::-webkit-scrollbar              { width: 3px; }
+    .cl-scroll::-webkit-scrollbar-track        { background: transparent; }
+    .cl-scroll::-webkit-scrollbar-thumb        { background: rgba(255,255,255,0.18); border-radius: 2px; }
+    .cl-scroll::-webkit-scrollbar-thumb:hover  { background: rgba(255,255,255,0.32); }
   `;
   document.head.appendChild(style);
+}
+
+let deepDiveStylesInjected = false;
+function ensureDeepDiveStyles() {
+  ensureBaseStyles();
+  if (deepDiveStylesInjected) return;
+  deepDiveStylesInjected = true;
 }
 
 function initContextLensContentScript() {
@@ -728,7 +739,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
       document.addEventListener("mouseup", onUp, true);
     });
 
+    ensureBaseStyles();
     const list = document.createElement("div");
+    list.className = "cl-scroll";
     list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
     trapScroll(list);
 
@@ -1339,7 +1352,9 @@ function showCropOverlay(screenshotDataUrl: string) {
       styleAnswerPanel();
       const colors = uiColors();
 
+      ensureBaseStyles();
       const list = document.createElement("div");
+      list.className = "cl-scroll";
       list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
       trapScroll(list);
 
