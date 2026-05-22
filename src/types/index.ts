@@ -16,11 +16,18 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface FlashcardSet {
+  id: string;
+  name: string;
+  captureIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StorageSchema {
   captures: Capture[];
-  flashcard_threshold?: number;
   card_font_size?: "default" | "large" | "extra_large";
-  flashcard_starred_capture_ids?: string[];
+  flashcard_sets?: FlashcardSet[];
   deep_dive_capture_ids?: string[];
   contextlens_user?: ContextLensUser;
 }

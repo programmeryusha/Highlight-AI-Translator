@@ -619,13 +619,31 @@ async function deepDive(captureId: string): Promise<{ explanation: string; messa
   if (!capture) throw new Error("Saved item not found.");
 
   const imageBase64 = capture.imageData?.split(",")[1];
-  const explanation = await fetchExplanation(capture.text, capture.context, imageBase64, true);
+  const chatKey = `chat_${captureId}`;
+  const prior: ChatMessage[] = storage[chatKey] ?? (capture.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  const hasFollowup = prior.some((message) => message.role === "user");
+  const transcript = prior
+    .slice(-8)
+    .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content}`)
+    .join("\n");
+  const source = hasFollowup
+    ? [
+        `Saved item: ${capture.text}`,
+        capture.context ? `Original context note: ${capture.context}` : "",
+        `Conversation so far:\n${transcript}`,
+      ].filter(Boolean).join("\n\n")
+    : capture.text;
+  const context = hasFollowup
+    ? "Give a deeper answer to the latest follow-up in this conversation. Keep the earlier context in mind."
+    : capture.context;
+  const explanation = await fetchExplanation(source, context, imageBase64, true);
 
   await updateCapture(captureId, { explanation });
   await markDeepDiveCapture(captureId);
 
-  const chatKey = `chat_${captureId}`;
-  const messages: ChatMessage[] = [{ role: "assistant", content: explanation }];
+  const messages: ChatMessage[] = hasFollowup
+    ? [...prior, { role: "assistant", content: explanation }]
+    : [{ role: "assistant", content: explanation }];
   await chrome.storage.local.set({ [chatKey]: messages });
 
   return { explanation, messages };

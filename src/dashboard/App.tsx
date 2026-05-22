@@ -1,23 +1,21 @@
 import React, { useEffect, useState } from "react";
-import type { Capture, ContextLensUser, Message } from "../types";
+import type { Capture, ContextLensUser, FlashcardSet, Message } from "../types";
 
 type View = "saves" | "history" | "words" | "settings";
 type ThemeName = "light" | "dark";
 type AppMode = "language_learning" | "student";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
-type FlashcardExportRange = "yesterday" | "previous3" | "lastWeek" | "lastMonth" | "custom";
+type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
 type CardFontSize = "default" | "large" | "extra_large";
 const LONG_TEXT_LIMIT = 420;
-const DEFAULT_FLASHCARD_THRESHOLD = 3;
 const DEFAULT_ACCENT_COLOR = "#6466f1";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
-const FLASHCARD_EXPORT_RANGES: { value: FlashcardExportRange; label: string }[] = [
-  { value: "yesterday", label: "Yesterday" },
-  { value: "previous3", label: "Previous 3 days" },
-  { value: "lastWeek", label: "Last week" },
-  { value: "lastMonth", label: "Last month" },
-  { value: "custom", label: "Custom" },
+const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
+  { value: "pastDay", label: "Past day", days: 1 },
+  { value: "past3", label: "Past 3 days", days: 3 },
+  { value: "pastWeek", label: "Past week", days: 7 },
+  { value: "pastMonth", label: "Past month", days: 30 },
 ];
 const CARD_FONT_OPTIONS: { value: CardFontSize; label: string; note: string }[] = [
   { value: "default", label: "Default", note: "Comfortable reading size." },
@@ -363,43 +361,24 @@ function currentMonthKey(): string {
   return monthKeyFromDate(new Date());
 }
 
-function startOfLocalDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
 function addDaysToDate(date: Date, amount: number): Date {
   const next = new Date(date);
   next.setDate(next.getDate() + amount);
   return next;
 }
 
-function capturesForExportRange(captures: Capture[], range: FlashcardExportRange, customStartKey?: string, customEndKey?: string): Capture[] {
-  const now = new Date();
-  const todayStart = startOfLocalDay(now);
-  let start: Date;
-  let end: Date;
-
-  if (range === "yesterday") {
-    start = addDaysToDate(todayStart, -1);
-    end = todayStart;
-  } else if (range === "previous3") {
-    start = addDaysToDate(todayStart, -3);
-    end = todayStart;
-  } else if (range === "lastWeek") {
-    start = addDaysToDate(todayStart, -6);
-    end = now;
-  } else if (range === "lastMonth") {
-    start = addDaysToDate(todayStart, -29);
-    end = now;
-  } else {
-    start = customStartKey ? dateFromDayKey(customStartKey) : addDaysToDate(todayStart, -29);
-    end = customEndKey ? addDaysToDate(dateFromDayKey(customEndKey), 1) : now;
-  }
-
+function capturesForFlashcardRange(captures: Capture[], range: FlashcardRange): Capture[] {
+  const days = FLASHCARD_RANGES.find((candidate) => candidate.value === range)?.days ?? 1;
+  const end = new Date();
+  const start = addDaysToDate(end, -days);
   return captures.filter((capture) => {
     const savedAt = new Date(capture.savedAt);
-    return savedAt >= start && savedAt < end;
+    return savedAt >= start && savedAt <= end;
   });
+}
+
+function capturesForDays(captures: Capture[], keys: Set<string>): Capture[] {
+  return captures.filter((capture) => keys.has(dayKey(capture.savedAt)));
 }
 
 function dayKey(iso: string): string {
@@ -529,41 +508,9 @@ function TrashIcon() {
   );
 }
 
-function FlashcardStarButton({ capture, starred, onToggle, colors }: { capture: Capture; starred: boolean; onToggle: (id: string) => void; colors: DashboardColors }) {
-  return (
-    <button
-      type="button"
-      aria-label={starred ? "Remove from flashcards" : "Add to flashcards"}
-      title={starred ? "Remove from flashcards" : "Add to flashcards"}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onToggle(capture.id);
-      }}
-      style={{
-        width: 30,
-        height: 30,
-        borderRadius: 999,
-        border: `1px solid ${starred ? colors.accent : colors.border}`,
-        background: starred ? colors.accent : colors.surface,
-        color: starred ? colors.selectedText : colors.muted,
-        cursor: "pointer",
-        fontSize: 15,
-        lineHeight: "28px",
-        textAlign: "center",
-        flexShrink: 0,
-      }}
-    >
-      {starred ? "★" : "☆"}
-    </button>
-  );
-}
-
 function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; onToggle: () => void; colors: DashboardColors }) {
+  const [hovered, setHovered] = useState(false);
+
   return (
     <button
       type="button"
@@ -578,20 +525,24 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
         event.stopPropagation();
         onToggle();
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        width: 22,
-        height: 22,
-        borderRadius: 6,
-        border: selected ? `1px solid ${colors.accent}` : `1px solid ${colors.border}`,
-        background: selected ? colors.accent : colors.surface,
-        color: colors.selectedText,
+        width: 38,
+        height: 38,
+        borderRadius: 9,
+        border: selected ? `2px solid ${colors.accent}` : `2px solid ${hovered ? colors.accent : colors.border}`,
+        background: selected ? colors.accent : hovered ? colors.accentSoft : colors.surfaceAlt,
+        color: selected ? colors.selectedText : colors.accent,
         cursor: "pointer",
-        fontSize: 14,
-        lineHeight: "20px",
+        fontSize: 21,
+        lineHeight: "34px",
         fontWeight: 800,
         flexShrink: 0,
-        marginTop: 6,
         padding: 0,
+        boxShadow: hovered ? `0 0 0 3px ${colors.accentSoft}` : "none",
+        transition: "background 120ms ease, border 120ms ease, box-shadow 120ms ease, transform 120ms ease",
+        transform: hovered ? "translateY(-1px)" : "none",
       }}
     >
       {selected ? "✓" : ""}
@@ -633,15 +584,76 @@ function DeleteSaveButton({ onDelete, colors }: { onDelete: () => void; colors: 
   );
 }
 
+function SelectBelowButton({ onSelect, colors }: { onSelect: () => void; colors: DashboardColors }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <button
+      type="button"
+      title="Select this save and every save below it"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelect();
+      }}
+      style={{
+        width: 38,
+        border: `1px solid ${hovered ? colors.accent : colors.border}`,
+        borderRadius: 7,
+        background: hovered ? colors.accentSoft : colors.surface,
+        color: hovered ? colors.accent : colors.muted,
+        padding: "4px 2px",
+        cursor: "pointer",
+        fontSize: 10,
+        lineHeight: 1.15,
+        fontWeight: 800,
+      }}
+    >
+      Select below
+    </button>
+  );
+}
+
 function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
+  const [hovered, setHovered] = useState(false);
+  const linkStyle: React.CSSProperties = {
+    background: "none",
+    border: "none",
+    color: colors.text,
+    cursor: "pointer",
+    display: "block",
+    font: "inherit",
+    fontSize: typography.source,
+    fontWeight: 650,
+    lineHeight: 1.6,
+    margin: 0,
+    padding: 0,
+    textAlign: "left",
+    textDecoration: hovered ? "underline" : "none",
+    textDecorationColor: colors.accent,
+    textUnderlineOffset: 4,
+  };
+
   if (capture.imageData) {
     return (
-      <img
-        src={capture.imageData}
-        alt="screenshot"
-        onClick={(event) => openCaptureFromClick(event, capture.id)}
-        style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 6, marginBottom: 4, display: "block", cursor: "pointer" }}
-      />
+      <>
+        <button
+          type="button"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onClick={(event) => openCaptureFromClick(event, capture.id)}
+          style={{ ...linkStyle, fontSize: typography.link, marginBottom: 8, color: colors.accent, fontWeight: 800 }}
+        >
+          Open screenshot save
+        </button>
+        <img
+          src={capture.imageData}
+          alt="screenshot"
+          style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 6, marginBottom: 4, display: "block" }}
+        />
+      </>
     );
   }
 
@@ -650,19 +662,25 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
 
   return (
     <>
-      <p
+      <button
+        type="button"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         onClick={(event) => openCaptureFromClick(event, capture.id)}
-        style={{ fontSize: typography.source, fontWeight: 650, color: colors.text, lineHeight: 1.6, margin: 0, cursor: "pointer" }}
+        style={linkStyle}
       >
         {text}
-      </p>
+      </button>
       {isLong && (
-        <p
+        <button
+          type="button"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ fontSize: typography.link, color: colors.accent, margin: "7px 0 0", fontWeight: 700, cursor: "pointer", width: "fit-content" }}
+          style={{ ...linkStyle, fontSize: typography.link, color: colors.accent, marginTop: 7, width: "fit-content", fontWeight: 800 }}
         >
           Open full save
-        </p>
+        </button>
       )}
     </>
   );
@@ -670,8 +688,6 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
 
 function SavesView({
   captures,
-  starredCaptureIds,
-  onToggleStar,
   onDeleteCaptures,
   onRetryCapture,
   headerAction,
@@ -679,8 +695,6 @@ function SavesView({
   cardFontSize,
 }: {
   captures: Capture[];
-  starredCaptureIds: Set<string>;
-  onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
   headerAction?: React.ReactNode;
@@ -716,6 +730,12 @@ function SavesView({
     });
   }
 
+  function selectFrom(id: string) {
+    const start = captures.findIndex((capture) => capture.id === id);
+    if (start === -1) return;
+    setSelectedIds((current) => new Set([...current, ...captures.slice(start).map((capture) => capture.id)]));
+  }
+
   function deleteSelected() {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
@@ -749,6 +769,10 @@ function SavesView({
             padding: "10px 12px",
             marginBottom: 22,
             background: colors.surface,
+            boxShadow: "0 8px 22px rgba(15,15,15,0.10)",
+            position: "sticky",
+            top: 12,
+            zIndex: 10,
           }}
         >
           <span style={{ fontSize: 13, color: colors.text, fontWeight: 700 }}>
@@ -784,24 +808,17 @@ function SavesView({
             {group.items.map((c) => (
               <div
                 key={c.id}
-                role="button"
-                tabIndex={0}
-                onClick={(event) => openCaptureFromClick(event, c.id)}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  openChat(c.id);
-                }}
-                style={{ padding: "18px 0 28px", maxWidth: "100%", cursor: "pointer", outline: "none" }}
+                style={{ padding: "18px 0 28px", maxWidth: "100%" }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} colors={colors} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "center", paddingTop: 3, flexShrink: 0 }}>
+                    <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} colors={colors} />
+                    <SelectBelowButton onSelect={() => selectFrom(c.id)} colors={colors} />
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <CapturePreview capture={c} colors={colors} typography={typography} />
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                    <FlashcardStarButton capture={c} starred={starredCaptureIds.has(c.id)} onToggle={onToggleStar} colors={colors} />
                     <DeleteSaveButton onDelete={() => onDeleteCaptures([c.id])} colors={colors} />
                   </div>
                 </div>
@@ -846,8 +863,6 @@ function SavesView({
 
 function HistoryView({
   captures,
-  starredCaptureIds,
-  onToggleStar,
   onDeleteCaptures,
   onRetryCapture,
   colors,
@@ -856,8 +871,6 @@ function HistoryView({
   cardFontSize,
 }: {
   captures: Capture[];
-  starredCaptureIds: Set<string>;
-  onToggleStar: (id: string) => void;
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
   colors: DashboardColors;
@@ -950,8 +963,6 @@ function HistoryView({
         {selectedCaptures.length > 0 ? (
           <SavesView
             captures={selectedCaptures}
-            starredCaptureIds={starredCaptureIds}
-            onToggleStar={onToggleStar}
             onDeleteCaptures={onDeleteCaptures}
             onRetryCapture={onRetryCapture}
             colors={colors}
@@ -989,41 +1000,34 @@ function HistoryView({
 }
 
 interface WordEntry {
+  id: string;
   word: string;
   count: number;
   explanation: string;
   exampleText: string;
-  starred: boolean;
+  captureIds: string[];
 }
 
-function buildFlashcardList(
-  captures: Capture[],
-  threshold = DEFAULT_FLASHCARD_THRESHOLD,
-  starredCaptureIds = new Set<string>(),
-  monthKey: string | null = currentMonthKey(),
-): WordEntry[] {
-  const map = new Map<string, { count: number; word: string; explanation: string; exampleText: string; starred: boolean }>();
+function flashcardPrompt(capture: Capture) {
+  return capture.context?.trim() || capture.text.slice(0, 120).trim();
+}
+
+function buildFlashcardList(captures: Capture[]): WordEntry[] {
+  const map = new Map<string, WordEntry>();
   for (const c of captures) {
-    const isStarred = starredCaptureIds.has(c.id);
-    const isInScope = monthKey === null || monthKeyFromDate(new Date(c.savedAt)) === monthKey;
-    if (!isInScope && !isStarred) continue;
-
-    const question = c.context?.trim();
-    if (!question && !isStarred) continue;
-
-    const word = question || c.text.slice(0, 120).trim();
+    const word = flashcardPrompt(c);
+    if (!word) continue;
     const key = normalizeQuestion(word);
     if (!map.has(key)) {
-      map.set(key, { count: 0, word, explanation: c.explanation ?? "", exampleText: c.text, starred: false });
+      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.text, captureIds: [] });
     }
     const entry = map.get(key)!;
     entry.count++;
+    entry.captureIds.push(c.id);
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
-    if (isStarred) entry.starred = true;
   }
   return Array.from(map.values())
-    .filter((entry) => entry.starred || entry.count >= threshold)
-    .sort((a, b) => Number(b.starred) - Number(a.starred) || b.count - a.count || a.word.localeCompare(b.word));
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
 }
 
 function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors }) {
@@ -1096,196 +1100,238 @@ function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose
   );
 }
 
-function WordsView({ captures, flashcardThreshold, starredCaptureIds, colors }: { captures: Capture[]; flashcardThreshold: number; starredCaptureIds: Set<string>; colors: DashboardColors }) {
-  const [flashcard, setFlashcard] = useState(false);
-  const [showExport, setShowExport] = useState(false);
-  const [exportRange, setExportRange] = useState<FlashcardExportRange>("yesterday");
-  const [customStartKey, setCustomStartKey] = useState(() => dayKeyFromDate(addDaysToDate(startOfLocalDay(new Date()), -29)));
-  const [customEndKey, setCustomEndKey] = useState(() => todayKey());
-  const words = buildFlashcardList(captures, flashcardThreshold, starredCaptureIds);
-  const exportWords = buildFlashcardList(
-    capturesForExportRange(captures, exportRange, customStartKey, customEndKey),
-    flashcardThreshold,
-    starredCaptureIds,
-    null,
-  );
-  const exportRangeLabel = FLASHCARD_EXPORT_RANGES.find((range) => range.value === exportRange)?.label ?? "Selected range";
-  const exportSummary = exportRange === "custom" ? `${customStartKey} to ${customEndKey}` : exportRangeLabel.toLowerCase();
+type FlashcardSource =
+  | { kind: "range"; range: FlashcardRange }
+  | { kind: "days" }
+  | { kind: "set"; setId: string };
 
-  if (flashcard) return <FlashcardView words={words} onClose={() => setFlashcard(false)} colors={colors} />;
+function uniqueCaptureIds(captures: Capture[]) {
+  return Array.from(new Set(captures.map((capture) => capture.id)));
+}
+
+function normalizeFlashcardSets(value: unknown): FlashcardSet[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const captureIds = Array.isArray(raw.captureIds) ? raw.captureIds.filter((id): id is string => typeof id === "string") : [];
+    if (typeof raw.id !== "string" || typeof raw.name !== "string" || captureIds.length === 0) return [];
+    const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
+    const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
+    return [{ id: raw.id, name: raw.name.trim() || "Flashcard set", captureIds, createdAt, updatedAt }];
+  });
+}
+
+function WordsView({ captures, colors, theme, accentColor }: { captures: Capture[]; colors: DashboardColors; theme: ThemeName; accentColor: string }) {
+  const [studyWords, setStudyWords] = useState<WordEntry[] | null>(null);
+  const [showExport, setShowExport] = useState(false);
+  const [source, setSource] = useState<FlashcardSource>({ kind: "range", range: "pastDay" });
+  const [selectedDays, setSelectedDays] = useState<Set<string>>(() => new Set([todayKey()]));
+  const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
+  const [sets, setSets] = useState<FlashcardSet[]>([]);
+  const [newSetName, setNewSetName] = useState("");
+  const [subsetIds, setSubsetIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    chrome.storage.local.get("flashcard_sets", (result) => setSets(normalizeFlashcardSets(result.flashcard_sets)));
+  }, []);
+
+  const setById = new Map(sets.map((set) => [set.id, set]));
+  const activeSet = source.kind === "set" ? setById.get(source.setId) : undefined;
+  const captureById = new Map(captures.map((capture) => [capture.id, capture]));
+  const sourceCaptures = source.kind === "range"
+    ? capturesForFlashcardRange(captures, source.range)
+    : source.kind === "days"
+      ? capturesForDays(captures, selectedDays)
+      : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
+  const words = buildFlashcardList(sourceCaptures);
+  const subsetWords = words.filter((word) => subsetIds.has(word.id));
+  const sourceLabel = source.kind === "range"
+    ? FLASHCARD_RANGES.find((range) => range.value === source.range)?.label ?? "Date range"
+    : source.kind === "days"
+      ? `${selectedDays.size} picked ${selectedDays.size === 1 ? "day" : "days"}`
+      : activeSet?.name ?? "Saved set";
+
+  useEffect(() => {
+    if (source.kind !== "set") return;
+    setSubsetIds(new Set(words.map((word) => word.id)));
+  }, [source.kind, source.kind === "set" ? source.setId : "", words.map((word) => word.id).join("|")]);
+
+  function storeSets(next: FlashcardSet[]) {
+    setSets(next);
+    chrome.storage.local.set({ flashcard_sets: next });
+  }
+
+  function toggleDay(key: string) {
+    setSelectedDays((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    setSource({ kind: "days" });
+  }
+
+  function createSet() {
+    const name = newSetName.trim();
+    const captureIds = uniqueCaptureIds(sourceCaptures);
+    if (!name || captureIds.length === 0) return;
+    const now = new Date().toISOString();
+    const nextSet: FlashcardSet = { id: crypto.randomUUID(), name, captureIds, createdAt: now, updatedAt: now };
+    storeSets([nextSet, ...sets]);
+    setNewSetName("");
+    setSource({ kind: "set", setId: nextSet.id });
+  }
+
+  function deleteSet(id: string) {
+    storeSets(sets.filter((set) => set.id !== id));
+    if (source.kind === "set" && source.setId === id) setSource({ kind: "range", range: "pastDay" });
+  }
+
+  function exportButtons(exportWords: WordEntry[], label: string) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{label}</span>
+        <button
+          type="button"
+          disabled={exportWords.length === 0}
+          onClick={() => exportFlashcards("anki", exportWords)}
+          style={{ background: exportWords.length ? colors.accent : colors.border, color: exportWords.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 800, cursor: exportWords.length ? "pointer" : "default" }}
+        >
+          Anki
+        </button>
+        <button
+          type="button"
+          disabled={exportWords.length === 0}
+          onClick={() => exportFlashcards("quizlet", exportWords)}
+          style={{ background: colors.surface, color: exportWords.length ? colors.text : colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 800, cursor: exportWords.length ? "pointer" : "default" }}
+        >
+          Quizlet
+        </button>
+      </div>
+    );
+  }
+
+  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} />;
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
           <p style={{ fontSize: 13, color: colors.muted, margin: 0 }}>
-            {words.length} ready this month
+            {words.length} {words.length === 1 ? "card" : "cards"} from {sourceLabel}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            type="button"
-            onClick={() => setShowExport((open) => !open)}
-            style={{
-              background: showExport ? colors.accent : colors.surface,
-              color: showExport ? colors.selectedText : colors.text,
-              border: `1px solid ${showExport ? colors.accent : colors.border}`,
-              borderRadius: 6,
-              padding: "7px 16px",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
+          <button type="button" onClick={() => setShowExport((open) => !open)} style={{ background: showExport ? colors.accent : colors.surface, color: showExport ? colors.selectedText : colors.text, border: `1px solid ${showExport ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             Export
           </button>
-          <button
-            disabled={words.length === 0}
-            onClick={() => setFlashcard(true)}
-            style={{
-              background: words.length === 0 ? colors.border : colors.accent,
-              color: words.length === 0 ? colors.muted : colors.selectedText,
-              border: "none",
-              borderRadius: 6,
-              padding: "7px 16px",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: words.length === 0 ? "default" : "pointer",
-            }}
-          >
+          <button type="button" disabled={words.length === 0} onClick={() => setStudyWords(words)} style={{ background: words.length ? colors.accent : colors.border, color: words.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: words.length ? "pointer" : "default" }}>
             Study
           </button>
         </div>
       </div>
 
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+        {FLASHCARD_RANGES.map((range) => {
+          const selected = source.kind === "range" && source.range === range.value;
+          return (
+            <button key={range.value} type="button" onClick={() => setSource({ kind: "range", range: range.value })} style={{ background: selected ? colors.accent : colors.surface, color: selected ? colors.selectedText : colors.text, border: `1px solid ${selected ? colors.accent : colors.border}`, borderRadius: 999, padding: "7px 12px", fontSize: 13, fontWeight: 750, cursor: "pointer" }}>
+              {range.label}
+            </button>
+          );
+        })}
+      </div>
+
       {showExport && (
-        <div
-          style={{
-            border: `1px solid ${colors.border}`,
-            background: colors.surface,
-            borderRadius: 8,
-            padding: 16,
-            marginBottom: 26,
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 14,
-          }}
-        >
-          <div>
-            <p style={{ fontSize: 13, color: colors.muted, margin: "0 0 8px" }}>Export flashcards</p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {FLASHCARD_EXPORT_RANGES.map((range) => (
-                <button
-                  key={range.value}
-                  type="button"
-                  onClick={() => setExportRange(range.value)}
-                  style={{
-                    background: exportRange === range.value ? colors.accent : colors.surface,
-                    color: exportRange === range.value ? colors.selectedText : colors.text,
-                    border: `1px solid ${exportRange === range.value ? colors.accent : colors.border}`,
-                    borderRadius: 999,
-                    padding: "6px 11px",
-                    fontSize: 13,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                  }}
-                >
-                  {range.label}
-                </button>
-              ))}
-            </div>
-            {exportRange === "custom" && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.muted, fontWeight: 700 }}>
-                  From
-                  <input
-                    type="date"
-                    value={customStartKey}
-                    max={customEndKey}
-                    onChange={(event) => setCustomStartKey(event.target.value)}
-                    style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 13, color: colors.text, background: colors.surface }}
-                  />
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.muted, fontWeight: 700 }}>
-                  To
-                  <input
-                    type="date"
-                    value={customEndKey}
-                    min={customStartKey}
-                    max={todayKey()}
-                    onChange={(event) => setCustomEndKey(event.target.value)}
-                    style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 13, color: colors.text, background: colors.surface }}
-                  />
-                </label>
+        <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 22, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
+            Export {words.length} {words.length === 1 ? "flashcard" : "flashcards"} from {sourceLabel}.
+          </p>
+          {exportButtons(words, "Current selection")}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(320px, 1fr)", gap: 24, alignItems: "start", marginBottom: 28 }}>
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
+          <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Pick days</p>
+          <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
+            Click dates to study or export only those saves.
+          </p>
+          <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
+        </div>
+
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
+          <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Save this selection as a set</p>
+          <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 12px" }}>
+            Sets keep the cards from the active range, calendar days, or saved set.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input value={newSetName} onChange={(event) => setNewSetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createSet(); }} placeholder="Set name" style={{ minWidth: 210, flex: "1 1 210px", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "9px 10px", fontSize: 14, outline: "none" }} />
+            <button type="button" disabled={!newSetName.trim() || sourceCaptures.length === 0} onClick={createSet} style={{ background: newSetName.trim() && sourceCaptures.length ? colors.accent : colors.border, color: newSetName.trim() && sourceCaptures.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 8, padding: "9px 13px", fontSize: 13, fontWeight: 800, cursor: newSetName.trim() && sourceCaptures.length ? "pointer" : "default" }}>
+              Save set
+            </button>
+          </div>
+          <div style={{ marginTop: 18 }}>
+            <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 9px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Sets</p>
+            {sets.length === 0 ? (
+              <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No saved sets yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {sets.map((set) => {
+                  const selected = source.kind === "set" && source.setId === set.id;
+                  const count = set.captureIds.filter((id) => captureById.has(id)).length;
+                  return (
+                    <div key={set.id} style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
+                      <button type="button" onClick={() => setSource({ kind: "set", setId: set.id })} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
+                        <span style={{ display: "block", fontSize: 13, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
+                        <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>{count} saved {count === 1 ? "card" : "cards"}</span>
+                      </button>
+                      <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>×</button>
+                    </div>
+                  );
+                })}
               </div>
             )}
-            <p style={{ fontSize: 12, color: colors.muted, margin: "10px 0 0" }}>
-              {exportWords.length} {exportWords.length === 1 ? "flashcard" : "flashcards"} ready from {exportSummary}.
-            </p>
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              disabled={exportWords.length === 0}
-              onClick={() => exportFlashcards("anki", exportWords)}
-              style={{
-                background: exportWords.length === 0 ? colors.border : colors.accent,
-                color: exportWords.length === 0 ? colors.muted : colors.selectedText,
-                border: "none",
-                borderRadius: 8,
-                padding: "9px 14px",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: exportWords.length === 0 ? "default" : "pointer",
-              }}
-            >
-              Export to Anki
-            </button>
-            <button
-              type="button"
-              disabled={exportWords.length === 0}
-              onClick={() => exportFlashcards("quizlet", exportWords)}
-              style={{
-                background: colors.surface,
-                color: exportWords.length === 0 ? colors.muted : colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 8,
-                padding: "9px 14px",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: exportWords.length === 0 ? "default" : "pointer",
-              }}
-            >
-              Export to Quizlet
-            </button>
+        </div>
+      </div>
+
+      {activeSet && words.length > 0 && (
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 16, marginBottom: 24, background: colors.surface }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 850, color: colors.text, margin: "0 0 3px" }}>Subset from {activeSet.name}</p>
+              <p style={{ fontSize: 12, color: colors.muted, margin: 0 }}>Choose which cards from this set to export.</p>
+            </div>
+            {exportButtons(subsetWords, `${subsetWords.length} selected`)}
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {words.map((word) => (
+              <label key={word.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 8px", borderRadius: 7, background: subsetIds.has(word.id) ? colors.accentSoft : colors.surfaceAlt, cursor: "pointer" }}>
+                <input type="checkbox" checked={subsetIds.has(word.id)} onChange={(event) => setSubsetIds((current) => { const next = new Set(current); if (event.target.checked) next.add(word.id); else next.delete(word.id); return next; })} style={{ accentColor: colors.accent, width: 17, height: 17, marginTop: 2 }} />
+                <span style={{ color: colors.text, fontSize: 13, lineHeight: 1.5 }}>{word.word}</span>
+              </label>
+            ))}
           </div>
         </div>
       )}
 
       {words.length === 0 ? (
         <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No flashcards yet. Ask about the same question {flashcardThreshold} times this month or star a save to add it here.
+          No saved cards in {sourceLabel}. Pick another range or click days in the calendar.
         </p>
       ) : (
         <div>
-          {words.map((w) => (
-            <div key={w.word} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
+          {words.map((word) => (
+            <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
               <div>
-                <p style={{ fontSize: 16, fontWeight: 500, color: colors.text, margin: 0 }}>{w.word}</p>
-                {w.starred && (
-                  <p style={{ fontSize: 12, color: colors.muted, margin: "3px 0 0", fontWeight: 700 }}>
-                    Starred
-                  </p>
-                )}
-                {w.explanation && (
-                  <div style={{ fontSize: 14, color: colors.softText, margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(w.explanation)}</div>
-                )}
+                <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>{word.word}</p>
+                {word.explanation && <div style={{ fontSize: 14, color: colors.softText, margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(word.explanation)}</div>}
               </div>
               <span style={{ fontSize: 12, color: colors.muted, background: colors.subtle, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
-                ×{w.count}
+                ×{word.count}
               </span>
             </div>
           ))}
@@ -1304,8 +1350,6 @@ function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[]) {
 }
 
 function SettingsView({
-  flashcardThreshold,
-  onFlashcardThresholdChange,
   account,
   onAccountChange,
   appMode,
@@ -1317,8 +1361,6 @@ function SettingsView({
   theme,
   colors,
 }: {
-  flashcardThreshold: number;
-  onFlashcardThresholdChange: (value: number) => void;
   account: ContextLensUser | null;
   onAccountChange: (account: ContextLensUser | null) => void;
   appMode: AppMode;
@@ -1773,7 +1815,7 @@ function SettingsView({
           { field: "contextMenu" as const, label: "Add to right-click menu", desc: "\"Save to ContextLens\" appears in the right-click context menu." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
-            <input type="checkbox" checked={triggers[opt.field]} onChange={(e) => handleTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
+            <input type="checkbox" checked={triggers[opt.field]} onChange={(e) => handleTriggerChange(opt.field, e.target.checked)} style={{ accentColor: colors.accent, marginTop: 3 }} />
             <div>
               <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>{opt.label}</p>
               <p style={{ fontSize: 12, color: colors.muted, margin: "2px 0 0" }}>{opt.desc}</p>
@@ -1789,7 +1831,7 @@ function SettingsView({
           type="checkbox"
           checked={screenshotTriggers.immediate}
           onChange={(e) => handleScreenshotTriggerChange("immediate", e.target.checked)}
-          style={{ marginTop: 3 }}
+          style={{ accentColor: colors.accent, marginTop: 3 }}
         />
         <div>
           <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>Show answer immediately</p>
@@ -1828,37 +1870,6 @@ function SettingsView({
         </p>
       </label>
 
-      {/* Flashcards */}
-      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Flashcards</p>
-      <div style={{ marginBottom: 40 }}>
-        <label style={{ display: "block", marginBottom: 18 }}>
-          <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Question repeat threshold</p>
-          <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px" }}>
-            A question appears in Flashcards after this many saves in the current month, unless it is starred.
-          </p>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={flashcardThreshold}
-            onChange={(event) => {
-              const next = Math.max(1, Math.min(50, Number(event.target.value) || DEFAULT_FLASHCARD_THRESHOLD));
-              onFlashcardThresholdChange(next);
-            }}
-            style={{
-              width: 92,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              padding: "8px 10px",
-              fontSize: 14,
-              color: colors.text,
-              background: colors.surface,
-            }}
-          />
-        </label>
-
-      </div>
-
       {/* Screenshot triggers */}
       <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Screenshot trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1867,7 +1878,7 @@ function SettingsView({
           { field: "shortcut" as const, label: "Keyboard shortcut", desc: "Set your shortcut at chrome://extensions/shortcuts." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
-            <input type="checkbox" checked={screenshotTriggers[opt.field]} onChange={(e) => handleScreenshotTriggerChange(opt.field, e.target.checked)} style={{ marginTop: 3 }} />
+            <input type="checkbox" checked={screenshotTriggers[opt.field]} onChange={(e) => handleScreenshotTriggerChange(opt.field, e.target.checked)} style={{ accentColor: colors.accent, marginTop: 3 }} />
             <div>
               <p style={{ fontSize: 14, color: colors.text, margin: 0 }}>{opt.label}</p>
               <p style={{ fontSize: 12, color: colors.muted, margin: "2px 0 0" }}>{opt.desc}</p>
@@ -2142,12 +2153,82 @@ function MonthCalendar({
   );
 }
 
+function FlashcardDayCalendar({
+  captures,
+  selectedDays,
+  visibleMonth,
+  onVisibleMonthChange,
+  onToggleDay,
+  colors,
+  theme,
+  accentColor,
+}: {
+  captures: Capture[];
+  selectedDays: Set<string>;
+  visibleMonth: string;
+  onVisibleMonthChange: (month: string) => void;
+  onToggleDay: (day: string) => void;
+  colors: DashboardColors;
+  theme: ThemeName;
+  accentColor: string;
+}) {
+  const counts = captureCountsByDay(captures);
+  const days = calendarDayKeys(visibleMonth);
+  const previousMonth = addMonths(visibleMonth, -1);
+  const nextMonth = addMonths(visibleMonth, 1);
+  const canGoNext = nextMonth <= currentMonthKey();
+
+  return (
+    <div style={{ width: 300, maxWidth: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 13 }}>
+        <button type="button" onClick={() => onVisibleMonthChange(previousMonth)} aria-label="Previous flashcard month" style={{ width: 28, height: 28, borderRadius: 999, border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text, cursor: "pointer", fontSize: 16 }}>‹</button>
+        <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 800 }}>{monthLabelFromKey(visibleMonth)}</p>
+        <button type="button" onClick={() => canGoNext && onVisibleMonthChange(nextMonth)} disabled={!canGoNext} aria-label="Next flashcard month" style={{ width: 28, height: 28, borderRadius: 999, border: `1px solid ${colors.border}`, background: canGoNext ? colors.surface : colors.surfaceAlt, color: canGoNext ? colors.text : colors.muted, cursor: canGoNext ? "pointer" : "default", fontSize: 16 }}>›</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, marginBottom: 8 }}>
+        {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={`${label}-${index}`} style={{ fontSize: 11, color: colors.muted, fontWeight: 800, textAlign: "center" }}>{label}</span>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, width: "fit-content" }}>
+        {days.map((key, index) => {
+          if (!key) return <span key={`blank-${index}`} style={{ width: 34, height: 34 }} />;
+          const date = dateFromDayKey(key);
+          const count = counts.get(key) ?? 0;
+          const selected = selectedDays.has(key);
+          const future = key > todayKey();
+          return (
+            <button
+              key={key}
+              type="button"
+              title={`${dayLabelFromKey(key)}: ${count} ${count === 1 ? "save" : "saves"}`}
+              disabled={future}
+              onClick={() => !future && onToggleDay(key)}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                border: selected ? `2px solid ${colors.accent}` : `1px solid ${count ? colorWithAlpha(accentColor, theme === "dark" ? 0.44 : 0.30) : colors.border}`,
+                background: selected ? colors.accent : count ? colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.12) : colors.surfaceAlt,
+                boxShadow: selected ? `0 0 0 2px ${colors.accentSoft}` : "none",
+                color: selected ? colors.selectedText : future ? colors.muted : colors.text,
+                cursor: future ? "default" : "pointer",
+                fontSize: 12,
+                fontWeight: selected ? 850 : 650,
+                padding: 0,
+              }}
+            >
+              {date.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState<View>(() => viewFromHash());
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
-  const [flashcardThreshold, setFlashcardThreshold] = useState(DEFAULT_FLASHCARD_THRESHOLD);
-  const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(new Set());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
   const [theme, setThemeState] = useState<ThemeName>("light");
@@ -2155,7 +2236,7 @@ export default function App() {
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "flashcard_threshold", "flashcard_starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
+    chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
       const storedCaptures: Capture[] = r.captures ?? [];
       const normalizedCaptures = storedCaptures.map((capture) => (
         capture.status === "error" && hasRawBackendError(capture.errorMessage)
@@ -2166,8 +2247,6 @@ export default function App() {
       if (normalizedCaptures.some((capture, index) => capture.errorMessage !== storedCaptures[index]?.errorMessage)) {
         chrome.storage.local.set({ captures: normalizedCaptures });
       }
-      setFlashcardThreshold(r.flashcard_threshold ?? DEFAULT_FLASHCARD_THRESHOLD);
-      setStarredCaptureIds(new Set(r.flashcard_starred_capture_ids ?? []));
       setAccount(r.contextlens_user ?? null);
       setAppMode(r.app_mode ?? "language_learning");
       setCardFontSizeState(isCardFontSize(r.card_font_size) ? r.card_font_size : DEFAULT_CARD_FONT_SIZE);
@@ -2180,8 +2259,6 @@ export default function App() {
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
-      if (changes.flashcard_threshold) setFlashcardThreshold(changes.flashcard_threshold.newValue ?? DEFAULT_FLASHCARD_THRESHOLD);
-      if (changes.flashcard_starred_capture_ids) setStarredCaptureIds(new Set(changes.flashcard_starred_capture_ids.newValue ?? []));
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
       if (changes.app_mode) setAppMode(changes.app_mode.newValue ?? "language_learning");
       if (changes.card_font_size) setCardFontSizeState(isCardFontSize(changes.card_font_size.newValue) ? changes.card_font_size.newValue : DEFAULT_CARD_FONT_SIZE);
@@ -2256,21 +2333,6 @@ export default function App() {
   const contentPadding = view === "history" ? "32px 48px 32px 96px" : "32px";
   const colors = colorsForTheme(theme, accentColor);
 
-  function updateFlashcardThreshold(value: number) {
-    setFlashcardThreshold(value);
-    chrome.storage.local.set({ flashcard_threshold: value });
-  }
-
-  function toggleFlashcardStar(id: string) {
-    setStarredCaptureIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      chrome.storage.local.set({ flashcard_starred_capture_ids: Array.from(next) });
-      return next;
-    });
-  }
-
   function deleteCapturesByIds(ids: string[]) {
     const idsToDelete = new Set(ids);
     if (idsToDelete.size === 0) return;
@@ -2281,16 +2343,16 @@ export default function App() {
       return next;
     });
 
-    setStarredCaptureIds((current) => {
-      const next = new Set(current);
-      idsToDelete.forEach((id) => next.delete(id));
-      chrome.storage.local.set({ flashcard_starred_capture_ids: Array.from(next) });
-      return next;
-    });
-
     chrome.storage.local.get("deep_dive_capture_ids", (result) => {
       const next = (result.deep_dive_capture_ids ?? []).filter((id: string) => !idsToDelete.has(id));
       chrome.storage.local.set({ deep_dive_capture_ids: next });
+    });
+
+    chrome.storage.local.get("flashcard_sets", (result) => {
+      const next = normalizeFlashcardSets(result.flashcard_sets)
+        .map((set) => ({ ...set, captureIds: set.captureIds.filter((id) => !idsToDelete.has(id)) }))
+        .filter((set) => set.captureIds.length > 0);
+      chrome.storage.local.set({ flashcard_sets: next });
     });
 
     void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {
@@ -2402,8 +2464,6 @@ export default function App() {
         {view === "saves" && (
           <SavesView
             captures={todayCaptures}
-            starredCaptureIds={starredCaptureIds}
-            onToggleStar={toggleFlashcardStar}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
             headerAction={
@@ -2434,8 +2494,6 @@ export default function App() {
         {view === "history" && (
           <HistoryView
             captures={captures}
-            starredCaptureIds={starredCaptureIds}
-            onToggleStar={toggleFlashcardStar}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
             colors={colors}
@@ -2444,11 +2502,9 @@ export default function App() {
             cardFontSize={cardFontSize}
           />
         )}
-        {view === "words" && <WordsView captures={captures} flashcardThreshold={flashcardThreshold} starredCaptureIds={starredCaptureIds} colors={colors} />}
+        {view === "words" && <WordsView captures={captures} colors={colors} theme={theme} accentColor={accentColor} />}
         {view === "settings" && (
           <SettingsView
-            flashcardThreshold={flashcardThreshold}
-            onFlashcardThresholdChange={updateFlashcardThreshold}
             account={account}
             onAccountChange={setAccount}
             appMode={appMode}

@@ -67,10 +67,16 @@ function ensureBaseStyles() {
     }
     .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
     .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.4)); }
+    .cl-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148,163,184,0.55) transparent;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
     .cl-scroll::-webkit-scrollbar              { width: 3px; }
     .cl-scroll::-webkit-scrollbar-track        { background: transparent; }
-    .cl-scroll::-webkit-scrollbar-thumb        { background: rgba(255,255,255,0.18); border-radius: 2px; }
-    .cl-scroll::-webkit-scrollbar-thumb:hover  { background: rgba(255,255,255,0.32); }
+    .cl-scroll::-webkit-scrollbar-thumb        { background: rgba(148,163,184,0.55); border-radius: 2px; }
+    .cl-scroll::-webkit-scrollbar-thumb:hover  { background: rgba(148,163,184,0.72); }
   `;
   document.head.appendChild(style);
 }
@@ -209,6 +215,10 @@ function panelTopFor(preferredTop: number, maxHeight: number) {
   return Math.max(minTop, Math.min(preferredTop, maxTop));
 }
 
+function expandedPanelMaxHeight(limit = 560) {
+  return Math.max(96, Math.min(limit, viewportHeight() - 24));
+}
+
 function viewportWidth() {
   return Math.max(1, Math.floor(window.visualViewport?.width ?? window.innerWidth));
 }
@@ -231,13 +241,23 @@ function panelWidthFor(maxWidth = 560, minWidth = 220) {
 
 function trapScroll(element: HTMLElement) {
   element.addEventListener("wheel", (event) => {
-    const canScroll = element.scrollHeight > element.clientHeight;
-    const atTop = element.scrollTop <= 0;
-    const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+    if (event.ctrlKey) return;
 
-    if (!canScroll || (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) {
-      event.preventDefault();
+    const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    if (maxTop <= 0) return;
+
+    const deltaY = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? event.deltaY * 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? event.deltaY * element.clientHeight
+        : event.deltaY;
+
+    const nextTop = Math.max(0, Math.min(maxTop, element.scrollTop + deltaY));
+    if (nextTop !== element.scrollTop) {
+      element.scrollTop = nextTop;
     }
+
+    event.preventDefault();
     event.stopPropagation();
   }, { passive: false });
 }
@@ -250,6 +270,34 @@ function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
 }
 
 const TERM_DEF_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
+const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
+const ARABIC_RUN_RE = new RegExp(
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}\\s\\u200c\\u200d.,;:!?'"()[\\]{}\\-–—،؛؟]*[${ARABIC_CHAR}])?)`,
+  "gu",
+);
+
+function appendBidiText(container: HTMLElement, text: string) {
+  let start = 0;
+
+  for (const match of text.matchAll(ARABIC_RUN_RE)) {
+    const index = match.index ?? 0;
+    if (index > start) {
+      container.appendChild(document.createTextNode(text.slice(start, index)));
+    }
+
+    const arabic = document.createElement("bdi");
+    arabic.dir = "rtl";
+    arabic.lang = "ar";
+    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;";
+    arabic.textContent = match[0];
+    container.appendChild(arabic);
+    start = index + match[0].length;
+  }
+
+  if (start < text.length) {
+    container.appendChild(document.createTextNode(text.slice(start)));
+  }
+}
 
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
@@ -272,10 +320,10 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
       const termRow = document.createElement("div");
       termRow.style.cssText = "margin:2px 0;font-size:inherit;line-height:1.65;";
       const strong = document.createElement("strong");
-      strong.textContent = term;
       strong.style.fontWeight = "700";
+      appendBidiText(strong, term);
       termRow.appendChild(strong);
-      termRow.appendChild(document.createTextNode(` — ${definition}`));
+      appendBidiText(termRow, ` — ${definition}`);
       hardWordsDiv.appendChild(termRow);
     } else {
       if (lastWasInline) container.appendChild(document.createElement("br"));
@@ -285,12 +333,12 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
         if (!part) return;
         if (partIndex % 2 === 1) {
           const strong = document.createElement("strong");
-          strong.textContent = part;
           strong.style.fontWeight = "800";
           strong.style.color = "inherit";
+          appendBidiText(strong, part);
           container.appendChild(strong);
         } else {
-          container.appendChild(document.createTextNode(part));
+          appendBidiText(container, part);
         }
       });
     }
@@ -496,6 +544,7 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
 function showContextInput(x: number, y: number, selectedText: string) {
   removeWidget();
   widgetMode = "input";
+  ensureBaseStyles();
   const colors = uiColors();
 
   let widgetWidth = panelWidthFor();
@@ -517,6 +566,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
     z-index: 2147483647;
     width: ${widgetWidth}px;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    direction: ltr;
+    text-align: left;
     overflow: hidden;
   `
   );
@@ -538,6 +589,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   );
 
   const input = document.createElement("textarea");
+  input.className = "cl-scroll";
   input.dir = "auto";
   input.rows = 1;
   input.placeholder = "Any specific part of the text you don't understand?";
@@ -565,7 +617,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   let submitted = false;
   let submitting = false;
-  let widgetHasContext = false;
   let hardWordsOpen = false;
   let analogyText = "";
   let analogyLoading = false;
@@ -573,9 +624,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
   function styleExpandedWidget() {
     if (!widget) return;
     const colors = uiColors();
-    const maxH = Math.min(560, viewportHeight() - 24);
+    const maxH = expandedPanelMaxHeight();
+    const heightForClamp = widgetHeight > 0 ? Math.min(widgetHeight, maxH) : maxH;
+    left = clampLeftToViewport(left, widgetWidth);
+    top = panelTopFor(top, heightForClamp);
     const heightCss = widgetHeight > 0
-      ? `height: ${widgetHeight}px; max-height: none;`
+      ? `height: ${heightForClamp}px; max-height: ${maxH}px;`
       : `max-height: ${maxH}px;`;
     widget.setAttribute(
       "style",
@@ -592,6 +646,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
       width: ${widgetWidth}px;
       ${heightCss}
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      direction: ltr;
+      text-align: left;
       overflow: hidden;
       box-sizing: border-box;
       padding: 8px 12px 12px;
@@ -605,7 +661,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!widget) return;
     widget.querySelectorAll("[data-cl-resize]").forEach(el => el.remove());
 
-    function makeHandle(cursor: string, edgeStyle: string, onResize: (dx: number, dy: number, sw: number, sh: number) => void) {
+    function makeHandle(cursor: string, edgeStyle: string, onResize: (dx: number, dy: number, sw: number, sh: number, sl: number, st: number) => void) {
       const handle = document.createElement("div");
       handle.setAttribute("data-cl-resize", "1");
       handle.setAttribute("style", `position:absolute;${edgeStyle}cursor:${cursor};z-index:2;`);
@@ -616,8 +672,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const sx = e.clientX, sy = e.clientY;
         const sw = widgetWidth;
         const sh = widgetHeight > 0 ? widgetHeight : (widget?.offsetHeight ?? 400);
+        const sl = left, st = top;
         const mv = (ev: MouseEvent) => {
-          onResize(ev.clientX - sx, ev.clientY - sy, sw, sh);
+          onResize(ev.clientX - sx, ev.clientY - sy, sw, sh, sl, st);
           styleExpandedWidget();
           addResizeHandles();
         };
@@ -631,18 +688,31 @@ function showContextInput(x: number, y: number, selectedText: string) {
       widget!.appendChild(handle);
     }
 
-    const minW = 240, maxW = Math.min(640, viewportWidth() - 16);
-    const minH = 180, maxH = Math.min(720, viewportHeight() - 16);
-    makeHandle("ew-resize", "top:0;right:0;width:6px;height:100%;", (dx, _dy, sw) => {
-      widgetWidth = Math.max(minW, Math.min(maxW, sw + dx));
-    });
-    makeHandle("ns-resize", "bottom:0;left:0;width:100%;height:6px;", (_dx, dy, _sw, sh) => {
-      widgetHeight = Math.max(minH, Math.min(maxH, sh + dy));
-    });
-    makeHandle("nwse-resize", "bottom:0;right:0;width:12px;height:12px;", (dx, dy, sw, sh) => {
-      widgetWidth = Math.max(minW, Math.min(maxW, sw + dx));
-      widgetHeight = Math.max(minH, Math.min(maxH, sh + dy));
-    });
+    const minW = 220, maxW = Math.min(640, viewportWidth() - 16);
+    const minH = 150, maxH = expandedPanelMaxHeight(720);
+    const clampWidth = (width: number) => Math.max(minW, Math.min(maxW, width));
+    const clampHeight = (height: number) => Math.max(minH, Math.min(maxH, height));
+    const fromWest = (dx: number, sw: number, sl: number) => {
+      const right = sl + sw;
+      widgetWidth = clampWidth(sw - dx);
+      left = clampLeftToViewport(right - widgetWidth, widgetWidth);
+    };
+    const fromNorth = (dy: number, sh: number, st: number) => {
+      const bottom = st + sh;
+      widgetHeight = clampHeight(sh - dy);
+      top = panelTopFor(bottom - widgetHeight, widgetHeight);
+    };
+    const fromEast = (dx: number, sw: number) => { widgetWidth = clampWidth(sw + dx); };
+    const fromSouth = (dy: number, sh: number) => { widgetHeight = clampHeight(sh + dy); };
+
+    makeHandle("ew-resize", "top:8px;left:0;width:8px;height:calc(100% - 16px);", (dx, _dy, sw, _sh, sl) => fromWest(dx, sw, sl));
+    makeHandle("ew-resize", "top:8px;right:0;width:8px;height:calc(100% - 16px);", (dx, _dy, sw) => fromEast(dx, sw));
+    makeHandle("ns-resize", "top:0;left:8px;width:calc(100% - 16px);height:8px;", (_dx, dy, _sw, sh, _sl, st) => fromNorth(dy, sh, st));
+    makeHandle("ns-resize", "bottom:0;left:8px;width:calc(100% - 16px);height:8px;", (_dx, dy, _sw, sh) => fromSouth(dy, sh));
+    makeHandle("nwse-resize", "top:0;left:0;width:14px;height:14px;", (dx, dy, sw, sh, sl, st) => { fromWest(dx, sw, sl); fromNorth(dy, sh, st); });
+    makeHandle("nesw-resize", "top:0;right:0;width:14px;height:14px;", (dx, dy, sw, sh, _sl, st) => { fromEast(dx, sw); fromNorth(dy, sh, st); });
+    makeHandle("nesw-resize", "bottom:0;left:0;width:14px;height:14px;", (dx, dy, sw, sh, sl) => { fromWest(dx, sw, sl); fromSouth(dy, sh); });
+    makeHandle("nwse-resize", "bottom:0;right:0;width:14px;height:14px;", (dx, dy, sw, sh) => { fromEast(dx, sw); fromSouth(dy, sh); });
   }
 
   function renderLoading() {
@@ -725,7 +795,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       dragHandle.style.cursor = "grabbing";
 
       const onMove = (ev: MouseEvent) => {
-        const maxHeight = Math.min(560, viewportHeight() - 24);
+        const maxHeight = expandedPanelMaxHeight();
         left = Math.max(8, Math.min(viewportWidth() - widgetWidth - 8, startLeft + ev.clientX - startX));
         top = Math.max(8, Math.min(viewportHeight() - maxHeight - 8, startTop + ev.clientY - startY));
         if (widget) { widget.style.left = `${left}px`; widget.style.top = `${top}px`; }
@@ -742,7 +812,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     ensureBaseStyles();
     const list = document.createElement("div");
     list.className = "cl-scroll";
-    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
     trapScroll(list);
 
     let hardWordsDivRef: HTMLElement | null = null;
@@ -752,7 +822,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
 
       const body = document.createElement("div");
-      const hwEl = appendMarkdownText(body, message.content, !widgetHasContext && index === 0, hardWordsOpen);
+      const hwEl = appendMarkdownText(body, message.content, index === 0, hardWordsOpen);
       if (index === 0) hardWordsDivRef = hwEl;
       const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
       body.setAttribute("style", `
@@ -779,6 +849,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     }
 
     const followupInput = document.createElement("textarea");
+    followupInput.className = "cl-scroll";
     followupInput.dir = "auto";
     followupInput.rows = 1;
     followupInput.placeholder = "Ask a follow-up…";
@@ -897,11 +968,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
       });
       const capturedDiv = hardWordsDivRef as HTMLElement;
-      capturedDiv.style.maxHeight = "160px";
-      capturedDiv.style.overflowY = "auto";
       hwBtn.addEventListener("click", () => {
         hardWordsOpen = !hardWordsOpen;
         capturedDiv.style.display = hardWordsOpen ? "block" : "none";
+        styleExpandedWidget();
       });
       actionRow.appendChild(hwBtn);
     }
@@ -952,7 +1022,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }
     }
 
-    if (!loading && !widgetDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
+    if (!loading && !widgetDeepDiveActive && messages.some((message) => message.role === "assistant")) {
       const deepDiveBtn = document.createElement("button");
       deepDiveBtn.textContent = "✦ Deep Dive";
       deepDiveBtn.setAttribute("style", `
@@ -1002,7 +1072,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
                 content: "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer.",
               }]);
             } else {
-              renderConversation(captureId, messages);
+              renderConversation(captureId, [...messages, {
+                role: "assistant" as const,
+                content: error.message || "Deep Dive could not load. Please try again.",
+              }]);
             }
           });
       });
@@ -1015,7 +1088,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     renderChildren.push(row);
     widget.replaceChildren(dragHandle, ...renderChildren);
     addResizeHandles();
-    setTimeout(() => followupInput.focus(), 50);
+    if (loading || messages.length > 1) {
+      requestAnimationFrame(() => {
+        if (list.isConnected) list.scrollTop = list.scrollHeight;
+      });
+    }
+    setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
 
   function doSave(closeAfterSave = false) {
@@ -1035,7 +1113,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
       submitted = true;
       const context = input.value.trim();
-      widgetHasContext = context.length > 0;
       const message: Message = {
         type: "SAVE_HIGHLIGHT",
         text: selectedText,
@@ -1214,7 +1291,6 @@ function showCropOverlay(screenshotDataUrl: string) {
     let contextPanelTop = 8;
     let contextPanelWidth = panelWidthFor();
     let panelDeepDiveActive = false;
-    let panelHasContext = false;
     let panelHardWordsOpen = false;
     let panelAnalogyText = "";
     let panelAnalogyLoading = false;
@@ -1279,12 +1355,13 @@ function showCropOverlay(screenshotDataUrl: string) {
       if (!contextPanel) return;
       const colors = uiColors();
       contextPanelWidth = panelWidthFor();
-      const maxHeight = Math.min(560, viewportHeight() - 24);
-      const top = panelTopFor(contextPanelTop, maxHeight);
+      const maxHeight = expandedPanelMaxHeight();
+      contextPanelLeft = clampLeftToViewport(contextPanelLeft, contextPanelWidth);
+      contextPanelTop = panelTopFor(contextPanelTop, maxHeight);
       contextPanel.setAttribute("style", `
         position: fixed;
         left: ${contextPanelLeft}px;
-        top: ${top}px;
+        top: ${contextPanelTop}px;
         background: ${colors.panel};
         backdrop-filter: blur(8px);
         border: 1px solid ${colors.border};
@@ -1358,7 +1435,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       ensureBaseStyles();
       const list = document.createElement("div");
       list.className = "cl-scroll";
-      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px;`);
+      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
       trapScroll(list);
 
       let panelHardWordsDivRef: HTMLElement | null = null;
@@ -1368,7 +1445,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
 
         const body = document.createElement("div");
-        const hwEl = appendMarkdownText(body, message.content, !panelHasContext && index === 0, panelHardWordsOpen);
+        const hwEl = appendMarkdownText(body, message.content, index === 0, panelHardWordsOpen);
         if (index === 0) panelHardWordsDivRef = hwEl;
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
         body.setAttribute("style", `
@@ -1395,6 +1472,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       }
 
       const input = document.createElement("textarea");
+      input.className = "cl-scroll";
       input.dir = "auto";
       input.rows = 1;
       input.placeholder = "Ask a follow-up…";
@@ -1513,11 +1591,10 @@ function showCropOverlay(screenshotDataUrl: string) {
           hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
         });
         const capturedPanelDiv = panelHardWordsDivRef as HTMLElement;
-        capturedPanelDiv.style.maxHeight = "160px";
-        capturedPanelDiv.style.overflowY = "auto";
         hwBtn.addEventListener("click", () => {
           panelHardWordsOpen = !panelHardWordsOpen;
           capturedPanelDiv.style.display = panelHardWordsOpen ? "block" : "none";
+          styleAnswerPanel();
         });
         actionRow.appendChild(hwBtn);
       }
@@ -1568,7 +1645,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         }
       }
 
-      if (!loading && !panelDeepDiveActive && messages.length === 1 && messages[0].role === "assistant") {
+      if (!loading && !panelDeepDiveActive && messages.some((message) => message.role === "assistant")) {
         const deepDiveBtn = document.createElement("button");
         deepDiveBtn.textContent = "✦ Deep Dive";
         deepDiveBtn.setAttribute("style", `
@@ -1618,7 +1695,10 @@ function showCropOverlay(screenshotDataUrl: string) {
                   content: "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer.",
                 }]);
               } else {
-                renderConversationPanel(captureId, messages);
+                renderConversationPanel(captureId, [...messages, {
+                  role: "assistant" as const,
+                  content: error.message || "Deep Dive could not load. Please try again.",
+                }]);
               }
             });
         });
@@ -1630,7 +1710,12 @@ function showCropOverlay(screenshotDataUrl: string) {
 
       panelChildren.push(row);
       contextPanel.replaceChildren(...panelChildren);
-      setTimeout(() => input.focus(), 50);
+      if (loading || messages.length > 1) {
+        requestAnimationFrame(() => {
+          if (list.isConnected) list.scrollTop = list.scrollHeight;
+        });
+      }
+      setTimeout(() => input.focus({ preventScroll: true }), 50);
       closeContextPanelOnOutsideClick();
     }
 
@@ -1647,7 +1732,6 @@ function showCropOverlay(screenshotDataUrl: string) {
         }
 
         contextPanelSubmitted = true;
-        panelHasContext = context.length > 0;
         removeContextPanelOutsideHandler();
 
         getShowAnswerImmediately((immediate) => {
@@ -1668,6 +1752,7 @@ function showCropOverlay(screenshotDataUrl: string) {
     function showContextPanel(sel: { x: number; y: number; w: number; h: number }) {
       removeContextPanel();
       contextPanelSubmitted = false;
+      ensureBaseStyles();
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
       contextPanelWidth = panelWidthFor();
@@ -1753,6 +1838,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       `);
 
       const input = document.createElement("textarea");
+      input.className = "cl-scroll";
       input.dir = "auto";
       input.rows = 1;
       input.placeholder = "Any specific part of the screenshot you don't understand?";
@@ -2286,12 +2372,11 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (selected) {
     const vp = getVisualViewportRect();
     const rawX = selected.rect.left + selected.rect.width / 2;
-    // Use the topmost visible selection rect so the bubble appears above the first selected line.
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-    const allRects = range ? Array.from(range.getClientRects()).filter(r => r.width > 1 && r.height > 1) : [];
-    const topmostY = allRects.length > 0 ? Math.min(...allRects.map(r => r.top)) : selected.rect.top;
-    const rawY = topmostY;
+    // rangeAnchorRect already chose the visible selection line to place from.
+    // Using every range rect here can catch unrelated RTL/layout rects on some pages.
+    const rawY = fixedViewportY(selected.rect.top);
     const x = Math.max(vp.left + 30, Math.min(vp.left + vp.width - 30, fixedViewportX(rawX)));
     const y = Math.max(vp.top + 60, Math.min(vp.top + vp.height - 10, rawY));
 
