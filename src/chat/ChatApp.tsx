@@ -144,7 +144,7 @@ export default function ChatApp() {
         type: "DEEP_DIVE",
         captureId: capture.id,
       });
-      const result: ChatMessage[] = [{ role: "assistant", content: data.explanation }];
+      const result: ChatMessage[] = data.messages ?? [{ role: "assistant", content: data.explanation }];
       setMessages(result);
       setDeepDiveActive(true);
       chrome.storage.local.set({ [`chat_${captureId}`]: result });

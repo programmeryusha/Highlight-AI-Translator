@@ -272,7 +272,7 @@ export default function CropApp() {
         type: "DEEP_DIVE",
         captureId,
       });
-      setMessages([{ role: "assistant", content: response.explanation }]);
+      setMessages(response.messages ?? [{ role: "assistant", content: response.explanation }]);
       setDeepDiveActive(true);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Something went wrong.";
