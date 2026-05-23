@@ -368,8 +368,9 @@ function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
 
 const TERM_DEF_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
 const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
+const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN_RE = new RegExp(
-  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}\\s\\u200c\\u200d.,;:!?'"()[\\]{}\\-–—،؛؟]*[${ARABIC_CHAR}])?)`,
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
   "gu",
 );
 type HardWordEntry = { term: string; definition: string };
@@ -386,7 +387,7 @@ function appendBidiText(container: HTMLElement, text: string) {
     const arabic = document.createElement("bdi");
     arabic.dir = "rtl";
     arabic.lang = "ar";
-    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;font-family:'Noto Naskh Arabic',serif;";
+    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;font-family:'Noto Naskh Arabic',ui-serif,Georgia,serif;font-size:1.16em;line-height:1.85;";
     arabic.textContent = match[0];
     container.appendChild(arabic);
     start = index + match[0].length;

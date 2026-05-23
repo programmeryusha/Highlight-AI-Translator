@@ -8,7 +8,7 @@ type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
 type CardFontSize = "default" | "large" | "extra_large";
-const LONG_TEXT_LIMIT = 420;
+const LONG_TEXT_LIMIT = 260;
 const DEFAULT_ACCENT_COLOR = "#6466f1";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
@@ -27,6 +27,7 @@ const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; a
   large: { source: 24, context: 21, answer: 21, status: 18, link: 15 },
   extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
 };
+const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
@@ -221,11 +222,9 @@ const EXPL_LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(
 const EXPL_SILENT = new Set(["Arabic/source", "Meaning"]);
 const EXPL_RENAME: Record<string, string> = { "Direct": "Direct meaning" };
 const ARABIC_RANGE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN = new RegExp(
-  "([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]" +
-  "(?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿" +
-  "\\s‌‍.,;:!?'\"()\\[\\]{}‐-—،؛؟]*" +
-  "[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿])?)",
+  `([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿](?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿${ARABIC_RUN_GLUE}]*[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
   "gu",
 );
 
@@ -237,7 +236,7 @@ function bidiSpan(text: string): React.ReactNode {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     parts.push(
-      <bdi key={m.index} dir="rtl" lang="ar" style={{ fontFamily: "'Noto Naskh Arabic',serif", unicodeBidi: "isolate" }}>
+      <bdi key={m.index} dir="rtl" lang="ar" style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}>
         {m[0]}
       </bdi>
     );
@@ -250,7 +249,7 @@ function bidiSpan(text: string): React.ReactNode {
 function inlineParts(text: string): React.ReactNode {
   return text.split(/\*\*(.*?)\*\*/g).map((part, i) =>
     i % 2 === 1
-      ? <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(part) ? "'Noto Naskh Arabic',serif" : "inherit" }}>{bidiSpan(part)}</strong>
+      ? <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(part) ? ARABIC_FONT_STACK : "inherit" }}>{bidiSpan(part)}</strong>
       : bidiSpan(part)
   );
 }
@@ -265,7 +264,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
     if (termMatch) {
       nodes.push(
         <div key={i} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 6px", margin: "6px 0" }}>
-          <strong style={{ fontFamily: "'Noto Naskh Arabic',serif", fontWeight: 700, fontSize: "1.05em" }}>{bidiSpan(termMatch[1])}</strong>
+          <strong style={{ fontFamily: ARABIC_FONT_STACK, fontWeight: 700, fontSize: "1.08em" }}>{bidiSpan(termMatch[1])}</strong>
           <span style={{ color: colors.muted }}>—</span>
           <span>{termMatch[2]}</span>
         </div>
@@ -281,7 +280,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
         if (body) {
           const isAr = ARABIC_RANGE.test(body);
           nodes.push(
-            <p key={i} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? "'Noto Naskh Arabic',serif" : "inherit" }}>
+            <p key={i} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit" }}>
               {bidiSpan(body)}
             </p>
           );
@@ -696,7 +695,8 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     cursor: "pointer",
     display: "block",
     font: "inherit",
-    fontSize: typography.source,
+    fontFamily: rtl ? ARABIC_FONT_STACK : "inherit",
+    fontSize: rtl ? Math.round(typography.source * 1.12) : typography.source,
     fontWeight: 600,
     lineHeight: 1.6,
     margin: 0,
@@ -709,11 +709,8 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     textUnderlineOffset: 4,
     whiteSpace: "pre-wrap",
     overflowWrap: "break-word",
-  };
-  const actionStyle = {
-    ...subtleButtonStyle(colors, typography.link),
-    color: hovered ? colors.accent : colors.text,
-    marginTop: 8,
+    maxHeight: "8.1em",
+    overflow: "hidden",
   };
 
   if (capture.imageData) {
@@ -751,17 +748,6 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
       >
         {text}
       </button>
-      {isLong && (
-        <button
-          type="button"
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={actionStyle}
-        >
-          Open full save
-        </button>
-      )}
     </>
   );
 }
@@ -967,7 +953,29 @@ function SavesView({
                       />
                     )}
                     {c.status === "done" && c.explanation && (
-                      <div style={{ fontSize: typography.answer, color: colors.text, margin: "16px 0 0", lineHeight: 1.78, maxWidth: "74ch", overflowWrap: "break-word" }}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Open full card"
+                        onClick={(event) => openCaptureFromClick(event, c.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openChat(c.id);
+                          }
+                        }}
+                        style={{
+                          fontSize: typography.answer,
+                          color: colors.text,
+                          cursor: "pointer",
+                          margin: "16px 0 0",
+                          lineHeight: 1.78,
+                          maxHeight: "18em",
+                          maxWidth: "74ch",
+                          overflow: "hidden",
+                          overflowWrap: "break-word",
+                        }}
+                      >
                         {renderExplanation(c.explanation, colors)}
                       </div>
                     )}
@@ -1051,6 +1059,21 @@ function HistoryView({
           </div>
         </div>
 
+        {!dockCalendar && (
+          <div style={{ display: "flex", justifyContent: "center", margin: "0 auto 28px" }}>
+            <MonthCalendar
+              captures={captures}
+              selectedDay={selectedDay}
+              visibleMonth={visibleMonth}
+              onVisibleMonthChange={setVisibleMonth}
+              onSelectDay={selectDay}
+              colors={colors}
+              theme={theme}
+              accentColor={accentColor}
+            />
+          </div>
+        )}
+
         {selectedCaptures.length > 0 ? (
           <SavesView
             captures={selectedCaptures}
@@ -1066,26 +1089,27 @@ function HistoryView({
         )}
       </div>
 
-      <div
-        style={{
-          position: dockCalendar ? "absolute" : "static",
-          top: dockCalendar ? 0 : undefined,
-          right: dockCalendar ? 0 : undefined,
-          width: calendarWidth,
-          margin: dockCalendar ? undefined : "36px auto 0",
-        }}
-      >
-        <MonthCalendar
-          captures={captures}
-          selectedDay={selectedDay}
-          visibleMonth={visibleMonth}
-          onVisibleMonthChange={setVisibleMonth}
-          onSelectDay={selectDay}
-          colors={colors}
-          theme={theme}
-          accentColor={accentColor}
-        />
-      </div>
+      {dockCalendar && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            width: calendarWidth,
+          }}
+        >
+          <MonthCalendar
+            captures={captures}
+            selectedDay={selectedDay}
+            visibleMonth={visibleMonth}
+            onVisibleMonthChange={setVisibleMonth}
+            onSelectDay={selectDay}
+            colors={colors}
+            theme={theme}
+            accentColor={accentColor}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -2555,6 +2579,7 @@ export default function App() {
   const [theme, setThemeState] = useState<ThemeName>("light");
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
+  const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
@@ -2725,15 +2750,46 @@ export default function App() {
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 22 }}>
             {streak > 0 && (
-              <button
-                onClick={() => navigateView("saves")}
-                aria-label={`${streak} day streak`}
-                title={`${streak} day streak`}
-                style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+              <div
+                style={{ position: "relative", display: "inline-flex" }}
+                onMouseEnter={() => setStreakTooltipVisible(true)}
+                onMouseLeave={() => setStreakTooltipVisible(false)}
+                onFocus={() => setStreakTooltipVisible(true)}
+                onBlur={() => setStreakTooltipVisible(false)}
               >
-                <span style={{ fontSize: 16 }}>🔥</span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>
-              </button>
+                <button
+                  onClick={() => navigateView("saves")}
+                  aria-label={`${streak} day streak`}
+                  style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <span style={{ fontSize: 16 }}>🔥</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>
+                </button>
+                {streakTooltipVisible && (
+                  <div
+                    role="tooltip"
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 8px)",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      zIndex: 20,
+                      background: colors.surfaceAlt,
+                      color: colors.text,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 6,
+                      boxShadow: "0 10px 24px rgba(15,15,15,0.14)",
+                      padding: "6px 9px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {streak} day streak
+                  </div>
+                )}
+              </div>
             )}
             <nav style={{ display: "flex", gap: 16, alignItems: "center" }}>
               {(["saves", "history", "words", "settings"] as View[]).map((v) => (
