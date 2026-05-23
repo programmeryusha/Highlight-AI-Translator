@@ -28,6 +28,8 @@ const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; a
   extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
 };
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const FLASHCARD_PROMPT_LIMIT = 260;
+const FLASHCARD_EXPLANATION_LIMIT = 520;
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
@@ -150,6 +152,13 @@ function cleanExportCell(value: string): string {
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function previewText(value: string, limit: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= limit) return trimmed;
+  const shortened = trimmed.slice(0, limit).replace(/\s+\S*$/, "").trim();
+  return `${shortened || trimmed.slice(0, limit).trim()}…`;
 }
 
 function downloadTextFile(filename: string, contents: string) {
@@ -1017,9 +1026,7 @@ function HistoryView({
   const [selectedDay, setSelectedDay] = useState(todayKey());
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
-  const dockCalendar = windowWidth >= 1600;
-  const calendarGap = 92;
-  const calendarWidth = 300;
+  const wideLayout = windowWidth >= 1040;
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -1035,32 +1042,60 @@ function HistoryView({
     });
   }
 
+  function selectedDaySubtitle() {
+    return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  }
+
   function emptyDayMessage() {
     if (selectedDay === todayKey()) return "Nothing saved today.";
     return `Nothing saved on ${selectedDayLabel()}.`;
   }
 
   return (
-    <div style={{ position: "relative", minHeight: 520 }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: wideLayout ? "minmax(0, 1fr) 332px" : "1fr",
+        gap: wideLayout ? 28 : 20,
+        alignItems: "start",
+        maxWidth: 1220,
+        margin: "0 auto",
+        minHeight: 520,
+      }}
+    >
       <div
         style={{
-          maxWidth: dockCalendar ? `calc(100% - ${calendarWidth + calendarGap}px)` : 980,
-          margin: dockCalendar ? `0 ${calendarWidth + calendarGap}px 0 0` : "0 auto",
+          minWidth: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 28 }}>
-          <div style={{ minWidth: 220, textAlign: "center" }}>
-            <h2 style={{ fontSize: 22, color: colors.text, margin: 0, fontWeight: 700 }}>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ maxWidth: 740 }}>
+            <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>
               {selectedDayLabel()}
             </h2>
-            <p style={{ fontSize: 13, color: colors.muted, margin: "5px 0 0" }}>
-              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · pick dates from the calendar
+            <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
+              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()} · choose a date from the calendar
             </p>
           </div>
         </div>
 
-        {!dockCalendar && (
-          <div style={{ display: "flex", justifyContent: "center", margin: "0 auto 28px" }}>
+        {!wideLayout && (
+          <div
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 10,
+              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+              display: "flex",
+              justifyContent: "center",
+              margin: "0 0 20px",
+              padding: "18px 16px",
+            }}
+          >
             <MonthCalendar
               captures={captures}
               selectedDay={selectedDay}
@@ -1083,19 +1118,24 @@ function HistoryView({
             cardFontSize={cardFontSize}
           />
         ) : (
-          <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8, textAlign: "center" }}>
+          <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8 }}>
             {emptyDayMessage()}
           </p>
         )}
       </div>
 
-      {dockCalendar && (
+      {wideLayout && (
         <div
           style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            width: calendarWidth,
+            background: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 10,
+            boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+            display: "flex",
+            justifyContent: "center",
+            padding: "18px 16px",
+            position: "sticky",
+            top: 92,
           }}
         >
           <MonthCalendar
@@ -1672,14 +1712,39 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         </p>
       ) : (
         <div>
-          {words.map((word) => (
-            <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr", alignItems: "start", gap: 16 }}>
-              <div>
-                <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>{word.word}</p>
-                {word.explanation && <div style={{ fontSize: 14, color: colors.softText, margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(word.explanation)}</div>}
+          {words.map((word) => {
+            const promptPreview = previewText(word.word, FLASHCARD_PROMPT_LIMIT);
+            const explanationPreview = word.explanation ? previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT) : "";
+            const promptRtl = hasRtlText(promptPreview);
+            return (
+              <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr", alignItems: "start", gap: 16 }}>
+                <div>
+                  <p
+                    style={{
+                      color: colors.text,
+                      direction: promptRtl ? "rtl" : "ltr",
+                      fontFamily: promptRtl ? ARABIC_FONT_STACK : "inherit",
+                      fontSize: promptRtl ? 18 : 16,
+                      fontWeight: 650,
+                      lineHeight: 1.55,
+                      margin: 0,
+                      maxHeight: "4.7em",
+                      overflow: "hidden",
+                      overflowWrap: "break-word",
+                      textAlign: promptRtl ? "right" : "left",
+                    }}
+                  >
+                    {promptPreview}
+                  </p>
+                  {explanationPreview && (
+                    <div style={{ fontSize: 14, color: colors.softText, margin: "7px 0 0", lineHeight: 1.6, maxHeight: "10em", overflow: "hidden", overflowWrap: "break-word" }}>
+                      {renderMarkdown(explanationPreview)}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -2675,8 +2740,8 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = view === "history" ? 1800 : 1100;
-  const contentPadding = view === "history" ? "32px 48px 32px 96px" : "32px";
+  const contentMaxWidth = view === "history" ? 1280 : 1100;
+  const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
 
   function deleteCapturesByIds(ids: string[]) {

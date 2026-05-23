@@ -6,6 +6,9 @@ const INJECTABLE_URL_PATTERN = /^https?:\/\//i;
 const DEFAULT_SAVE_TRIGGERS = { bubble: true, contextMenu: true };
 const DEEP_DIVE_CAPTURE_IDS_KEY = "deep_dive_capture_ids";
 const EXACT_DUPLICATE_WINDOW_MS = 60_000;
+const REMOTE_CAPTURE_SIGNATURES_KEY = "remote_capture_signatures";
+const REMOTE_SYNC_COMPLETED_AT_KEY = "remote_sync_completed_at";
+const REMOTE_SYNC_FRESH_MS = 15 * 60_000;
 
 interface RemoteCapture {
   id: string;
@@ -24,6 +27,10 @@ interface CaptureFallback {
   imageData?: string;
   url?: string;
   title?: string;
+}
+
+interface SyncOptions {
+  force?: boolean;
 }
 
 function normalizePageUrl(url: string): string {
@@ -54,6 +61,28 @@ function findExactRecentDuplicate(captures: Capture[], text: string, url: string
     if (normalizeTextForDuplicate(capture.text) !== normalizedText) return false;
     return now - new Date(capture.savedAt).getTime() <= EXACT_DUPLICATE_WINDOW_MS;
   }) ?? null;
+}
+
+function captureSyncSignature(capture: Capture): string {
+  return JSON.stringify({
+    text: capture.text,
+    context: capture.context,
+    url: capture.url,
+    title: capture.title,
+    explanation: capture.explanation ?? "",
+    savedAt: capture.savedAt,
+    hasImage: Boolean(capture.imageData),
+  });
+}
+
+async function markCapturesSynced(captures: Capture[]): Promise<void> {
+  if (captures.length === 0) return;
+  const storage = await chrome.storage.local.get(REMOTE_CAPTURE_SIGNATURES_KEY);
+  const signatures: Record<string, string> = storage[REMOTE_CAPTURE_SIGNATURES_KEY] ?? {};
+  captures.forEach((capture) => {
+    signatures[capture.id] = captureSyncSignature(capture);
+  });
+  await chrome.storage.local.set({ [REMOTE_CAPTURE_SIGNATURES_KEY]: signatures });
 }
 
 function errorMessage(error: unknown): string {
@@ -310,7 +339,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "SYNC_REMOTE_CAPTURES") {
-    syncCapturesWithRemote()
+    syncCapturesWithRemote(undefined, { force: true })
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -333,6 +362,66 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "contextlens-explain-stream") return;
+
+  let disconnected = false;
+  port.onDisconnect.addListener(() => {
+    disconnected = true;
+  });
+
+  function post(message: Record<string, unknown>) {
+    if (!disconnected) port.postMessage(message);
+  }
+
+  port.onMessage.addListener((message: Record<string, unknown>) => {
+    if (message.type === "SAVE_HIGHLIGHT_STREAM") {
+      saveHighlightStream(
+        String(message.text ?? ""),
+        String(message.url ?? ""),
+        String(message.title ?? ""),
+        String(message.context ?? ""),
+        typeof message.replaceCaptureId === "string" ? message.replaceCaptureId : undefined,
+        (captureId) => post({ type: "started", captureId }),
+        (chunk) => post({ type: "chunk", text: chunk }),
+      )
+        .then((result) => post({ type: "done", ...result }))
+        .catch((error) => post({ type: "error", error: errorMessage(error) }));
+      return;
+    }
+
+    if (message.type === "ASK_FOLLOWUP_STREAM") {
+      askFollowupStream(
+        String(message.captureId ?? ""),
+        String(message.question ?? ""),
+        Boolean(message.deepDive),
+        {
+          text: typeof message.fallbackText === "string" ? message.fallbackText : undefined,
+          context: typeof message.fallbackContext === "string" ? message.fallbackContext : undefined,
+          imageData: typeof message.fallbackImageData === "string" ? message.fallbackImageData : undefined,
+          url: typeof message.fallbackUrl === "string" ? message.fallbackUrl : undefined,
+          title: typeof message.fallbackTitle === "string" ? message.fallbackTitle : undefined,
+        },
+        (chunk) => post({ type: "chunk", text: chunk }),
+      )
+        .then((result) => post({ type: "done", ...result }))
+        .catch((error) => post({ type: "error", error: errorMessage(error) }));
+      return;
+    }
+
+    if (message.type === "EXPLAIN_SCREENSHOT_STREAM") {
+      explainAndSaveScreenshotStream(
+        String(message.imageData ?? ""),
+        String(message.context ?? ""),
+        (captureId) => post({ type: "started", captureId }),
+        (chunk) => post({ type: "chunk", text: chunk }),
+      )
+        .then((result) => post({ type: "done", ...result }))
+        .catch((error) => post({ type: "error", error: errorMessage(error) }));
+    }
+  });
 });
 
 async function getAppMode(): Promise<string> {
@@ -369,6 +458,61 @@ async function fetchExplanation(
   if (!res.ok) await throwResponseError("Backend error", res);
   const data = await res.json();
   return data.explanation ?? "";
+}
+
+async function fetchExplanationStream(
+  text: string,
+  context: string,
+  imageBase64: string | undefined,
+  messages: ChatMessage[],
+  onChunk: (chunk: string) => void,
+): Promise<string> {
+  const mode = await getAppMode();
+  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null, mode };
+  if (messages.length > 0) {
+    body.messages = messages.slice(-8);
+  }
+
+  const res = await fetch(`${BACKEND_URL}/explain/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await throwResponseError("Backend error", res);
+  if (!res.body) return fetchExplanation(text, context, imageBase64, false, messages);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final = "";
+  let streamed = "";
+
+  function consumeLine(line: string) {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as { type?: string; text?: string };
+    if (event.type === "chunk" && event.text) {
+      streamed += event.text;
+      onChunk(event.text);
+    } else if (event.type === "done") {
+      final = event.text ?? streamed;
+    } else if (event.type === "error") {
+      throw new Error(event.text || "Streaming explanation failed.");
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      lines.forEach(consumeLine);
+    }
+    if (done) break;
+  }
+
+  if (buffer.trim()) consumeLine(buffer);
+  return final || streamed;
 }
 
 async function getAccount(): Promise<ContextLensUser | null> {
@@ -434,7 +578,7 @@ async function authRequest(paths: string[], label: string, email: string, passwo
 async function storeAccount(email: string, token: string): Promise<ContextLensUser> {
   const account: ContextLensUser = { email, token };
   await chrome.storage.local.set({ contextlens_user: account });
-  await syncCapturesWithRemote(account);
+  await syncCapturesWithRemote(account, { force: true });
   return account;
 }
 
@@ -484,6 +628,7 @@ async function saveCaptureRemote(capture: Capture): Promise<void> {
     body: JSON.stringify(captureToRemotePayload(capture, account.token)),
   });
   if (!res.ok) await throwResponseError("Sync error", res);
+  await markCapturesSynced([capture]);
 }
 
 async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
@@ -493,14 +638,27 @@ async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
   return remote.map(remoteToCapture);
 }
 
-async function syncCapturesWithRemote(accountOverride?: ContextLensUser): Promise<{ synced: number }> {
+async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options: SyncOptions = {}): Promise<{ synced: number }> {
   const account = accountOverride ?? await getAccount();
   if (!account) return { synced: 0 };
 
-  const storage = await chrome.storage.local.get("captures");
+  const storage = await chrome.storage.local.get(["captures", REMOTE_CAPTURE_SIGNATURES_KEY, REMOTE_SYNC_COMPLETED_AT_KEY]);
+  const lastSync = Number(storage[REMOTE_SYNC_COMPLETED_AT_KEY] ?? 0);
+  if (!options.force && lastSync && Date.now() - lastSync < REMOTE_SYNC_FRESH_MS) {
+    return { synced: 0 };
+  }
+
   const localCaptures: Capture[] = storage.captures ?? [];
-  const uploadable = localCaptures.filter((capture) => capture.status === "done");
-  await Promise.all(uploadable.map((capture) => saveCaptureRemote(capture).catch((error) => {
+  const signatures: Record<string, string> = storage[REMOTE_CAPTURE_SIGNATURES_KEY] ?? {};
+  const uploadable = localCaptures.filter((capture) => (
+    capture.status === "done"
+      && signatures[capture.id] !== captureSyncSignature(capture)
+  ));
+  const uploaded: Capture[] = [];
+  await Promise.all(uploadable.map(async (capture) => {
+    await saveCaptureRemote(capture);
+    uploaded.push(capture);
+  }).map((promise) => promise.catch((error) => {
     console.warn("ContextLens remote save skipped", error);
   })));
 
@@ -511,7 +669,18 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser): Promis
     if (!merged.has(capture.id)) merged.set(capture.id, capture);
   });
   const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
-  await chrome.storage.local.set({ captures });
+  const nextSignatures = { ...signatures };
+  [...remoteCaptures, ...uploaded].forEach((capture) => {
+    nextSignatures[capture.id] = captureSyncSignature(capture);
+  });
+  Object.keys(nextSignatures).forEach((id) => {
+    if (!merged.has(id)) delete nextSignatures[id];
+  });
+  await chrome.storage.local.set({
+    captures,
+    [REMOTE_CAPTURE_SIGNATURES_KEY]: nextSignatures,
+    [REMOTE_SYNC_COMPLETED_AT_KEY]: Date.now(),
+  });
   return { synced: remoteCaptures.length };
 }
 
@@ -525,6 +694,10 @@ async function deleteRemoteCaptures(ids: string[]): Promise<{ deleted: number }>
     body: JSON.stringify({ token: account.token, ids }),
   });
   if (!res.ok) await throwResponseError("Delete sync error", res);
+  const storage = await chrome.storage.local.get(REMOTE_CAPTURE_SIGNATURES_KEY);
+  const signatures: Record<string, string> = storage[REMOTE_CAPTURE_SIGNATURES_KEY] ?? {};
+  ids.forEach((id) => delete signatures[id]);
+  await chrome.storage.local.set({ [REMOTE_CAPTURE_SIGNATURES_KEY]: signatures });
   return await res.json();
 }
 
@@ -716,6 +889,33 @@ async function explainAndSaveScreenshot(imageData: string, context: string): Pro
   }
 }
 
+async function explainAndSaveScreenshotStream(
+  imageData: string,
+  context: string,
+  onStart: (captureId: string) => void,
+  onChunk: (chunk: string) => void,
+): Promise<{ captureId: string; explanation: string }> {
+  const id = await createPendingScreenshot(imageData, context);
+  onStart(id);
+
+  try {
+    const base64 = imageData.split(",")[1];
+    const explanation = await fetchExplanationStream("", context, base64, [], onChunk);
+    const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    if (capture) {
+      void saveCaptureRemote(capture).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
+    await seedChat(id, explanation);
+    return { captureId: id, explanation };
+  } catch (error) {
+    console.error("ContextLens failed to stream screenshot explanation", error);
+    await updateCapture(id, { status: "error", errorMessage: errorMessage(error) });
+    throw error;
+  }
+}
+
 async function saveScreenshot(imageData: string, context: string) {
   await explainAndSaveScreenshot(imageData, context).catch(() => {});
 }
@@ -741,6 +941,49 @@ async function askFollowup(captureId: string, question: string, deepDiveRequeste
     useDeepDive,
     updated,
   );
+  if (useDeepDive) await markDeepDiveCapture(captureId);
+  const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
+  await chrome.storage.local.set({ [key]: messages });
+  return { reply, messages };
+}
+
+async function askFollowupStream(
+  captureId: string,
+  question: string,
+  deepDiveRequested = false,
+  fallback: CaptureFallback = {},
+  onChunk: (chunk: string) => void,
+): Promise<{ reply: string; messages: ChatMessage[] }> {
+  const key = `chat_${captureId}`;
+  const storage = await chrome.storage.local.get(["captures", key]);
+  const captures: Capture[] = storage.captures ?? [];
+  let capture = captures.find((c) => c.id === captureId);
+
+  const prior: ChatMessage[] = storage[key] ?? (capture?.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  if (!capture) capture = await restoreCaptureFromFallback(captureId, fallback, prior);
+  if (!capture && prior.length === 0) throw new Error("Saved item not found.");
+
+  const updated: ChatMessage[] = [...prior, { role: "user", content: question }];
+  const fallbackImageBase64 = fallback.imageData?.split(",")[1];
+  const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
+  const useDeepDive = deepDiveRequested || await isDeepDiveCapture(captureId);
+
+  const reply = useDeepDive
+    ? await fetchExplanation(
+      capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+      capture?.context ?? fallback.context ?? "",
+      imageBase64,
+      true,
+      updated,
+    )
+    : await fetchExplanationStream(
+      capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+      capture?.context ?? fallback.context ?? "",
+      imageBase64,
+      updated,
+      onChunk,
+    );
+
   if (useDeepDive) await markDeepDiveCapture(captureId);
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
@@ -880,4 +1123,58 @@ async function saveHighlight(text: string, url: string, title: string, context: 
 
   await addCapture(capture);
   return explainPendingHighlight(capture);
+}
+
+async function saveHighlightStream(
+  text: string,
+  url: string,
+  title: string,
+  context: string,
+  replaceCaptureId: string | undefined,
+  onStart: (captureId: string) => void,
+  onChunk: (chunk: string) => void,
+): Promise<{ captureId: string; explanation: string }> {
+  const storage = await chrome.storage.local.get("captures");
+  const captures: Capture[] = storage.captures ?? [];
+  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, url);
+  if (duplicate) {
+    onStart(duplicate.id);
+    return waitForCaptureResult(duplicate.id);
+  }
+
+  const id = crypto.randomUUID();
+  const capture: Capture = {
+    id,
+    text,
+    context,
+    url,
+    title,
+    savedAt: new Date().toISOString(),
+    explanation: null,
+    status: "pending",
+  };
+
+  if (replaceCaptureId) {
+    onStart(replaceCaptureId);
+    return saveMergedHighlight(replaceCaptureId, capture);
+  }
+
+  await addCapture(capture);
+  onStart(id);
+
+  try {
+    const explanation = await fetchExplanationStream(capture.text, capture.context, undefined, [], onChunk);
+    const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    if (updated) {
+      void saveCaptureRemote(updated).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
+    await seedChat(id, explanation);
+    return { captureId: id, explanation };
+  } catch (error) {
+    console.error("ContextLens failed to stream highlight explanation", error);
+    await updateCapture(id, { status: "error", errorMessage: errorMessage(error) });
+    throw error;
+  }
 }

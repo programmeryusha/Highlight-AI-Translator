@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-17-quran-selection-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-23-overlay-contrast-v1";
 const DEFAULT_ACCENT_COLOR = "#6466f1";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
@@ -131,13 +131,13 @@ function applyAppearance(theme: unknown, accent: unknown) {
 function uiColors() {
   const dark = appearanceTheme === "dark";
   return {
-    panel: dark ? "rgba(26,26,26,0.96)" : "rgba(255,255,255,0.98)",
-    panelSoft: dark ? "rgba(26,26,26,0.94)" : "rgba(255,255,255,0.96)",
+    panel: dark ? "#1a1a1a" : "rgba(255,255,255,0.98)",
+    panelSoft: dark ? "#1c1c1c" : "rgba(255,255,255,0.96)",
     border: dark ? "rgba(255,255,255,0.14)" : "rgba(55,53,47,0.16)",
     faintBorder: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.09)",
     text: dark ? "#e8e8e8" : "#2f2e2b",
-    userText: dark ? "#cbd5e1" : "#504f4a",
-    muted: dark ? "#9ca3af" : "#7b7770",
+    userText: dark ? "#d7d7d7" : "#504f4a",
+    muted: dark ? "#a7a7a7" : "#7b7770",
     subtle: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.06)",
     shadow: dark ? "0 4px 20px rgba(0,0,0,0.4)" : "0 6px 24px rgba(15,15,15,0.16)",
     accent: accentColor,
@@ -190,6 +190,47 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
       }
       resolve(response as T);
     });
+  });
+}
+
+function streamRuntimeMessage<T>(
+  message: Record<string, unknown>,
+  handlers: {
+    onStart?: (captureId: string) => void;
+    onChunk?: (chunk: string) => void;
+  } = {},
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: "contextlens-explain-stream" });
+    let settled = false;
+
+    port.onMessage.addListener((event: Record<string, unknown>) => {
+      if (event.type === "started" && typeof event.captureId === "string") {
+        handlers.onStart?.(event.captureId);
+        return;
+      }
+      if (event.type === "chunk" && typeof event.text === "string") {
+        handlers.onChunk?.(event.text);
+        return;
+      }
+      if (event.type === "done") {
+        settled = true;
+        port.disconnect();
+        resolve(event as T);
+        return;
+      }
+      if (event.type === "error") {
+        settled = true;
+        port.disconnect();
+        reject(new Error(typeof event.error === "string" ? event.error : "Streaming explanation failed."));
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (!settled) reject(new Error("Explanation stream disconnected."));
+    });
+
+    port.postMessage(message);
   });
 }
 
@@ -330,6 +371,10 @@ function firstStrongTextDirection(value: string): "ltr" | "rtl" | "auto" {
   return "auto";
 }
 
+function hasRtlText(value: string): boolean {
+  return /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(value);
+}
+
 function syncTextareaDirection(textarea: HTMLTextAreaElement) {
   const direction = firstStrongTextDirection(textarea.value);
   textarea.dir = direction;
@@ -428,6 +473,22 @@ function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
 const LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(.*)/;
 const SILENT_LABELS = new Set(["Arabic/source", "Meaning"]);
 const LABEL_DISPLAY: Record<string, string> = { "Direct": "Direct meaning" };
+const MEANING_LABELS = new Set(["Meaning", "Direct", "Plain meaning"]);
+
+function appendInlineMarkdown(container: HTMLElement, text: string) {
+  text.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
+    if (!part) return;
+    if (partIndex % 2 === 1) {
+      const strong = document.createElement("strong");
+      strong.style.fontWeight = "700";
+      strong.style.color = "inherit";
+      appendBidiText(strong, part);
+      container.appendChild(strong);
+    } else {
+      appendBidiText(container, part);
+    }
+  });
+}
 
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
@@ -456,29 +517,57 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
 
       const labelMatch = stripped.match(LABEL_RE);
       if (labelMatch) {
-        if (SILENT_LABELS.has(labelMatch[1])) {
-          if (labelMatch[2].trim()) appendBidiText(container, labelMatch[2]);
+        const [, label, rawBody] = labelMatch;
+        const body = rawBody.trim();
+
+        if (label === "Arabic/source") {
+          if (body) {
+            const isRtl = hasRtlText(body);
+            const source = document.createElement("div");
+            source.setAttribute("style", `
+              color:${colors.text};
+              direction:${isRtl ? "rtl" : "ltr"};
+              font-family:${isRtl ? "'Noto Naskh Arabic',ui-serif,Georgia,serif" : "inherit"};
+              font-size:1.06em;
+              font-weight:650;
+              line-height:1.9;
+              margin:5px 0 8px;
+              text-align:${isRtl ? "right" : "left"};
+            `);
+            appendBidiText(source, body);
+            container.appendChild(source);
+          }
+          lastWasInline = false;
+        } else if (MEANING_LABELS.has(label)) {
+          if (body) {
+            const row = document.createElement("div");
+            row.setAttribute("style", "margin:3px 0 8px;line-height:1.68;");
+            const labelSpan = document.createElement("span");
+            labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.78em;letter-spacing:0.05em;text-transform:uppercase;`;
+            labelSpan.textContent = (LABEL_DISPLAY[label] ?? label) + ":";
+            const textSpan = document.createElement("span");
+            textSpan.style.cssText = `color:${colors.userText};font-size:0.94em;font-weight:400;`;
+            textSpan.appendChild(document.createTextNode(" "));
+            appendInlineMarkdown(textSpan, body);
+            row.appendChild(labelSpan);
+            row.appendChild(textSpan);
+            container.appendChild(row);
+          } else {
+            lastWasInline = false;
+          }
+          lastWasInline = false;
+        } else if (SILENT_LABELS.has(label)) {
+          if (body) appendBidiText(container, body);
           else lastWasInline = false;
         } else {
           const labelSpan = document.createElement("span");
           labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.8em;letter-spacing:0.05em;text-transform:uppercase;`;
-          labelSpan.textContent = (LABEL_DISPLAY[labelMatch[1]] ?? labelMatch[1]) + ":";
+          labelSpan.textContent = (LABEL_DISPLAY[label] ?? label) + ":";
           container.appendChild(labelSpan);
-          if (labelMatch[2].trim()) appendBidiText(container, labelMatch[2]);
+          if (body) appendBidiText(container, body);
         }
       } else {
-        stripped.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
-          if (!part) return;
-          if (partIndex % 2 === 1) {
-            const strong = document.createElement("strong");
-            strong.style.fontWeight = "700";
-            strong.style.color = "inherit";
-            appendBidiText(strong, part);
-            container.appendChild(strong);
-          } else {
-            appendBidiText(container, part);
-          }
-        });
+        appendInlineMarkdown(container, stripped);
       }
     }
   });
@@ -1192,8 +1281,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
       hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
       renderConversation(captureId, nextMessages, true, widgetDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
-      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
-        type: "ASK_FOLLOWUP",
+      let streamed = "";
+      streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+        type: "ASK_FOLLOWUP_STREAM",
         captureId,
         question,
         deepDive: widgetDeepDiveActive,
@@ -1201,6 +1291,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
         fallbackContext: input.value.trim(),
         fallbackUrl: location.href,
         fallbackTitle: document.title,
+      }, {
+        onChunk: (chunk) => {
+          streamed += chunk;
+          renderConversation(captureId, [...nextMessages, { role: "assistant", content: streamed }], true, "Writing…");
+        },
       })
         .then((response) => renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
         .catch((error) => renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
@@ -1414,7 +1509,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }
 
       renderLoading();
-      sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
+      let captureId = "";
+      let streamed = "";
+      streamRuntimeMessage<{ captureId: string; explanation: string }>({ ...message, type: "SAVE_HIGHLIGHT_STREAM" }, {
+        onStart: (id) => { captureId = id; },
+        onChunk: (chunk) => {
+          streamed += chunk;
+          if (captureId) {
+            renderConversation(captureId, [{ role: "assistant", content: streamed }], true, "Writing…");
+          }
+        },
+      })
         .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
         .catch((error) => renderError(error.message));
     });
@@ -1968,8 +2073,9 @@ function showCropOverlay(screenshotDataUrl: string) {
         panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
         renderConversationPanel(captureId, nextMessages, true, panelDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
-        sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
-          type: "ASK_FOLLOWUP",
+        let streamed = "";
+        streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+          type: "ASK_FOLLOWUP_STREAM",
           captureId,
           question,
           deepDive: panelDeepDiveActive,
@@ -1977,6 +2083,11 @@ function showCropOverlay(screenshotDataUrl: string) {
           fallbackContext: activePanelContext,
           fallbackUrl: location.href,
           fallbackTitle: document.title,
+        }, {
+          onChunk: (chunk) => {
+            streamed += chunk;
+            renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: streamed }], true, "Writing…");
+          },
         })
           .then((response) => renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
           .catch((error) => renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
@@ -2196,7 +2307,17 @@ function showCropOverlay(screenshotDataUrl: string) {
           }
 
           renderLoadingPanel();
-          sendRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT", imageData: croppedDataUrl, context })
+          let captureId = "";
+          let streamed = "";
+          streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: croppedDataUrl, context }, {
+            onStart: (id) => { captureId = id; },
+            onChunk: (chunk) => {
+              streamed += chunk;
+              if (captureId) {
+                renderConversationPanel(captureId, [{ role: "assistant", content: streamed }], true, "Writing…");
+              }
+            },
+          })
             .then((response) => renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]))
             .catch((error) => renderErrorPanel(error.message));
         });
