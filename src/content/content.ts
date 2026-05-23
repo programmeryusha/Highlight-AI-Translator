@@ -1,4 +1,4 @@
-import type { ChatMessage, Message } from "../types";
+import type { Capture, ChatMessage, Message } from "../types";
 
 const CONTENT_SCRIPT_VERSION = "2026-05-17-quran-selection-v1";
 const DEFAULT_ACCENT_COLOR = "#6466f1";
@@ -232,6 +232,41 @@ function clampLeftToViewport(preferredLeft: number, width: number) {
   const minLeft = rect.left + 8;
   const maxLeft = rect.left + Math.max(0, rect.width - width - 8);
   return Math.max(minLeft, Math.min(preferredLeft, maxLeft));
+}
+
+function overlayPositionAwayFromRect(
+  target: { left: number; top: number; right: number; bottom: number; width: number; height: number },
+  width: number,
+  height: number,
+  fallbackX: number,
+  fallbackY: number,
+) {
+  const viewport = getVisualViewportRect();
+  const gap = 14;
+  const left = fixedViewportX(target.left);
+  const right = fixedViewportX(target.right);
+  const top = fixedViewportY(target.top);
+  const bottom = fixedViewportY(target.bottom);
+  const centerY = top + target.height / 2;
+  const centerX = left + target.width / 2;
+
+  if (viewport.left + viewport.width - right >= width + gap + 8) {
+    return { left: clampLeftToViewport(right + gap, width), top: panelTopFor(centerY - height / 2, height) };
+  }
+  if (left - viewport.left >= width + gap + 8) {
+    return { left: clampLeftToViewport(left - width - gap, width), top: panelTopFor(centerY - height / 2, height) };
+  }
+  if (viewport.top + viewport.height - bottom >= height + gap + 8) {
+    return { left: clampLeftToViewport(centerX - width / 2, width), top: panelTopFor(bottom + gap, height) };
+  }
+  if (top - viewport.top >= height + gap + 8) {
+    return { left: clampLeftToViewport(centerX - width / 2, width), top: panelTopFor(top - height - gap, height) };
+  }
+
+  return {
+    left: clampLeftToViewport(fallbackX - width / 2, width),
+    top: panelTopFor(fallbackY - height - gap, height),
+  };
 }
 
 type DragBounds = { left: number; top: number; width: number; height: number };
@@ -613,8 +648,13 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   let widgetWidth = panelWidthFor();
   let widgetHeight = 0;
-  let left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
-  let top = panelTopFor(y - 138, 132);
+  const selectionForPlacement = selectedPageText()?.rect ?? null;
+  let userPlacedWidget = false;
+  const initialPosition = selectionForPlacement
+    ? overlayPositionAwayFromRect(selectionForPlacement, widgetWidth, 132, x, y)
+    : { left: clampLeftToViewport(x - widgetWidth / 2, widgetWidth), top: panelTopFor(y - 138, 132) };
+  let left = initialPosition.left;
+  let top = initialPosition.top;
 
   widget = document.createElement("div");
   widget.setAttribute(
@@ -770,8 +810,14 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const maxH = expandedPanelMaxHeight();
     const actualHeight = widget.getBoundingClientRect().height;
     const heightForClamp = Math.min(actualHeight > 0 ? actualHeight : maxH, maxH);
-    left = clampLeftToViewport(left, widgetWidth);
-    top = panelTopFor(top - lift, heightForClamp);
+    if (selectionForPlacement && !userPlacedWidget) {
+      const next = overlayPositionAwayFromRect(selectionForPlacement, widgetWidth, heightForClamp, x, y);
+      left = next.left;
+      top = next.top;
+    } else {
+      left = clampLeftToViewport(left, widgetWidth);
+      top = panelTopFor(top - lift, heightForClamp);
+    }
     widget.style.left = `${left}px`;
     widget.style.top = `${top}px`;
     widget.style.maxHeight = `${maxH}px`;
@@ -789,6 +835,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
+        userPlacedWidget = true;
         const sx = e.clientX, sy = e.clientY;
         const sw = widgetWidth;
         const sh = widgetHeight > 0 ? widgetHeight : (widget?.offsetHeight ?? 400);
@@ -879,6 +926,40 @@ function showContextInput(x: number, y: number, selectedText: string) {
     row.appendChild(signInBtn);
     row.appendChild(closeBtn);
     widget.replaceChildren(msg, row);
+  }
+
+  function renderSimilarSavePrompt(similar: Capture, onKeepBoth: () => void, onReplaceEarlier: () => void) {
+    if (!widget) return;
+    styleExpandedWidget();
+    const colors = uiColors();
+    const title = document.createElement("div");
+    title.textContent = `This looks similar to a save from ${shortRelativeTime(similar.savedAt)}.`;
+    title.setAttribute("style", `color:${colors.text};font-size:14px;line-height:1.45;font-weight:700;margin-bottom:6px;`);
+    const detail = document.createElement("div");
+    const previewText = similar.text.length > 110 ? `${similar.text.slice(0, 110).trim()}…` : similar.text;
+    detail.textContent = `"${previewText}"`;
+    detail.setAttribute("style", `color:${colors.muted};font-size:12px;line-height:1.45;margin-bottom:12px;max-height:54px;overflow:hidden;`);
+    const row = document.createElement("div");
+    row.setAttribute("style", "display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;");
+    const keepBtn = document.createElement("button");
+    keepBtn.textContent = "Keep both";
+    keepBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer;`);
+    keepBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onKeepBoth();
+    });
+    const replaceBtn = document.createElement("button");
+    replaceBtn.textContent = "Replace earlier";
+    replaceBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 12px;font-size:13px;font-weight:800;cursor:pointer;`);
+    replaceBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onReplaceEarlier();
+    });
+    row.appendChild(keepBtn);
+    row.appendChild(replaceBtn);
+    widget.replaceChildren(title, detail, row);
   }
 
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
@@ -1274,7 +1355,31 @@ function showContextInput(x: number, y: number, selectedText: string) {
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
 
-  function doSave(closeAfterSave = false) {
+  function submitSaveMessage(message: Message, closeAfterSave: boolean) {
+    submitted = true;
+    window.getSelection()?.removeAllRanges();
+
+    if (closeAfterSave) {
+      chrome.runtime.sendMessage(message);
+      removeWidget();
+      return;
+    }
+
+    getShowAnswerImmediately((immediate) => {
+      if (!immediate) {
+        chrome.runtime.sendMessage(message);
+        removeWidget();
+        return;
+      }
+
+      renderLoading();
+      sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
+        .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
+        .catch((error) => renderError(error.message));
+    });
+  }
+
+  function doSave(closeAfterSave = false, replaceCaptureId?: string, skipSimilarCheck = false) {
     if (submitted || submitting) {
       if (closeAfterSave) removeWidget();
       return;
@@ -1289,7 +1394,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
         return;
       }
 
-      submitted = true;
       const context = input.value.trim();
       const message: Message = {
         type: "SAVE_HIGHLIGHT",
@@ -1297,27 +1401,27 @@ function showContextInput(x: number, y: number, selectedText: string) {
         url: location.href,
         title: document.title,
         context,
+        replaceCaptureId,
       };
-      window.getSelection()?.removeAllRanges();
 
-      if (closeAfterSave) {
-        chrome.runtime.sendMessage(message);
-        removeWidget();
+      if (closeAfterSave || replaceCaptureId || skipSimilarCheck) {
+        submitSaveMessage(message, closeAfterSave);
         return;
       }
 
-      getShowAnswerImmediately((immediate) => {
-        if (!immediate) {
-          chrome.runtime.sendMessage(message);
-          removeWidget();
-          return;
-        }
-
-        renderLoading();
-        sendRuntimeMessage<{ captureId: string; explanation: string }>(message)
-          .then((response) => renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]))
-          .catch((error) => renderError(error.message));
-      });
+      similarRecentSave(selectedText, location.href)
+        .then((similar) => {
+          if (!similar || submitted) {
+            submitSaveMessage(message, closeAfterSave);
+            return;
+          }
+          renderSimilarSavePrompt(
+            similar,
+            () => doSave(closeAfterSave, undefined, true),
+            () => doSave(closeAfterSave, similar.id, true),
+          );
+        })
+        .catch(() => submitSaveMessage(message, closeAfterSave));
     });
   }
 
@@ -2440,6 +2544,86 @@ function normalizeArabicForCompare(value: string) {
   return normalizeCandidateText(value)
     .normalize("NFKC")
     .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640\s]/g, "");
+}
+
+function normalizePageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
+}
+
+function normalizeForSimilarity(value: string) {
+  const base = normalizeCandidateText(value).normalize("NFKC").toLowerCase();
+  return hasArabicScript(base)
+    ? base.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, "")
+    : base;
+}
+
+function bigrams(value: string) {
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 2) return compact ? [compact] : [];
+  return Array.from({ length: compact.length - 1 }, (_, index) => compact.slice(index, index + 2));
+}
+
+function characterSimilarity(a: string, b: string) {
+  const left = normalizeForSimilarity(a);
+  const right = normalizeForSimilarity(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length > right.length ? left : right;
+  if (longer.includes(shorter) && shorter.length / longer.length >= 0.55) return 0.92;
+
+  const leftBigrams = bigrams(left);
+  const rightCounts = new Map<string, number>();
+  bigrams(right).forEach((gram) => rightCounts.set(gram, (rightCounts.get(gram) ?? 0) + 1));
+  let overlap = 0;
+  leftBigrams.forEach((gram) => {
+    const count = rightCounts.get(gram) ?? 0;
+    if (count > 0) {
+      overlap += 1;
+      rightCounts.set(gram, count - 1);
+    }
+  });
+  const denominator = leftBigrams.length + Array.from(rightCounts.values()).reduce((sum, count) => sum + count, 0) + overlap;
+  return denominator === 0 ? 0 : (2 * overlap) / denominator;
+}
+
+function getLocalCaptures(): Promise<Capture[]> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get("captures", (result) => resolve(result.captures ?? []));
+  });
+}
+
+async function similarRecentSave(text: string, url: string): Promise<Capture | null> {
+  const captures = await getLocalCaptures();
+  const now = Date.now();
+  const pageUrl = normalizePageUrl(url);
+  const normalizedText = normalizeForSimilarity(text);
+  if (!normalizedText) return null;
+
+  return captures
+    .filter((capture) => {
+      if (capture.imageData) return false;
+      if (normalizePageUrl(capture.url) !== pageUrl) return false;
+      const age = now - new Date(capture.savedAt).getTime();
+      if (age < 0 || age > 5 * 60_000) return false;
+      const existing = normalizeForSimilarity(capture.text);
+      if (!existing || existing === normalizedText) return false;
+      return characterSimilarity(existing, normalizedText) >= 0.86;
+    })
+    .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())[0] ?? null;
+}
+
+function shortRelativeTime(iso: string) {
+  const seconds = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? "second" : "seconds"} ago`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
 }
 
 function isSuspiciousSelectionText(value: string) {

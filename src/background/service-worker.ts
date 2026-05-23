@@ -5,6 +5,7 @@ const CONTENT_SCRIPT_FILE = "src/content/content.js";
 const INJECTABLE_URL_PATTERN = /^https?:\/\//i;
 const DEFAULT_SAVE_TRIGGERS = { bubble: true, contextMenu: true };
 const DEEP_DIVE_CAPTURE_IDS_KEY = "deep_dive_capture_ids";
+const EXACT_DUPLICATE_WINDOW_MS = 60_000;
 
 interface RemoteCapture {
   id: string;
@@ -23,6 +24,36 @@ interface CaptureFallback {
   imageData?: string;
   url?: string;
   title?: string;
+}
+
+function normalizePageUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
+}
+
+function normalizeTextForDuplicate(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findExactRecentDuplicate(captures: Capture[], text: string, url: string, now = Date.now()): Capture | null {
+  const normalizedText = normalizeTextForDuplicate(text);
+  const normalizedUrl = normalizePageUrl(url);
+  if (!normalizedText || !normalizedUrl) return null;
+  return captures.find((capture) => {
+    if (capture.imageData) return false;
+    if (normalizePageUrl(capture.url) !== normalizedUrl) return false;
+    if (normalizeTextForDuplicate(capture.text) !== normalizedText) return false;
+    return now - new Date(capture.savedAt).getTime() <= EXACT_DUPLICATE_WINDOW_MS;
+  }) ?? null;
 }
 
 function errorMessage(error: unknown): string {
@@ -195,7 +226,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // Handle messages from content script and crop page
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   if (message.type === "SAVE_HIGHLIGHT") {
-    saveHighlight(message.text, message.url, message.title, message.context)
+    saveHighlight(message.text, message.url, message.title, message.context, message.replaceCaptureId)
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -519,6 +550,84 @@ async function updateCapture(id: string, patch: Partial<Capture>): Promise<Captu
   return captures[idx];
 }
 
+async function waitForCaptureResult(captureId: string): Promise<{ captureId: string; explanation: string }> {
+  for (let attempt = 0; attempt < 48; attempt += 1) {
+    const storage = await chrome.storage.local.get("captures");
+    const captures: Capture[] = storage.captures ?? [];
+    const capture = captures.find((candidate) => candidate.id === captureId);
+    if (!capture) break;
+    if (capture.status === "done" && capture.explanation) return { captureId, explanation: capture.explanation };
+    if (capture.status === "error") throw new Error(capture.errorMessage || "The earlier save failed.");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return { captureId, explanation: "Already saved a moment ago. The first answer is still being prepared." };
+}
+
+function captureHasAttachedData(capture: Capture, setCaptureIds: Set<string>, deepDiveIds: Set<string>): number {
+  let score = 0;
+  if (capture.explanation) score += 3;
+  if (capture.status === "done") score += 1;
+  if (setCaptureIds.has(capture.id)) score += 3;
+  if (deepDiveIds.has(capture.id)) score += 2;
+  return score;
+}
+
+function chooseMergeBase(existing: Capture, incoming: Capture, setCaptureIds: Set<string>, deepDiveIds: Set<string>): Capture {
+  const existingScore = captureHasAttachedData(existing, setCaptureIds, deepDiveIds);
+  const incomingScore = captureHasAttachedData(incoming, setCaptureIds, deepDiveIds);
+  if (existingScore !== incomingScore) return existingScore > incomingScore ? existing : incoming;
+  return normalizeTextForDuplicate(incoming.text).length > normalizeTextForDuplicate(existing.text).length ? incoming : existing;
+}
+
+async function saveMergedHighlight(existingId: string, incoming: Capture): Promise<{ captureId: string; explanation: string }> {
+  const storage = await chrome.storage.local.get(["captures", "flashcard_sets", DEEP_DIVE_CAPTURE_IDS_KEY, `chat_${existingId}`]);
+  const captures: Capture[] = storage.captures ?? [];
+  const idx = captures.findIndex((capture) => capture.id === existingId);
+  if (idx === -1) {
+    await addCapture(incoming);
+    return explainPendingHighlight(incoming);
+  }
+
+  const sets = Array.isArray(storage.flashcard_sets) ? storage.flashcard_sets : [];
+  const setCaptureIds = new Set<string>();
+  sets.forEach((set: { captureIds?: unknown }) => {
+    if (Array.isArray(set.captureIds)) {
+      set.captureIds.forEach((id) => { if (typeof id === "string") setCaptureIds.add(id); });
+    }
+  });
+  const deepDiveIds = new Set<string>(storage[DEEP_DIVE_CAPTURE_IDS_KEY] ?? []);
+  const existing = captures[idx];
+  const base = chooseMergeBase(existing, incoming, setCaptureIds, deepDiveIds);
+  const earliestSavedAt = new Date(existing.savedAt) <= new Date(incoming.savedAt) ? existing.savedAt : incoming.savedAt;
+  const merged: Capture = {
+    ...base,
+    id: existing.id,
+    savedAt: earliestSavedAt,
+    context: base.context || incoming.context || existing.context,
+    title: base.title || incoming.title || existing.title,
+    url: base.url || incoming.url || existing.url,
+  };
+
+  if (base.id === incoming.id && !incoming.explanation) {
+    merged.explanation = null;
+    merged.status = "pending";
+    delete merged.errorMessage;
+  }
+
+  captures[idx] = merged;
+  await chrome.storage.local.set({ captures });
+
+  if (merged.status === "done" && merged.explanation) {
+    void saveCaptureRemote(merged).catch((syncError) => {
+      console.warn("ContextLens remote save skipped", syncError);
+    });
+    await seedChat(existing.id, merged.explanation);
+    return { captureId: existing.id, explanation: merged.explanation };
+  }
+
+  return explainPendingHighlight(merged);
+}
+
 async function getDeepDiveCaptureIds(): Promise<Set<string>> {
   const storage = await chrome.storage.local.get(DEEP_DIVE_CAPTURE_IDS_KEY);
   return new Set(storage[DEEP_DIVE_CAPTURE_IDS_KEY] ?? []);
@@ -567,9 +676,9 @@ function latestAssistantContent(messages: ChatMessage[]): string | null {
   return null;
 }
 
-async function restoreCaptureFromFallback(captureId: string, fallback: CaptureFallback, messages: ChatMessage[]): Promise<Capture | null> {
+async function restoreCaptureFromFallback(captureId: string, fallback: CaptureFallback, messages: ChatMessage[]): Promise<Capture | undefined> {
   const text = fallback.imageData ? "[Screenshot]" : fallback.text?.trim();
-  if (!text && !fallback.imageData) return null;
+  if (!text && !fallback.imageData) return undefined;
 
   const capture: Capture = {
     id: captureId,
@@ -730,7 +839,31 @@ async function generateAnalogy(text: string): Promise<{ analogy: string }> {
 }
 
 
-async function saveHighlight(text: string, url: string, title: string, context: string): Promise<{ captureId: string; explanation: string }> {
+async function explainPendingHighlight(capture: Capture): Promise<{ captureId: string; explanation: string }> {
+  const id = capture.id;
+  try {
+    const explanation = await fetchExplanation(capture.text, capture.context);
+    const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
+    if (updated) {
+      void saveCaptureRemote(updated).catch((syncError) => {
+        console.warn("ContextLens remote save skipped", syncError);
+      });
+    }
+    await seedChat(id, explanation);
+    return { captureId: id, explanation };
+  } catch (error) {
+    console.error("ContextLens failed to explain highlight", error);
+    await updateCapture(id, { status: "error", errorMessage: errorMessage(error) });
+    throw error;
+  }
+}
+
+async function saveHighlight(text: string, url: string, title: string, context: string, replaceCaptureId?: string): Promise<{ captureId: string; explanation: string }> {
+  const storage = await chrome.storage.local.get("captures");
+  const captures: Capture[] = storage.captures ?? [];
+  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, url);
+  if (duplicate) return waitForCaptureResult(duplicate.id);
+
   const id = crypto.randomUUID();
   const capture: Capture = {
     id,
@@ -743,21 +876,8 @@ async function saveHighlight(text: string, url: string, title: string, context: 
     status: "pending",
   };
 
-  await addCapture(capture);
+  if (replaceCaptureId) return saveMergedHighlight(replaceCaptureId, capture);
 
-  try {
-    const explanation = await fetchExplanation(text, context);
-    const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
-    if (capture) {
-      void saveCaptureRemote(capture).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
-    }
-    await seedChat(id, explanation);
-    return { captureId: id, explanation };
-  } catch (error) {
-    console.error("ContextLens failed to explain highlight", error);
-    await updateCapture(id, { status: "error", errorMessage: errorMessage(error) });
-    throw error;
-  }
+  await addCapture(capture);
+  return explainPendingHighlight(capture);
 }

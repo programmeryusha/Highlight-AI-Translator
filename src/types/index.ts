@@ -39,7 +39,7 @@ export interface ContextLensUser {
 }
 
 export type Message =
-  | { type: "SAVE_HIGHLIGHT"; text: string; url: string; title: string; context: string }
+  | { type: "SAVE_HIGHLIGHT"; text: string; url: string; title: string; context: string; replaceCaptureId?: string }
   | { type: "SHOW_CONTEXT_INPUT"; text: string }
   | { type: "TAKE_SCREENSHOT" }
   | { type: "SHOW_CROP_OVERLAY"; imageData: string }

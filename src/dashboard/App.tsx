@@ -782,9 +782,22 @@ function SavesView({
 
   if (captures.length === 0) {
     return (
-      <p style={{ color: colors.muted, fontSize: 15, paddingTop: 48 }}>
-        Nothing saved yet. Highlight any text on the web to save it here.
-      </p>
+      <div style={{ paddingTop: 48, maxWidth: 620 }}>
+        <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
+          Nothing saved yet.
+        </p>
+        <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.65, margin: "0 0 18px" }}>
+          Highlight text on any page, click Save, and ContextLens will keep the source, your question, and the explanation together as a card.
+        </p>
+        <div style={{ border: `1px solid ${colors.border}`, borderLeft: `3px solid ${colors.accent}`, borderRadius: 8, background: colors.surface, padding: "15px 16px", maxWidth: 460 }}>
+          <p style={{ color: colors.softText, fontSize: 15, lineHeight: 1.55, margin: "0 0 10px" }}>
+            "A word or passage you highlighted…"
+          </p>
+          <p style={{ color: colors.text, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+            The answer appears here, ready to review or turn into flashcards.
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -1008,9 +1021,6 @@ function HistoryView({
   const [selectedDay, setSelectedDay] = useState(todayKey());
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
-  const previousDay = addDays(selectedDay, -1);
-  const nextDay = addDays(selectedDay, 1);
-  const canGoNext = nextDay <= todayKey();
   const dockCalendar = windowWidth >= 1600;
   const calendarGap = 92;
   const calendarWidth = 300;
@@ -1042,48 +1052,15 @@ function HistoryView({
           margin: dockCalendar ? `0 ${calendarWidth + calendarGap}px 0 0` : "0 auto",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 28 }}>
-          <button
-            onClick={() => selectDay(previousDay)}
-            aria-label="Previous day"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 999,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.text,
-              cursor: "pointer",
-              fontSize: 18,
-            }}
-          >
-            ‹
-          </button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 28 }}>
           <div style={{ minWidth: 220, textAlign: "center" }}>
             <h2 style={{ fontSize: 22, color: colors.text, margin: 0, fontWeight: 700 }}>
               {selectedDayLabel()}
             </h2>
             <p style={{ fontSize: 13, color: colors.muted, margin: "5px 0 0" }}>
-              {selectedCaptures.length} {selectedCaptures.length === 1 ? "save" : "saves"}
+              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · pick dates from the calendar
             </p>
           </div>
-          <button
-            onClick={() => canGoNext && selectDay(nextDay)}
-            disabled={!canGoNext}
-            aria-label="Next day"
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 999,
-              border: `1px solid ${colors.border}`,
-              background: canGoNext ? colors.surface : colors.surfaceAlt,
-              color: canGoNext ? colors.text : colors.muted,
-              cursor: canGoNext ? "pointer" : "default",
-              fontSize: 18,
-            }}
-          >
-            ›
-          </button>
         </div>
 
         {selectedCaptures.length > 0 ? (
@@ -1157,55 +1134,127 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
 }
 
 function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors }) {
+  const [deck, setDeck] = useState(words);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [ratings, setRatings] = useState<Record<string, "known" | "learning">>({});
 
-  if (words.length === 0) return null;
-  const card = words[index];
+  useEffect(() => {
+    setDeck(words);
+    setIndex(0);
+    setFlipped(false);
+    setRatings({});
+  }, [words]);
 
-  function next() { setFlipped(false); setTimeout(() => setIndex((i) => (i + 1) % words.length), 150); }
-  function prev() { setFlipped(false); setTimeout(() => setIndex((i) => (i - 1 + words.length) % words.length), 150); }
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      if (event.key === " ") {
+        event.preventDefault();
+        setFlipped((current) => !current);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        next();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        prev();
+      } else if (event.key === "1" && flipped) {
+        event.preventDefault();
+        rate("learning");
+      } else if (event.key === "2" && flipped) {
+        event.preventDefault();
+        rate("known");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  if (deck.length === 0) return null;
+  const card = deck[Math.min(index, deck.length - 1)];
+  const knownCount = Object.values(ratings).filter((rating) => rating === "known").length;
+  const learningCount = Object.values(ratings).filter((rating) => rating === "learning").length;
+  const progress = Math.round(((index + (flipped ? 0.5 : 0)) / deck.length) * 100);
+
+  function next() {
+    setFlipped(false);
+    setIndex((current) => (current + 1) % deck.length);
+  }
+
+  function prev() {
+    setFlipped(false);
+    setIndex((current) => (current - 1 + deck.length) % deck.length);
+  }
+
+  function rate(rating: "known" | "learning") {
+    const currentCard = deck[index];
+    setRatings((current) => ({ ...current, [currentCard.id]: rating }));
+    if (rating === "learning" && deck.length > 1) {
+      setDeck((currentDeck) => {
+        const nextDeck = [...currentDeck];
+        const [item] = nextDeck.splice(index, 1);
+        const insertAt = Math.min(nextDeck.length, index + 2);
+        nextDeck.splice(insertAt, 0, item);
+        return nextDeck;
+      });
+      setFlipped(false);
+      setIndex((current) => Math.min(current, deck.length - 1));
+      return;
+    }
+    next();
+  }
 
   return (
-    <div style={{ maxWidth: 600, margin: "0 auto", paddingTop: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: colors.muted, fontSize: 14, cursor: "pointer" }}>
+    <div style={{ maxWidth: 760, margin: "0 auto", paddingTop: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 16 }}>
+        <button onClick={onClose} style={{ ...subtleButtonStyle(colors, 13), background: colors.surface }}>
           ← Back to flashcards
         </button>
-        <span style={{ fontSize: 13, color: colors.muted }}>{index + 1} / {words.length}</span>
+        <span style={{ fontSize: 13, color: colors.muted, fontWeight: 750 }}>{index + 1} / {deck.length}</span>
       </div>
 
-      {/* Card */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${Math.max(4, progress)}%`, background: colors.accent, transition: "width 160ms ease" }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: colors.muted }}>Space flips · arrows navigate · 1 learning · 2 known</span>
+          <span style={{ fontSize: 12, color: colors.muted }}>{knownCount} known · {learningCount} still learning</span>
+        </div>
+      </div>
+
       <div
         onClick={() => setFlipped((f) => !f)}
         style={{
-          minHeight: 220,
+          minHeight: 320,
           background: flipped ? colors.surfaceAlt : colors.surface,
           border: `1px solid ${colors.border}`,
-          borderRadius: 12,
+          borderRadius: 10,
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "40px 48px",
+          alignItems: flipped ? "stretch" : "center",
+          justifyContent: flipped ? "flex-start" : "center",
+          padding: "34px 40px",
           cursor: "pointer",
           transition: "background 0.2s",
-          textAlign: "center",
+          textAlign: flipped ? "left" : "center",
           marginBottom: 24,
+          boxShadow: "0 10px 30px rgba(15,15,15,0.08)",
         }}
       >
         {!flipped ? (
           <>
             <p style={{ fontSize: 28, fontWeight: 700, color: colors.text, margin: 0 }}>{card.word}</p>
-            <p style={{ fontSize: 13, color: colors.muted, marginTop: 16 }}>Click to reveal</p>
+            <p style={{ fontSize: 13, color: colors.muted, marginTop: 16 }}>Click or press Space to reveal</p>
           </>
         ) : (
           <>
-            <div style={{ fontSize: 16, color: colors.text, lineHeight: 1.7, margin: 0 }}>
+            <p style={{ fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 850, margin: "0 0 10px" }}>Answer</p>
+            <div style={{ fontSize: 17, color: colors.text, lineHeight: 1.75, margin: 0, maxWidth: "72ch" }}>
               {renderMarkdown(card.explanation || "No explanation yet — save a highlight with this question to get one.")}
             </div>
             {card.exampleText && (
-              <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, fontStyle: "italic" }}>
+              <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, lineHeight: 1.55, borderLeft: `3px solid ${colors.border}`, paddingLeft: 10 }}>
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
               </p>
             )}
@@ -1213,7 +1262,17 @@ function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose
         )}
       </div>
 
-      {/* Nav */}
+      {flipped && (
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => rate("learning")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
+            Still learning
+          </button>
+          <button type="button" onClick={() => rate("known")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
+            Known
+          </button>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
         <button onClick={prev} style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: colors.text }}>
           ← Prev
@@ -1469,7 +1528,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         <div>
           <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
           <p style={{ fontSize: 13, color: colors.muted, margin: 0 }}>
-            {words.length} {words.length === 1 ? "card" : "cards"} from {sourceLabel}
+            {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1502,7 +1561,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
       {showExport && (
         <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 22, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
-            Export {words.length} {words.length === 1 ? "flashcard" : "flashcards"} from {sourceLabel}.
+            Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
           </p>
           {exportButtons(words, "Current selection")}
         </div>
@@ -1519,7 +1578,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
       {showCreateSet && (
         <FlashcardPopup title="Create set" onClose={() => setShowCreateSet(false)} colors={colors}>
           <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
-            Save {words.length} {words.length === 1 ? "card" : "cards"} from {sourceLabel}.
+            Save {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
           </p>
           <input
             autoFocus
@@ -1534,10 +1593,12 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
               <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Independent set</span>
               <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>Keep it at the top level.</span>
             </button>
-            <button type="button" disabled={sets.length === 0} onClick={() => { if (sets.length > 0) setNewSetPlacement("nested"); }} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "nested" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "nested" ? colors.accentSoft : colors.surfaceAlt, color: sets.length > 0 ? colors.text : colors.muted, padding: "10px 11px", cursor: sets.length > 0 ? "pointer" : "default", opacity: sets.length > 0 ? 1 : 0.62 }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Set within a set</span>
-              <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>{sets.length > 0 ? "Nest it under an existing set." : "Create a set first."}</span>
-            </button>
+            {sets.length > 0 && (
+              <button type="button" onClick={() => setNewSetPlacement("nested")} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "nested" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "nested" ? colors.accentSoft : colors.surfaceAlt, color: colors.text, padding: "10px 11px", cursor: "pointer" }}>
+                <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Set within a set</span>
+                <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>Nest it under an existing set.</span>
+              </button>
+            )}
           </div>
           {newSetPlacement === "nested" && (
             <label style={{ display: "grid", gap: 5, marginBottom: 14 }}>
@@ -1576,7 +1637,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
                     <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
                       <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
                       <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>
-                        {count} saved {count === 1 ? "card" : "cards"}{parent ? ` within ${parent.name}` : ""}
+                        {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
                       </span>
                     </button>
                     <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>x</button>
@@ -1610,19 +1671,16 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
 
       {words.length === 0 ? (
         <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No saved cards in {sourceLabel}. Pick another range or click days in the calendar.
+          No cards · {sourceLabel}. Pick another range or click days in the calendar.
         </p>
       ) : (
         <div>
           {words.map((word) => (
-            <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "start", gap: 16 }}>
+            <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr", alignItems: "start", gap: 16 }}>
               <div>
                 <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>{word.word}</p>
                 {word.explanation && <div style={{ fontSize: 14, color: colors.softText, margin: "4px 0 0", lineHeight: 1.6 }}>{renderMarkdown(word.explanation)}</div>}
               </div>
-              <span style={{ fontSize: 12, color: colors.muted, background: colors.subtle, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap", marginTop: 4 }}>
-                ×{word.count}
-              </span>
             </div>
           ))}
         </div>
