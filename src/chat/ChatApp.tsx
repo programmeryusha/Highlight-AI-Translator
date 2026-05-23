@@ -200,6 +200,18 @@ export default function ChatApp() {
 
   const accentSoft   = colorWithAlpha(accentColor, 0.14);
   const accentBorder = colorWithAlpha(accentColor, 0.38);
+  const sourceToggleStyle: React.CSSProperties = {
+    background: colors.surface,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 7,
+    color: accentColor,
+    fontSize: 13,
+    fontWeight: 750,
+    cursor: "pointer",
+    padding: "6px 10px",
+    marginTop: 10,
+    marginBottom: 2,
+  };
 
   if (!capture) {
     return (
@@ -266,7 +278,7 @@ export default function ChatApp() {
           {sourceIsLong && (
             <button
               onClick={() => setSourceExpanded((v) => !v)}
-              style={{ background: "none", border: "none", color: accentColor, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 6 }}
+              style={sourceToggleStyle}
             >
               {sourceExpanded ? "Collapse text" : "Show full text"}
             </button>

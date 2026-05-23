@@ -86,6 +86,27 @@ function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${rgbTriplet(hex)}, ${alpha})`;
 }
 
+function hasRtlText(text: string): boolean {
+  return /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(text);
+}
+
+function subtleButtonStyle(colors: DashboardColors, fontSize = 13): React.CSSProperties {
+  return {
+    background: colors.surfaceAlt,
+    color: colors.text,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 7,
+    padding: "6px 10px",
+    fontSize,
+    fontWeight: 750,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "fit-content",
+  };
+}
+
 function relativeLuminance(hex: string): number {
   const c = normalizeHexColor(hex);
   const lin = (v: number) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
@@ -276,7 +297,7 @@ function SaveErrorNotice({
   }
 
   return (
-    <div role="status" style={{ margin: "12px 0 0 34px", border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, background: colors.dangerSoft, padding: "12px 13px", maxWidth: 780 }}>
+    <div role="status" style={{ margin: "12px 0 0", border: `1px solid ${colors.dangerBorder}`, borderRadius: 8, background: colors.dangerSoft, padding: "12px 13px", maxWidth: "74ch" }}>
       <p style={{ fontSize: 14, color: colors.danger, margin: 0, lineHeight: 1.45, fontWeight: 800 }}>
         {parsed.summary}
       </p>
@@ -508,7 +529,7 @@ function TrashIcon() {
   );
 }
 
-function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; onToggle: () => void; colors: DashboardColors }) {
+function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; onToggle: (event: React.MouseEvent<HTMLButtonElement>) => void; colors: DashboardColors }) {
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -523,20 +544,20 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onToggle();
+        onToggle(event);
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 30,
-        height: 30,
-        borderRadius: 7,
+        width: 24,
+        height: 24,
+        borderRadius: 6,
         border: selected ? `2px solid ${colors.accent}` : `2px solid ${hovered ? colors.accent : colors.border}`,
         background: selected ? colors.accent : hovered ? colors.accentSoft : colors.surfaceAlt,
         color: selected ? colors.selectedText : colors.accent,
         cursor: "pointer",
-        fontSize: 16,
-        lineHeight: "26px",
+        fontSize: 13,
+        lineHeight: "20px",
         fontWeight: 800,
         flexShrink: 0,
         padding: 0,
@@ -550,90 +571,134 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
   );
 }
 
-function DeleteSaveButton({ onDelete, colors }: { onDelete: () => void; colors: DashboardColors }) {
+function SaveOverflowMenu({
+  open,
+  onToggle,
+  onDelete,
+  colors,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  colors: DashboardColors;
+}) {
   return (
-    <button
-      type="button"
-      aria-label="Delete save"
-      title="Delete save"
-      onMouseDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onDelete();
-      }}
-      style={{
-        width: 30,
-        height: 30,
-        borderRadius: 999,
-        border: `1px solid ${colors.border}`,
-        background: colors.surface,
-        color: colors.muted,
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}
-    >
-      <TrashIcon />
-    </button>
-  );
-}
-
-function SelectBelowButton({ onSelect, colors }: { onSelect: () => void; colors: DashboardColors }) {
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <button
-      type="button"
-      title="Select this save and every save below it"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onSelect();
-      }}
-      style={{
-        width: 28,
-        border: `1px solid ${hovered ? colors.accent : colors.border}`,
-        borderRadius: 5,
-        background: hovered ? colors.accentSoft : colors.surface,
-        color: hovered ? colors.accent : colors.muted,
-        padding: "3px 1px",
-        cursor: "pointer",
-        fontSize: 8,
-        lineHeight: 1.1,
-        fontWeight: 800,
-      }}
-    >
-      Select below
-    </button>
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        type="button"
+        aria-label="Save options"
+        title="Save options"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggle();
+        }}
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 999,
+          border: `1px solid ${open ? colors.accent : colors.border}`,
+          background: open ? colors.accentSoft : colors.surface,
+          color: open ? colors.accent : colors.muted,
+          cursor: "pointer",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+          fontWeight: 850,
+          lineHeight: 1,
+          padding: 0,
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: 36,
+            zIndex: 20,
+            minWidth: 142,
+            background: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            padding: 6,
+            boxShadow: "0 14px 34px rgba(15, 15, 15, 0.16)",
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onDelete();
+            }}
+            style={{
+              width: "100%",
+              border: "none",
+              borderRadius: 6,
+              background: "transparent",
+              color: colors.danger,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 9px",
+              fontSize: 13,
+              fontWeight: 750,
+              textAlign: "left",
+            }}
+          >
+            <TrashIcon />
+            Delete save
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
 function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
   const [hovered, setHovered] = useState(false);
-  const linkStyle: React.CSSProperties = {
+  const rtl = hasRtlText(capture.text);
+  const sourceStyle: React.CSSProperties = {
     background: "none",
     border: "none",
-    color: colors.text,
+    borderRight: rtl ? `3px solid ${colors.border}` : undefined,
+    borderLeft: rtl ? undefined : `3px solid ${colors.border}`,
+    color: colors.softText,
     cursor: "pointer",
     display: "block",
     font: "inherit",
     fontSize: typography.source,
-    fontWeight: 650,
+    fontWeight: 500,
     lineHeight: 1.6,
     margin: 0,
-    padding: 0,
-    textAlign: "left",
+    maxWidth: "74ch",
+    padding: rtl ? "2px 13px 2px 0" : "2px 0 2px 13px",
+    direction: rtl ? "rtl" : "ltr",
+    textAlign: rtl ? "right" : "left",
     textDecoration: hovered ? "underline" : "none",
     textDecorationColor: colors.accent,
     textUnderlineOffset: 4,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "break-word",
+  };
+  const actionStyle = {
+    ...subtleButtonStyle(colors, typography.link),
+    color: hovered ? colors.accent : colors.text,
+    marginTop: 8,
   };
 
   if (capture.imageData) {
@@ -644,7 +709,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ ...linkStyle, fontSize: typography.link, marginBottom: 8, color: colors.accent, fontWeight: 800 }}
+          style={{ ...subtleButtonStyle(colors, typography.link), marginBottom: 10 }}
         >
           Open screenshot save
         </button>
@@ -667,7 +732,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onClick={(event) => openCaptureFromClick(event, capture.id)}
-        style={linkStyle}
+        style={sourceStyle}
       >
         {text}
       </button>
@@ -677,7 +742,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ ...linkStyle, fontSize: typography.link, color: colors.accent, marginTop: 7, width: "fit-content", fontWeight: 800 }}
+          style={actionStyle}
         >
           Open full save
         </button>
@@ -701,13 +766,18 @@ function SavesView({
   colors: DashboardColors;
   cardFontSize: CardFontSize;
 }) {
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastRangeAnchorId, setLastRangeAnchorId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     const visibleIds = new Set(captures.map((capture) => capture.id));
     setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+    setLastRangeAnchorId((current) => current && visibleIds.has(current) ? current : null);
+    setOpenMenuId((current) => current && visibleIds.has(current) ? current : null);
   }, [captures]);
 
   if (captures.length === 0) {
@@ -721,19 +791,37 @@ function SavesView({
   const groups = groupByDay(captures);
   const selectedCount = selectedIds.size;
 
-  function toggleSelected(id: string) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function toggleSelectionMode() {
+    const nextMode = !selectionMode;
+    setSelectionMode(nextMode);
+    setOpenMenuId(null);
+    if (!nextMode) {
+      setSelectedIds(new Set());
+      setLastRangeAnchorId(null);
+    }
   }
 
-  function selectFrom(id: string) {
-    const start = captures.findIndex((capture) => capture.id === id);
-    if (start === -1) return;
-    setSelectedIds((current) => new Set([...current, ...captures.slice(start).map((capture) => capture.id)]));
+  function toggleSelected(id: string, event: React.MouseEvent<HTMLButtonElement>) {
+    const index = captures.findIndex((capture) => capture.id === id);
+    const anchorIndex = lastRangeAnchorId ? captures.findIndex((capture) => capture.id === lastRangeAnchorId) : -1;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (event.shiftKey && index !== -1 && anchorIndex !== -1) {
+        const [start, end] = [Math.min(index, anchorIndex), Math.max(index, anchorIndex)];
+        const rangeIds = captures.slice(start, end + 1).map((capture) => capture.id);
+        const shouldSelectRange = !next.has(id);
+        rangeIds.forEach((rangeId) => {
+          if (shouldSelectRange) next.add(rangeId);
+          else next.delete(rangeId);
+        });
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setLastRangeAnchorId(id);
   }
 
   function deleteSelected() {
@@ -756,7 +844,31 @@ function SavesView({
   }
 
   return (
-    <div>
+    <div onClick={() => openMenuId && setOpenMenuId(null)}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 18,
+        }}
+      >
+        <button
+          type="button"
+          onClick={toggleSelectionMode}
+          title="Shift-click save checkboxes to select a range"
+          style={{
+            ...subtleButtonStyle(colors, 13),
+            background: selectionMode ? colors.accent : colors.surfaceAlt,
+            color: selectionMode ? colors.selectedText : colors.text,
+            borderColor: selectionMode ? colors.accent : colors.border,
+          }}
+        >
+          {selectionMode ? "Done selecting" : "Select"}
+        </button>
+        {headerAction}
+      </div>
       {selectedCount > 0 && (
         <div
           style={{
@@ -802,56 +914,70 @@ function SavesView({
             <p style={{ fontSize: 12, fontWeight: 600, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
               {group.label}
             </p>
-            {headerAction}
           </div>
-          <div>
+          <div style={{ display: "grid", gap: 14 }}>
             {group.items.map((c) => (
               <div
                 key={c.id}
-                style={{ padding: "18px 0 28px", maxWidth: "100%" }}
+                style={{
+                  background: selectedIds.has(c.id) ? colors.accentSoft : colors.surface,
+                  border: `1px solid ${selectedIds.has(c.id) ? colorWithAlpha(colors.accent, 0.45) : colors.border}`,
+                  borderLeft: `3px solid ${selectedIds.has(c.id) ? colors.accent : colorWithAlpha(colors.accent, 0.22)}`,
+                  borderRadius: 8,
+                  padding: "18px 18px 18px 16px",
+                  maxWidth: "100%",
+                  boxShadow: "0 1px 0 rgba(15,15,15,0.03)",
+                }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "center", paddingTop: 3, flexShrink: 0 }}>
-                    <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={() => toggleSelected(c.id)} colors={colors} />
-                    <SelectBelowButton onSelect={() => selectFrom(c.id)} colors={colors} />
-                  </div>
+                  {selectionMode && (
+                    <div style={{ display: "flex", alignItems: "center", paddingTop: 5, flexShrink: 0 }}>
+                      <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={(event) => toggleSelected(c.id, event)} colors={colors} />
+                    </div>
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <CapturePreview capture={c} colors={colors} typography={typography} />
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                    <DeleteSaveButton onDelete={() => onDeleteCaptures([c.id])} colors={colors} />
-                  </div>
-                </div>
 
-                {c.context && (
-                  <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 12, margin: "10px 0 0 34px" }}>
-                    <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
-                      Your question
-                    </p>
-                    <p style={{ fontSize: typography.context, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
-                      {c.context}
-                    </p>
-                  </div>
-                )}
+                    {c.context && (
+                      <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 12, margin: "13px 0 0", maxWidth: "74ch" }}>
+                        <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                          Your question
+                        </p>
+                        <p style={{ fontSize: typography.context, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
+                          {c.context}
+                        </p>
+                      </div>
+                    )}
 
-                {c.status === "pending" && (
-                  <p style={{ fontSize: typography.status, color: colors.muted, margin: "10px 0 0 34px", fontStyle: "italic" }}>
-                    thinking…
-                  </p>
-                )}
-                {c.status === "error" && (
-                  <SaveErrorNotice
-                    message={c.errorMessage}
+                    {c.status === "pending" && (
+                      <p style={{ fontSize: typography.status, color: colors.muted, margin: "12px 0 0", fontStyle: "italic" }}>
+                        thinking…
+                      </p>
+                    )}
+                    {c.status === "error" && (
+                      <SaveErrorNotice
+                        message={c.errorMessage}
+                        colors={colors}
+                        onRetry={() => retryCapture(c.id)}
+                        retrying={retryingIds.has(c.id)}
+                      />
+                    )}
+                    {c.status === "done" && c.explanation && (
+                      <div style={{ fontSize: typography.answer, color: colors.text, margin: "16px 0 0", lineHeight: 1.78, maxWidth: "74ch", overflowWrap: "break-word" }}>
+                        {renderMarkdown(c.explanation)}
+                      </div>
+                    )}
+                  </div>
+                  <SaveOverflowMenu
+                    open={openMenuId === c.id}
+                    onToggle={() => setOpenMenuId((current) => current === c.id ? null : c.id)}
+                    onDelete={() => {
+                      setOpenMenuId(null);
+                      onDeleteCaptures([c.id]);
+                    }}
                     colors={colors}
-                    onRetry={() => retryCapture(c.id)}
-                    retrying={retryingIds.has(c.id)}
                   />
-                )}
-                {c.status === "done" && c.explanation && (
-                  <div style={{ fontSize: typography.answer, color: colors.softText, margin: "14px 0 0 34px", lineHeight: 1.75 }}>
-                    {renderMarkdown(c.explanation)}
-                  </div>
-                )}
+                </div>
               </div>
             ))}
           </div>
@@ -2557,7 +2683,7 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text }}>
       <div style={{ borderBottom: `1px solid ${colors.border}`, background: colors.bg }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 64 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 72 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => navigateView("saves")}
@@ -2570,8 +2696,9 @@ export default function App() {
             {streak > 0 && (
               <button
                 onClick={() => navigateView("saves")}
-                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
-                title="Go to today"
+                aria-label={`${streak} day save streak. Go to today.`}
+                style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "5px 8px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+                title={`${streak} day save streak. Consecutive days with at least one save.`}
               >
                 <span style={{ fontSize: 16 }}>🔥</span>
                 <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>
