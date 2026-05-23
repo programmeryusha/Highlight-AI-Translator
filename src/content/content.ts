@@ -79,6 +79,13 @@ function ensureBaseStyles() {
     .cl-scroll::-webkit-scrollbar-thumb:hover  { background: rgba(148,163,184,0.72); }
   `;
   document.head.appendChild(style);
+
+  if (!document.querySelector('link[href*="Noto+Naskh+Arabic"]')) {
+    const font = document.createElement("link");
+    font.rel = "stylesheet";
+    font.href = "https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;700&display=swap";
+    document.head.appendChild(font);
+  }
 }
 
 let deepDiveStylesInjected = false;
@@ -118,11 +125,11 @@ function applyAppearance(theme: unknown, accent: unknown) {
 function uiColors() {
   const dark = appearanceTheme === "dark";
   return {
-    panel: dark ? "rgba(18,19,28,0.96)" : "rgba(255,255,255,0.98)",
-    panelSoft: dark ? "rgba(18,19,28,0.94)" : "rgba(255,255,255,0.96)",
+    panel: dark ? "rgba(26,26,26,0.96)" : "rgba(255,255,255,0.98)",
+    panelSoft: dark ? "rgba(26,26,26,0.94)" : "rgba(255,255,255,0.96)",
     border: dark ? "rgba(255,255,255,0.14)" : "rgba(55,53,47,0.16)",
     faintBorder: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.09)",
-    text: dark ? "#e8e8ef" : "#2f2e2b",
+    text: dark ? "#e8e8e8" : "#2f2e2b",
     userText: dark ? "#cbd5e1" : "#504f4a",
     muted: dark ? "#9ca3af" : "#7b7770",
     subtle: dark ? "rgba(255,255,255,0.08)" : "rgba(55,53,47,0.06)",
@@ -373,7 +380,7 @@ function appendBidiText(container: HTMLElement, text: string) {
     const arabic = document.createElement("bdi");
     arabic.dir = "rtl";
     arabic.lang = "ar";
-    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;";
+    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;font-family:'Noto Naskh Arabic',serif;";
     arabic.textContent = match[0];
     container.appendChild(arabic);
     start = index + match[0].length;
@@ -395,23 +402,33 @@ function hardWordEntries(text: string): HardWordEntry[] {
 function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
   entries.forEach(({ term, definition }) => {
     const termRow = document.createElement("div");
-    termRow.style.cssText = "margin:5px 0;font-size:inherit;line-height:1.65;";
-    const strong = document.createElement("strong");
-    strong.style.fontWeight = "800";
-    appendBidiText(strong, term);
-    termRow.appendChild(strong);
-    appendBidiText(termRow, ` — ${definition}`);
+    termRow.style.cssText = "margin:10px 0 0;";
+
+    const termEl = document.createElement("div");
+    termEl.style.cssText = "font-weight:700;font-family:'Noto Naskh Arabic',serif;font-size:1.08em;line-height:1.83;";
+    appendBidiText(termEl, term);
+
+    const defEl = document.createElement("div");
+    defEl.style.cssText = "font-weight:400;line-height:1.7;padding-left:2px;";
+    appendBidiText(defEl, definition);
+
+    termRow.appendChild(termEl);
+    termRow.appendChild(defEl);
     container.appendChild(termRow);
   });
 }
+
+const LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(.*)/;
 
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
   let lastWasInline = false;
   let hardWordsDiv: HTMLElement | null = null;
+  const colors = uiColors();
 
   lines.forEach((line) => {
-    const match = renderChips ? line.match(TERM_DEF_RE) : null;
+    const stripped = line.startsWith("* ") ? line.slice(2) : line;
+    const match = renderChips ? stripped.match(TERM_DEF_RE) : null;
 
     if (match) {
       lastWasInline = false;
@@ -428,18 +445,29 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
       if (lastWasInline) container.appendChild(document.createElement("br"));
       lastWasInline = true;
 
-      line.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
-        if (!part) return;
-        if (partIndex % 2 === 1) {
-          const strong = document.createElement("strong");
-          strong.style.fontWeight = "800";
-          strong.style.color = "inherit";
-          appendBidiText(strong, part);
-          container.appendChild(strong);
-        } else {
-          appendBidiText(container, part);
+      const labelMatch = stripped.match(LABEL_RE);
+      if (labelMatch) {
+        const labelSpan = document.createElement("span");
+        labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.8em;letter-spacing:0.05em;text-transform:uppercase;`;
+        labelSpan.textContent = labelMatch[1] + ":";
+        container.appendChild(labelSpan);
+        if (labelMatch[2].trim()) {
+          appendBidiText(container, labelMatch[2]);
         }
-      });
+      } else {
+        stripped.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
+          if (!part) return;
+          if (partIndex % 2 === 1) {
+            const strong = document.createElement("strong");
+            strong.style.fontWeight = "700";
+            strong.style.color = "inherit";
+            appendBidiText(strong, part);
+            container.appendChild(strong);
+          } else {
+            appendBidiText(container, part);
+          }
+        });
+      }
     }
   });
 
@@ -1036,7 +1064,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       body.setAttribute("style", `
         color: ${colors.text};
         font-size: ${cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px"};
-        line-height: 1.65;
+        line-height: 1.83;
         white-space: pre-wrap;
       `);
       appendHardWordRows(body, initialHardWords);
@@ -1060,7 +1088,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? colors.text : colors.userText};
           font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
-          line-height: 1.65;
+          line-height: 1.83;
           margin-bottom: 8px;
           white-space: pre-wrap;
         `);
@@ -1812,7 +1840,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         body.setAttribute("style", `
           color: ${colors.text};
           font-size: ${cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px"};
-          line-height: 1.65;
+          line-height: 1.83;
           white-space: pre-wrap;
         `);
         appendHardWordRows(body, initialPanelHardWords);
@@ -1836,7 +1864,7 @@ function showCropOverlay(screenshotDataUrl: string) {
           body.setAttribute("style", `
             color: ${message.role === "assistant" ? colors.text : colors.userText};
             font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
-            line-height: 1.65;
+            line-height: 1.83;
             margin-bottom: 12px;
             white-space: pre-wrap;
           `);
