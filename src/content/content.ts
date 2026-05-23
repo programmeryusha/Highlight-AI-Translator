@@ -426,6 +426,7 @@ function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
 
 const LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(.*)/;
 const SILENT_LABELS = new Set(["Arabic/source", "Meaning"]);
+const LABEL_DISPLAY: Record<string, string> = { "Direct": "Direct meaning" };
 
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
@@ -460,7 +461,7 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
         } else {
           const labelSpan = document.createElement("span");
           labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.8em;letter-spacing:0.05em;text-transform:uppercase;`;
-          labelSpan.textContent = labelMatch[1] + ":";
+          labelSpan.textContent = (LABEL_DISPLAY[labelMatch[1]] ?? labelMatch[1]) + ":";
           container.appendChild(labelSpan);
           if (labelMatch[2].trim()) appendBidiText(container, labelMatch[2]);
         }
