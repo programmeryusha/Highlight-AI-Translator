@@ -17,6 +17,14 @@ interface RemoteCapture {
   saved_at: string;
 }
 
+interface CaptureFallback {
+  text?: string;
+  context?: string;
+  imageData?: string;
+  url?: string;
+  title?: string;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof TypeError && /fetch|network|failed/i.test(error.message)) {
     return "Network error: Could not reach the ContextLens backend. Check the connection and backend deployment.";
@@ -211,7 +219,13 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "ASK_FOLLOWUP") {
-    askFollowup(message.captureId, message.question, Boolean(message.deepDive))
+    askFollowup(message.captureId, message.question, Boolean(message.deepDive), {
+      text: message.fallbackText,
+      context: message.fallbackContext,
+      imageData: message.fallbackImageData,
+      url: message.fallbackUrl,
+      title: message.fallbackTitle,
+    })
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -247,7 +261,13 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "DEEP_DIVE") {
-    deepDive(message.captureId)
+    deepDive(message.captureId, {
+      text: message.fallbackText,
+      context: message.fallbackContext,
+      imageData: message.fallbackImageData,
+      url: message.fallbackUrl,
+      title: message.fallbackTitle,
+    })
       .then(sendResponse)
       .catch((err: unknown) => sendResponse({ error: errorMessage(err) }));
     return true;
@@ -397,7 +417,7 @@ async function signInOrSignUp(email: string, password: string): Promise<ContextL
       const signupMessage = errorMessage(signUpError);
       if (/cannot be used|deleted|blocked/i.test(signupMessage)) throw signUpError;
       if (/already registered|already exists/i.test(signupMessage)) {
-        throw new Error("That email already has an account. Check the password or use a different email.");
+        throw new Error("Wrong password. Try again or reset it.");
       }
       throw signInError;
     }
@@ -540,6 +560,32 @@ async function seedChat(captureId: string, explanation: string) {
   await chrome.storage.local.set({ [key]: [{ role: "assistant", content: explanation }] satisfies ChatMessage[] });
 }
 
+function latestAssistantContent(messages: ChatMessage[]): string | null {
+  for (const message of [...messages].reverse()) {
+    if (message.role === "assistant" && message.content.trim()) return message.content;
+  }
+  return null;
+}
+
+async function restoreCaptureFromFallback(captureId: string, fallback: CaptureFallback, messages: ChatMessage[]): Promise<Capture | null> {
+  const text = fallback.imageData ? "[Screenshot]" : fallback.text?.trim();
+  if (!text && !fallback.imageData) return null;
+
+  const capture: Capture = {
+    id: captureId,
+    text: text || "[Saved item]",
+    context: fallback.context?.trim() ?? "",
+    url: fallback.url ?? "",
+    title: fallback.title ?? "",
+    savedAt: new Date().toISOString(),
+    explanation: latestAssistantContent(messages),
+    status: "done",
+    imageData: fallback.imageData,
+  };
+  await addCapture(capture);
+  return capture;
+}
+
 async function explainAndSaveScreenshot(imageData: string, context: string): Promise<{ captureId: string; explanation: string }> {
   const id = await createPendingScreenshot(imageData, context);
 
@@ -565,21 +611,23 @@ async function saveScreenshot(imageData: string, context: string) {
   await explainAndSaveScreenshot(imageData, context).catch(() => {});
 }
 
-async function askFollowup(captureId: string, question: string, deepDiveRequested = false): Promise<{ reply: string; messages: ChatMessage[] }> {
+async function askFollowup(captureId: string, question: string, deepDiveRequested = false, fallback: CaptureFallback = {}): Promise<{ reply: string; messages: ChatMessage[] }> {
   const key = `chat_${captureId}`;
   const storage = await chrome.storage.local.get(["captures", key]);
   const captures: Capture[] = storage.captures ?? [];
-  const capture = captures.find((c) => c.id === captureId);
+  let capture = captures.find((c) => c.id === captureId);
 
   const prior: ChatMessage[] = storage[key] ?? (capture?.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  if (!capture) capture = await restoreCaptureFromFallback(captureId, fallback, prior);
   if (!capture && prior.length === 0) throw new Error("Saved item not found.");
 
   const updated: ChatMessage[] = [...prior, { role: "user", content: question }];
-  const imageBase64 = capture?.imageData?.split(",")[1];
+  const fallbackImageBase64 = fallback.imageData?.split(",")[1];
+  const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
   const useDeepDive = deepDiveRequested || await isDeepDiveCapture(captureId);
   const reply = await fetchExplanation(
-    capture?.imageData ? "" : capture?.text ?? "",
-    capture?.context ?? "",
+    capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+    capture?.context ?? fallback.context ?? "",
     imageBase64,
     useDeepDive,
     updated,
@@ -616,25 +664,27 @@ async function retryCapture(captureId: string): Promise<{ captureId: string; exp
   }
 }
 
-async function deepDive(captureId: string): Promise<{ explanation: string; messages: ChatMessage[] }> {
+async function deepDive(captureId: string, fallback: CaptureFallback = {}): Promise<{ explanation: string; messages: ChatMessage[] }> {
   const storage = await chrome.storage.local.get(["captures", `chat_${captureId}`]);
   const captures: Capture[] = storage.captures ?? [];
-  const capture = captures.find((c) => c.id === captureId);
-  if (!capture) throw new Error("Saved item not found.");
-
-  const imageBase64 = capture.imageData?.split(",")[1];
+  let capture = captures.find((c) => c.id === captureId);
   const chatKey = `chat_${captureId}`;
-  const prior: ChatMessage[] = storage[chatKey] ?? (capture.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  const prior: ChatMessage[] = storage[chatKey] ?? (capture?.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  if (!capture) capture = await restoreCaptureFromFallback(captureId, fallback, prior);
+  if (!capture && prior.length === 0) throw new Error("Saved item not found.");
+
+  const fallbackImageBase64 = fallback.imageData?.split(",")[1];
+  const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
   const hasFollowup = prior.some((message) => message.role === "user");
   const explanation = await fetchExplanation(
-    capture.imageData ? "" : capture.text,
-    capture.context,
+    capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+    capture?.context ?? fallback.context ?? "",
     imageBase64,
     true,
-    hasFollowup ? prior : [],
+    hasFollowup || !capture ? prior : [],
   );
 
-  await updateCapture(captureId, { explanation });
+  if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
   await markDeepDiveCapture(captureId);
 
   const messages: ChatMessage[] = hasFollowup

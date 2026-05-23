@@ -487,7 +487,7 @@ function computeStreak(captures: Capture[]): number {
 }
 
 function openChat(id: string) {
-  chrome.tabs.create({ url: chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}` });
+  window.location.assign(chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}`);
 }
 
 function openCaptureFromClick(event: React.MouseEvent, id: string) {
@@ -528,19 +528,19 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 38,
-        height: 38,
-        borderRadius: 9,
+        width: 30,
+        height: 30,
+        borderRadius: 7,
         border: selected ? `2px solid ${colors.accent}` : `2px solid ${hovered ? colors.accent : colors.border}`,
         background: selected ? colors.accent : hovered ? colors.accentSoft : colors.surfaceAlt,
         color: selected ? colors.selectedText : colors.accent,
         cursor: "pointer",
-        fontSize: 21,
-        lineHeight: "34px",
+        fontSize: 16,
+        lineHeight: "26px",
         fontWeight: 800,
         flexShrink: 0,
         padding: 0,
-        boxShadow: hovered ? `0 0 0 3px ${colors.accentSoft}` : "none",
+        boxShadow: hovered ? `0 0 0 2px ${colors.accentSoft}` : "none",
         transition: "background 120ms ease, border 120ms ease, box-shadow 120ms ease, transform 120ms ease",
         transform: hovered ? "translateY(-1px)" : "none",
       }}
@@ -599,15 +599,15 @@ function SelectBelowButton({ onSelect, colors }: { onSelect: () => void; colors:
         onSelect();
       }}
       style={{
-        width: 38,
+        width: 28,
         border: `1px solid ${hovered ? colors.accent : colors.border}`,
-        borderRadius: 7,
+        borderRadius: 5,
         background: hovered ? colors.accentSoft : colors.surface,
         color: hovered ? colors.accent : colors.muted,
-        padding: "4px 2px",
+        padding: "3px 1px",
         cursor: "pointer",
-        fontSize: 10,
-        lineHeight: 1.15,
+        fontSize: 8,
+        lineHeight: 1.1,
         fontWeight: 800,
       }}
     >
@@ -791,7 +791,7 @@ function SavesView({
               onClick={() => setSelectedIds(new Set())}
               style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
             >
-              Cancel
+              Unselect all
             </button>
           </div>
         </div>
@@ -1104,6 +1104,7 @@ type FlashcardSource =
   | { kind: "range"; range: FlashcardRange }
   | { kind: "days" }
   | { kind: "set"; setId: string };
+type FlashcardSetPlacement = "independent" | "nested";
 
 function uniqueCaptureIds(captures: Capture[]) {
   return Array.from(new Set(captures.map((capture) => capture.id)));
@@ -1111,15 +1112,100 @@ function uniqueCaptureIds(captures: Capture[]) {
 
 function normalizeFlashcardSets(value: unknown): FlashcardSet[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
+  const normalized = value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const raw = item as Record<string, unknown>;
     const captureIds = Array.isArray(raw.captureIds) ? raw.captureIds.filter((id): id is string => typeof id === "string") : [];
     if (typeof raw.id !== "string" || typeof raw.name !== "string" || captureIds.length === 0) return [];
     const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
     const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
-    return [{ id: raw.id, name: raw.name.trim() || "Flashcard set", captureIds, createdAt, updatedAt }];
+    const parentSetId = typeof raw.parentSetId === "string" && raw.parentSetId !== raw.id ? raw.parentSetId : undefined;
+    return [{ id: raw.id, name: raw.name.trim() || "Flashcard set", captureIds, parentSetId, createdAt, updatedAt }];
   });
+  const ids = new Set(normalized.map((set) => set.id));
+  return normalized.map((set) => {
+    if (!set.parentSetId || ids.has(set.parentSetId)) return set;
+    const { parentSetId: _parentSetId, ...independentSet } = set;
+    return independentSet;
+  });
+}
+
+function flashcardSetRows(sets: FlashcardSet[]) {
+  const ids = new Set(sets.map((set) => set.id));
+  const children = new Map<string, FlashcardSet[]>();
+  const rows: { set: FlashcardSet; depth: number }[] = [];
+  const seen = new Set<string>();
+
+  sets.forEach((set) => {
+    const parentId = set.parentSetId && ids.has(set.parentSetId) ? set.parentSetId : "";
+    children.set(parentId, [...(children.get(parentId) ?? []), set]);
+  });
+
+  function visit(set: FlashcardSet, depth: number) {
+    if (seen.has(set.id)) return;
+    seen.add(set.id);
+    rows.push({ set, depth });
+    (children.get(set.id) ?? []).forEach((child) => visit(child, depth + 1));
+  }
+
+  (children.get("") ?? []).forEach((set) => visit(set, 0));
+  sets.forEach((set) => visit(set, 0));
+  return rows;
+}
+
+function FlashcardPopup({
+  title,
+  onClose,
+  colors,
+  children,
+  width = 520,
+}: {
+  title: string;
+  onClose: () => void;
+  colors: DashboardColors;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  return (
+    <div
+      role="presentation"
+      onMouseDown={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 30,
+        display: "grid",
+        placeItems: "center",
+        padding: 20,
+        background: "rgba(16, 17, 20, 0.34)",
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          width: `min(${width}px, 100%)`,
+          maxHeight: "min(680px, calc(100vh - 40px))",
+          overflow: "auto",
+          background: colors.surface,
+          border: `1px solid ${colors.border}`,
+          borderRadius: 8,
+          padding: 18,
+          boxShadow: "0 24px 68px rgba(15, 15, 15, 0.28)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, marginBottom: 14 }}>
+          <h3 style={{ color: colors.text, fontSize: 17, fontWeight: 850, margin: 0 }}>{title}</h3>
+          <button type="button" onClick={onClose} aria-label={`Close ${title}`} style={{ width: 30, height: 30, border: `1px solid ${colors.border}`, borderRadius: 7, background: colors.surfaceAlt, color: colors.text, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 0 }}>
+            x
+          </button>
+        </div>
+        {children}
+      </section>
+    </div>
+  );
 }
 
 function WordsView({ captures, colors, theme, accentColor }: { captures: Capture[]; colors: DashboardColors; theme: ThemeName; accentColor: string }) {
@@ -1130,6 +1216,10 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
   const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [newSetName, setNewSetName] = useState("");
+  const [newSetPlacement, setNewSetPlacement] = useState<FlashcardSetPlacement>("independent");
+  const [newSetParentId, setNewSetParentId] = useState("");
+  const [showCreateSet, setShowCreateSet] = useState(false);
+  const [showSets, setShowSets] = useState(false);
   const [subsetIds, setSubsetIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1137,6 +1227,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
   }, []);
 
   const setById = new Map(sets.map((set) => [set.id, set]));
+  const setRows = flashcardSetRows(sets);
   const activeSet = source.kind === "set" ? setById.get(source.setId) : undefined;
   const captureById = new Map(captures.map((capture) => [capture.id, capture]));
   const sourceCaptures = source.kind === "range"
@@ -1151,6 +1242,11 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
     : source.kind === "days"
       ? `${selectedDays.size} picked ${selectedDays.size === 1 ? "day" : "days"}`
       : activeSet?.name ?? "Saved set";
+  const canCreateSet = Boolean(
+    newSetName.trim()
+      && sourceCaptures.length > 0
+      && (newSetPlacement === "independent" || setById.has(newSetParentId)),
+  );
 
   useEffect(() => {
     if (source.kind !== "set") return;
@@ -1172,19 +1268,46 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
     setSource({ kind: "days" });
   }
 
+  function openCreateSet() {
+    setShowSets(false);
+    setNewSetPlacement("independent");
+    setNewSetParentId(activeSet?.id ?? sets[0]?.id ?? "");
+    setShowCreateSet(true);
+  }
+
   function createSet() {
     const name = newSetName.trim();
     const captureIds = uniqueCaptureIds(sourceCaptures);
-    if (!name || captureIds.length === 0) return;
+    const parentSet = newSetPlacement === "nested" ? setById.get(newSetParentId) : undefined;
+    if (!name || captureIds.length === 0 || (newSetPlacement === "nested" && !parentSet)) return;
     const now = new Date().toISOString();
-    const nextSet: FlashcardSet = { id: crypto.randomUUID(), name, captureIds, createdAt: now, updatedAt: now };
-    storeSets([nextSet, ...sets]);
+    const nextSet: FlashcardSet = {
+      id: crypto.randomUUID(),
+      name,
+      captureIds,
+      parentSetId: parentSet?.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const nextSets = parentSet
+      ? sets.map((set) => set.id === parentSet.id
+        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...captureIds])), updatedAt: now }
+        : set)
+      : sets;
+    storeSets([nextSet, ...nextSets]);
     setNewSetName("");
-    setSource({ kind: "set", setId: nextSet.id });
+    setShowCreateSet(false);
   }
 
   function deleteSet(id: string) {
-    storeSets(sets.filter((set) => set.id !== id));
+    storeSets(sets
+      .filter((set) => set.id !== id)
+      .map((set) => {
+        if (set.parentSetId !== id) return set;
+        const { parentSetId: _parentSetId, ...independentSet } = set;
+        return independentSet;
+      }));
+    if (newSetParentId === id) setNewSetParentId("");
     if (source.kind === "set" && source.setId === id) setSource({ kind: "range", range: "pastDay" });
   }
 
@@ -1223,7 +1346,13 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
             {words.length} {words.length === 1 ? "card" : "cards"} from {sourceLabel}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button type="button" onClick={openCreateSet} style={{ background: showCreateSet ? colors.accent : colors.surface, color: showCreateSet ? colors.selectedText : colors.text, border: `1px solid ${showCreateSet ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+            Create set
+          </button>
+          <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ background: showSets ? colors.accent : colors.surface, color: showSets ? colors.selectedText : colors.text, border: `1px solid ${showSets ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+            Sets
+          </button>
           <button type="button" onClick={() => setShowExport((open) => !open)} style={{ background: showExport ? colors.accent : colors.surface, color: showExport ? colors.selectedText : colors.text, border: `1px solid ${showExport ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             Export
           </button>
@@ -1253,56 +1382,91 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(320px, 1fr)", gap: 24, alignItems: "start", marginBottom: 28 }}>
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
-          <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Pick days</p>
-          <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
-            Click dates to study or export only those saves.
-          </p>
-          <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
-        </div>
+      <div style={{ width: "min(360px, 100%)", marginBottom: 28, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
+        <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Pick days</p>
+        <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
+          Click dates to study or export only those saves.
+        </p>
+        <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
+      </div>
 
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
-          <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Save this selection as a set</p>
-          <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 12px" }}>
-            Sets keep the cards from the active range, calendar days, or saved set.
+      {showCreateSet && (
+        <FlashcardPopup title="Create set" onClose={() => setShowCreateSet(false)} colors={colors}>
+          <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
+            Save {words.length} {words.length === 1 ? "card" : "cards"} from {sourceLabel}.
           </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input value={newSetName} onChange={(event) => setNewSetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createSet(); }} placeholder="Set name" style={{ minWidth: 210, flex: "1 1 210px", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "9px 10px", fontSize: 14, outline: "none" }} />
-            <button type="button" disabled={!newSetName.trim() || sourceCaptures.length === 0} onClick={createSet} style={{ background: newSetName.trim() && sourceCaptures.length ? colors.accent : colors.border, color: newSetName.trim() && sourceCaptures.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 8, padding: "9px 13px", fontSize: 13, fontWeight: 800, cursor: newSetName.trim() && sourceCaptures.length ? "pointer" : "default" }}>
+          <input
+            autoFocus
+            value={newSetName}
+            onChange={(event) => setNewSetName(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter" && canCreateSet) createSet(); }}
+            placeholder="Set name"
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, outline: "none", marginBottom: 12 }}
+          />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 12 }}>
+            <button type="button" onClick={() => setNewSetPlacement("independent")} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "independent" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "independent" ? colors.accentSoft : colors.surfaceAlt, color: colors.text, padding: "10px 11px", cursor: "pointer" }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Independent set</span>
+              <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>Keep it at the top level.</span>
+            </button>
+            <button type="button" disabled={sets.length === 0} onClick={() => { if (sets.length > 0) setNewSetPlacement("nested"); }} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "nested" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "nested" ? colors.accentSoft : colors.surfaceAlt, color: sets.length > 0 ? colors.text : colors.muted, padding: "10px 11px", cursor: sets.length > 0 ? "pointer" : "default", opacity: sets.length > 0 ? 1 : 0.62 }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Set within a set</span>
+              <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>{sets.length > 0 ? "Nest it under an existing set." : "Create a set first."}</span>
+            </button>
+          </div>
+          {newSetPlacement === "nested" && (
+            <label style={{ display: "grid", gap: 5, marginBottom: 14 }}>
+              <span style={{ fontSize: 12, color: colors.muted, fontWeight: 800 }}>Parent set</span>
+              <select value={newSetParentId} onChange={(event) => setNewSetParentId(event.target.value)} style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "9px 10px", fontSize: 14 }}>
+                <option value="">Choose a set</option>
+                {setRows.map(({ set, depth }) => (
+                  <option key={set.id} value={set.id}>{`${"- ".repeat(depth)}${set.name}`}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => setShowCreateSet(false)} style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+              Cancel
+            </button>
+            <button type="button" disabled={!canCreateSet} onClick={createSet} style={{ background: canCreateSet ? colors.accent : colors.border, color: canCreateSet ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: canCreateSet ? "pointer" : "default" }}>
               Save set
             </button>
           </div>
-          <div style={{ marginTop: 18 }}>
-            <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 9px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>Sets</p>
-            {sets.length === 0 ? (
-              <p style={{ color: colors.muted, fontSize: 13, margin: 0 }}>No saved sets yet.</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {sets.map((set) => {
-                  const selected = source.kind === "set" && source.setId === set.id;
-                  const count = set.captureIds.filter((id) => captureById.has(id)).length;
-                  return (
-                    <div key={set.id} style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
-                      <button type="button" onClick={() => setSource({ kind: "set", setId: set.id })} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
-                        <span style={{ display: "block", fontSize: 13, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
-                        <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>{count} saved {count === 1 ? "card" : "cards"}</span>
-                      </button>
-                      <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>×</button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+        </FlashcardPopup>
+      )}
+
+      {showSets && (
+        <FlashcardPopup title="Sets" onClose={() => setShowSets(false)} colors={colors} width={580}>
+          {sets.length === 0 ? (
+            <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>No saved sets yet.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {setRows.map(({ set, depth }) => {
+                const selected = source.kind === "set" && source.setId === set.id;
+                const count = set.captureIds.filter((id) => captureById.has(id)).length;
+                const parent = set.parentSetId ? setById.get(set.parentSetId) : undefined;
+                return (
+                  <div key={set.id} style={{ marginLeft: depth * 18, display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
+                    <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
+                      <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>
+                        {count} saved {count === 1 ? "card" : "cards"}{parent ? ` within ${parent.name}` : ""}
+                      </span>
+                    </button>
+                    <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>x</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </FlashcardPopup>
+      )}
 
       {activeSet && words.length > 0 && (
         <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 16, marginBottom: 24, background: colors.surface }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
             <div>
-              <p style={{ fontSize: 14, fontWeight: 850, color: colors.text, margin: "0 0 3px" }}>Subset from {activeSet.name}</p>
+              <p style={{ fontSize: 14, fontWeight: 850, color: colors.text, margin: "0 0 3px" }}>{activeSet.name}</p>
               <p style={{ fontSize: 12, color: colors.muted, margin: 0 }}>Choose which cards from this set to export.</p>
             </div>
             {exportButtons(subsetWords, `${subsetWords.length} selected`)}
@@ -2352,7 +2516,7 @@ export default function App() {
       const next = normalizeFlashcardSets(result.flashcard_sets)
         .map((set) => ({ ...set, captureIds: set.captureIds.filter((id) => !idsToDelete.has(id)) }))
         .filter((set) => set.captureIds.length > 0);
-      chrome.storage.local.set({ flashcard_sets: next });
+      chrome.storage.local.set({ flashcard_sets: normalizeFlashcardSets(next) });
     });
 
     void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {

@@ -234,9 +234,58 @@ function clampLeftToViewport(preferredLeft: number, width: number) {
   return Math.max(minLeft, Math.min(preferredLeft, maxLeft));
 }
 
+type DragBounds = { left: number; top: number; width: number; height: number };
+
+function elementDragState(element: HTMLElement, fallback: { left: number; top: number }) {
+  const rect = element.getBoundingClientRect();
+  const styleLeft = Number.parseFloat(element.style.left);
+  const styleTop = Number.parseFloat(element.style.top);
+  const position = {
+    left: Number.isFinite(styleLeft) ? styleLeft : fallback.left,
+    top: Number.isFinite(styleTop) ? styleTop : fallback.top,
+  };
+
+  return {
+    position,
+    bounds: {
+      left: position.left - rect.left,
+      top: position.top - rect.top,
+      width: viewportWidth(),
+      height: viewportHeight(),
+    },
+  };
+}
+
+function clampDraggedOverlay(preferredLeft: number, preferredTop: number, width: number, height: number, bounds: DragBounds) {
+  const minVisibleX = Math.min(width, Math.max(96, Math.min(bounds.width - 16, 180)));
+  const minVisibleY = Math.min(height, Math.max(56, Math.min(bounds.height - 16, 120)));
+  const minLeft = bounds.left + minVisibleX - width;
+  const maxLeft = bounds.left + bounds.width - minVisibleX;
+  const minTop = bounds.top + minVisibleY - height;
+  const maxTop = bounds.top + bounds.height - minVisibleY;
+  return {
+    left: Math.max(minLeft, Math.min(preferredLeft, maxLeft)),
+    top: Math.max(minTop, Math.min(preferredTop, maxTop)),
+  };
+}
+
 function panelWidthFor(maxWidth = 560, minWidth = 220) {
   const available = Math.max(1, viewportWidth() - 24);
   return Math.max(Math.min(minWidth, available), Math.min(maxWidth, available));
+}
+
+function firstStrongTextDirection(value: string): "ltr" | "rtl" | "auto" {
+  for (const character of value.trim()) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
+    if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
+  }
+  return "auto";
+}
+
+function syncTextareaDirection(textarea: HTMLTextAreaElement) {
+  const direction = firstStrongTextDirection(textarea.value);
+  textarea.dir = direction;
+  textarea.style.textAlign = direction === "rtl" ? "right" : "left";
 }
 
 function trapScroll(element: HTMLElement) {
@@ -550,7 +599,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   let widgetWidth = panelWidthFor();
   let widgetHeight = 0;
   let left = clampLeftToViewport(x - widgetWidth / 2, widgetWidth);
-  let top = panelTopFor(y - 110, 132);
+  let top = panelTopFor(y - 138, 132);
 
   widget = document.createElement("div");
   widget.setAttribute(
@@ -585,8 +634,44 @@ function showContextInput(x: number, y: number, selectedText: string) {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
   `
   );
+  preview.title = "Drag overlay";
+
+  preview.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const drag = widget
+      ? elementDragState(widget, { left, top })
+      : { position: { left, top }, bounds: { left: 0, top: 0, width: viewportWidth(), height: viewportHeight() } };
+    const startLeft = drag.position.left;
+    const startTop = drag.position.top;
+    preview.style.cursor = "grabbing";
+
+    const onMove = (ev: MouseEvent) => {
+      const dragHeight = Math.min(widget?.getBoundingClientRect().height || 132, expandedPanelMaxHeight());
+      const next = clampDraggedOverlay(startLeft + ev.clientX - startX, startTop + ev.clientY - startY, widgetWidth, dragHeight, drag.bounds);
+      left = next.left;
+      top = next.top;
+      if (widget) {
+        widget.style.left = `${left}px`;
+        widget.style.top = `${top}px`;
+      }
+    };
+    const onUp = () => {
+      preview.style.cursor = "grab";
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+    };
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+  });
 
   const input = document.createElement("textarea");
   input.className = "cl-scroll";
@@ -610,9 +695,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     box-sizing: border-box;
     resize: none;
     font-family: inherit;
+    text-align: left;
+    unicode-bidi: plaintext;
   `
   );
   autosizeTextarea(input);
+  syncTextareaDirection(input);
   trapScroll(input);
 
   let submitted = false;
@@ -625,7 +713,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!widget) return;
     const colors = uiColors();
     const maxH = expandedPanelMaxHeight();
-    const heightForClamp = widgetHeight > 0 ? Math.min(widgetHeight, maxH) : maxH;
+    const actualHeight = widget.getBoundingClientRect().height;
+    const heightForClamp = widgetHeight > 0
+      ? Math.min(widgetHeight, maxH)
+      : actualHeight > 0
+        ? Math.min(actualHeight, maxH)
+        : maxH;
     left = clampLeftToViewport(left, widgetWidth);
     top = panelTopFor(top, heightForClamp);
     const heightCss = widgetHeight > 0
@@ -655,6 +748,18 @@ function showContextInput(x: number, y: number, selectedText: string) {
       flex-direction: column;
     `
     );
+  }
+
+  function settleExpandedWidgetPosition(lift = 0) {
+    if (!widget) return;
+    const maxH = expandedPanelMaxHeight();
+    const actualHeight = widget.getBoundingClientRect().height;
+    const heightForClamp = Math.min(actualHeight > 0 ? actualHeight : maxH, maxH);
+    left = clampLeftToViewport(left, widgetWidth);
+    top = panelTopFor(top - lift, heightForClamp);
+    widget.style.left = `${left}px`;
+    widget.style.top = `${top}px`;
+    widget.style.maxHeight = `${maxH}px`;
   }
 
   function addResizeHandles() {
@@ -770,15 +875,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const dragHandle = document.createElement("div");
     dragHandle.setAttribute("style", `
       cursor: grab;
-      height: 18px;
+      height: 28px;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin: -8px -12px 8px -12px;
+      margin: -8px -12px 10px -12px;
       border-bottom: 1px solid ${colors.faintBorder};
       flex-shrink: 0;
       user-select: none;
+      touch-action: none;
     `);
+    dragHandle.title = "Drag overlay";
     const dragDots = document.createElement("span");
     dragDots.textContent = "···";
     dragDots.setAttribute("style", `color:${colors.muted};font-size:13px;letter-spacing:4px;line-height:1;`);
@@ -790,14 +897,18 @@ function showContextInput(x: number, y: number, selectedText: string) {
       e.stopPropagation();
       const startX = e.clientX;
       const startY = e.clientY;
-      const startLeft = left;
-      const startTop = top;
+      const drag = widget
+        ? elementDragState(widget, { left, top })
+        : { position: { left, top }, bounds: { left: 0, top: 0, width: viewportWidth(), height: viewportHeight() } };
+      const startLeft = drag.position.left;
+      const startTop = drag.position.top;
       dragHandle.style.cursor = "grabbing";
 
       const onMove = (ev: MouseEvent) => {
-        const maxHeight = expandedPanelMaxHeight();
-        left = Math.max(8, Math.min(viewportWidth() - widgetWidth - 8, startLeft + ev.clientX - startX));
-        top = Math.max(8, Math.min(viewportHeight() - maxHeight - 8, startTop + ev.clientY - startY));
+        const dragHeight = Math.min(widget?.getBoundingClientRect().height || expandedPanelMaxHeight(), expandedPanelMaxHeight());
+        const next = clampDraggedOverlay(startLeft + ev.clientX - startX, startTop + ev.clientY - startY, widgetWidth, dragHeight, drag.bounds);
+        left = next.left;
+        top = next.top;
         if (widget) { widget.style.left = `${left}px`; widget.style.top = `${top}px`; }
       };
       const onUp = () => {
@@ -869,8 +980,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
       padding: 8px 10px;
       resize: none;
       font-family: inherit;
+      text-align: left;
+      unicode-bidi: plaintext;
     `);
     autosizeTextarea(followupInput);
+    syncTextareaDirection(followupInput);
     trapScroll(followupInput);
 
     const askBtn = document.createElement("button");
@@ -913,12 +1027,24 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (!question || loading) return;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
       renderConversation(captureId, nextMessages, true, widgetDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
-      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question, deepDive: widgetDeepDiveActive })
+      sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+        type: "ASK_FOLLOWUP",
+        captureId,
+        question,
+        deepDive: widgetDeepDiveActive,
+        fallbackText: selectedText,
+        fallbackContext: input.value.trim(),
+        fallbackUrl: location.href,
+        fallbackTitle: document.title,
+      })
         .then((response) => renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
         .catch((error) => renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
     }
 
-    followupInput.addEventListener("input", () => autosizeTextarea(followupInput));
+    followupInput.addEventListener("input", () => {
+      syncTextareaDirection(followupInput);
+      autosizeTextarea(followupInput);
+    });
     followupInput.addEventListener("keydown", (event) => {
       event.stopPropagation();
       if (event.key === "Enter" && !event.shiftKey) {
@@ -972,6 +1098,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
         hardWordsOpen = !hardWordsOpen;
         capturedDiv.style.display = hardWordsOpen ? "block" : "none";
         styleExpandedWidget();
+        if (hardWordsOpen) {
+          requestAnimationFrame(() => {
+            list.scrollBy({ top: Math.min(140, Math.max(52, capturedDiv.getBoundingClientRect().height * 0.45)), behavior: "smooth" });
+          });
+        }
       });
       actionRow.appendChild(hwBtn);
     }
@@ -1055,7 +1186,14 @@ function showContextInput(x: number, y: number, selectedText: string) {
           setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
         );
         Promise.race([
-          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId }),
+          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+            type: "DEEP_DIVE",
+            captureId,
+            fallbackText: selectedText,
+            fallbackContext: input.value.trim(),
+            fallbackUrl: location.href,
+            fallbackTitle: document.title,
+          }),
           timeout,
         ])
           .then((response) => {
@@ -1088,11 +1226,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
     renderChildren.push(row);
     widget.replaceChildren(dragHandle, ...renderChildren);
     addResizeHandles();
-    if (loading || messages.length > 1) {
-      requestAnimationFrame(() => {
-        if (list.isConnected) list.scrollTop = list.scrollHeight;
-      });
-    }
+    requestAnimationFrame(() => {
+      settleExpandedWidgetPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
+      addResizeHandles();
+      if ((loading || messages.length > 1) && list.isConnected) list.scrollTop = list.scrollHeight;
+    });
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
 
@@ -1154,7 +1292,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
     }
     e.stopPropagation();
   });
-  input.addEventListener("input", () => autosizeTextarea(input));
+  input.addEventListener("input", () => {
+    syncTextareaDirection(input);
+    autosizeTextarea(input);
+  });
 
   widget.appendChild(preview);
   widget.appendChild(input);
@@ -1294,6 +1435,8 @@ function showCropOverlay(screenshotDataUrl: string) {
     let panelHardWordsOpen = false;
     let panelAnalogyText = "";
     let panelAnalogyLoading = false;
+    let activePanelImageData = "";
+    let activePanelContext = "";
 
     function removeContextPanelOutsideHandler() {
       if (!contextPanelOutsideHandler) return;
@@ -1356,8 +1499,10 @@ function showCropOverlay(screenshotDataUrl: string) {
       const colors = uiColors();
       contextPanelWidth = panelWidthFor();
       const maxHeight = expandedPanelMaxHeight();
+      const actualHeight = contextPanel.getBoundingClientRect().height;
+      const heightForClamp = actualHeight > 0 ? Math.min(actualHeight, maxHeight) : maxHeight;
       contextPanelLeft = clampLeftToViewport(contextPanelLeft, contextPanelWidth);
-      contextPanelTop = panelTopFor(contextPanelTop, maxHeight);
+      contextPanelTop = panelTopFor(contextPanelTop, heightForClamp);
       contextPanel.setAttribute("style", `
         position: fixed;
         left: ${contextPanelLeft}px;
@@ -1379,6 +1524,18 @@ function showCropOverlay(screenshotDataUrl: string) {
         direction: ltr;
         text-align: left;
       `);
+    }
+
+    function settleAnswerPanelPosition(lift = 0) {
+      if (!contextPanel) return;
+      const maxHeight = expandedPanelMaxHeight();
+      const actualHeight = contextPanel.getBoundingClientRect().height;
+      const heightForClamp = Math.min(actualHeight > 0 ? actualHeight : maxHeight, maxHeight);
+      contextPanelLeft = clampLeftToViewport(contextPanelLeft, contextPanelWidth);
+      contextPanelTop = panelTopFor(contextPanelTop - lift, heightForClamp);
+      contextPanel.style.left = `${contextPanelLeft}px`;
+      contextPanel.style.top = `${contextPanelTop}px`;
+      contextPanel.style.maxHeight = `${maxHeight}px`;
     }
 
     function renderLoadingPanel(text = "Analyzing…") {
@@ -1427,13 +1584,72 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(msg, row);
     }
 
-    function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
-      if (!contextPanel) return;
-      styleAnswerPanel();
-      const colors = uiColors();
+      function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
+        if (!contextPanel) return;
+        styleAnswerPanel();
+        const colors = uiColors();
 
-      ensureBaseStyles();
-      const list = document.createElement("div");
+        const dragHandle = document.createElement("div");
+        dragHandle.setAttribute("style", `
+          cursor: grab;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: -14px -14px 10px -14px;
+          border-bottom: 1px solid ${colors.faintBorder};
+          flex-shrink: 0;
+          user-select: none;
+          touch-action: none;
+        `);
+        dragHandle.title = "Drag overlay";
+        const dragDots = document.createElement("span");
+        dragDots.textContent = "···";
+        dragDots.setAttribute("style", `color:${colors.muted};font-size:13px;letter-spacing:4px;line-height:1;`);
+        dragHandle.appendChild(dragDots);
+        dragHandle.addEventListener("mousedown", (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const drag = contextPanel
+            ? elementDragState(contextPanel, { left: contextPanelLeft, top: contextPanelTop })
+            : {
+                position: { left: contextPanelLeft, top: contextPanelTop },
+                bounds: { left: 0, top: 0, width: viewportWidth(), height: viewportHeight() },
+              };
+          const startLeft = drag.position.left;
+          const startTop = drag.position.top;
+          dragHandle.style.cursor = "grabbing";
+
+          const onMove = (moveEvent: MouseEvent) => {
+            const dragHeight = Math.min(contextPanel?.getBoundingClientRect().height || expandedPanelMaxHeight(), expandedPanelMaxHeight());
+            const next = clampDraggedOverlay(
+              startLeft + moveEvent.clientX - startX,
+              startTop + moveEvent.clientY - startY,
+              contextPanelWidth,
+              dragHeight,
+              drag.bounds,
+            );
+            contextPanelLeft = next.left;
+            contextPanelTop = next.top;
+            if (contextPanel) {
+              contextPanel.style.left = `${contextPanelLeft}px`;
+              contextPanel.style.top = `${contextPanelTop}px`;
+            }
+          };
+          const onUp = () => {
+            dragHandle.style.cursor = "grab";
+            document.removeEventListener("mousemove", onMove, true);
+            document.removeEventListener("mouseup", onUp, true);
+          };
+          document.addEventListener("mousemove", onMove, true);
+          document.addEventListener("mouseup", onUp, true);
+        });
+
+        ensureBaseStyles();
+        const list = document.createElement("div");
       list.className = "cl-scroll";
       list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
       trapScroll(list);
@@ -1492,8 +1708,11 @@ function showCropOverlay(screenshotDataUrl: string) {
         padding: 8px 10px;
         resize: none;
         font-family: inherit;
+        text-align: left;
+        unicode-bidi: plaintext;
       `);
       autosizeTextarea(input);
+      syncTextareaDirection(input);
       trapScroll(input);
 
       const askBtn = document.createElement("button");
@@ -1536,12 +1755,24 @@ function showCropOverlay(screenshotDataUrl: string) {
         if (!question || loading) return;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
         renderConversationPanel(captureId, nextMessages, true, panelDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
-        sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({ type: "ASK_FOLLOWUP", captureId, question, deepDive: panelDeepDiveActive })
+        sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+          type: "ASK_FOLLOWUP",
+          captureId,
+          question,
+          deepDive: panelDeepDiveActive,
+          fallbackImageData: activePanelImageData,
+          fallbackContext: activePanelContext,
+          fallbackUrl: location.href,
+          fallbackTitle: document.title,
+        })
           .then((response) => renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
           .catch((error) => renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]));
       }
 
-      input.addEventListener("input", () => autosizeTextarea(input));
+      input.addEventListener("input", () => {
+        syncTextareaDirection(input);
+        autosizeTextarea(input);
+      });
       input.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (event.key === "Enter" && !event.shiftKey) {
@@ -1595,6 +1826,11 @@ function showCropOverlay(screenshotDataUrl: string) {
           panelHardWordsOpen = !panelHardWordsOpen;
           capturedPanelDiv.style.display = panelHardWordsOpen ? "block" : "none";
           styleAnswerPanel();
+          if (panelHardWordsOpen) {
+            requestAnimationFrame(() => {
+              list.scrollBy({ top: Math.min(140, Math.max(52, capturedPanelDiv.getBoundingClientRect().height * 0.45)), behavior: "smooth" });
+            });
+          }
         });
         actionRow.appendChild(hwBtn);
       }
@@ -1678,7 +1914,14 @@ function showCropOverlay(screenshotDataUrl: string) {
             setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
           );
           Promise.race([
-            sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({ type: "DEEP_DIVE", captureId }),
+            sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+              type: "DEEP_DIVE",
+              captureId,
+              fallbackImageData: activePanelImageData,
+              fallbackContext: activePanelContext,
+              fallbackUrl: location.href,
+              fallbackTitle: document.title,
+            }),
             timeout,
           ])
             .then((response) => {
@@ -1709,12 +1952,11 @@ function showCropOverlay(screenshotDataUrl: string) {
       if (analogyBox) panelChildren.push(analogyBox);
 
       panelChildren.push(row);
-      contextPanel.replaceChildren(...panelChildren);
-      if (loading || messages.length > 1) {
-        requestAnimationFrame(() => {
-          if (list.isConnected) list.scrollTop = list.scrollHeight;
-        });
-      }
+      contextPanel.replaceChildren(dragHandle, ...panelChildren);
+      requestAnimationFrame(() => {
+        settleAnswerPanelPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
+        if ((loading || messages.length > 1) && list.isConnected) list.scrollTop = list.scrollHeight;
+      });
       setTimeout(() => input.focus({ preventScroll: true }), 50);
       closeContextPanelOnOutsideClick();
     }
@@ -1732,6 +1974,8 @@ function showCropOverlay(screenshotDataUrl: string) {
         }
 
         contextPanelSubmitted = true;
+        activePanelImageData = croppedDataUrl;
+        activePanelContext = context;
         removeContextPanelOutsideHandler();
 
         getShowAnswerImmediately((immediate) => {
@@ -1818,7 +2062,46 @@ function showCropOverlay(screenshotDataUrl: string) {
         white-space: nowrap;
         font-size: 13px;
         color: ${colors.accent};
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
       `);
+      preview.title = "Drag overlay";
+
+      preview.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const drag = contextPanel
+          ? elementDragState(contextPanel, { left: contextPanelLeft, top: contextPanelTop })
+          : {
+              position: { left: contextPanelLeft, top: contextPanelTop },
+              bounds: { left: 0, top: 0, width: viewportWidth(), height: viewportHeight() },
+            };
+        const startLeft = drag.position.left;
+        const startTop = drag.position.top;
+        preview.style.cursor = "grabbing";
+
+        const onMove = (ev: MouseEvent) => {
+          const dragHeight = Math.min(contextPanel?.getBoundingClientRect().height || panelH, expandedPanelMaxHeight());
+          const next = clampDraggedOverlay(startLeft + ev.clientX - startX, startTop + ev.clientY - startY, contextPanelWidth, dragHeight, drag.bounds);
+          contextPanelLeft = next.left;
+          contextPanelTop = next.top;
+          if (contextPanel) {
+            contextPanel.style.left = `${contextPanelLeft}px`;
+            contextPanel.style.top = `${contextPanelTop}px`;
+          }
+        };
+        const onUp = () => {
+          preview.style.cursor = "grab";
+          document.removeEventListener("mousemove", onMove, true);
+          document.removeEventListener("mouseup", onUp, true);
+        };
+        document.addEventListener("mousemove", onMove, true);
+        document.addEventListener("mouseup", onUp, true);
+      });
 
       const cancelBtn = document.createElement("button");
       cancelBtn.textContent = "Cancel";
@@ -1857,8 +2140,11 @@ function showCropOverlay(screenshotDataUrl: string) {
         resize: none;
         font-family: inherit;
         box-sizing: border-box;
+        text-align: left;
+        unicode-bidi: plaintext;
       `);
       autosizeTextarea(input);
+      syncTextareaDirection(input);
       trapScroll(input);
 
       function doSave() {
@@ -1870,7 +2156,10 @@ function showCropOverlay(screenshotDataUrl: string) {
         removeCropOverlay();
       });
 
-      input.addEventListener("input", () => autosizeTextarea(input));
+      input.addEventListener("input", () => {
+        syncTextareaDirection(input);
+        autosizeTextarea(input);
+      });
       input.addEventListener("keydown", (e) => {
         e.stopPropagation();
         if (e.key === "Enter" && !e.shiftKey) {
@@ -2050,6 +2339,11 @@ function rectDistanceSquared(rect: RectLike, point: SelectionAnchor) {
   return (point.clientX - x) ** 2 + (point.clientY - y) ** 2;
 }
 
+function rectAnchoredToPoint(rect: RectLike, point: SelectionAnchor): RectLike {
+  const x = Math.max(rect.left, Math.min(point.clientX, rect.right));
+  return { left: x, right: x, top: rect.top, bottom: rect.bottom, width: 0, height: rect.height };
+}
+
 function groupRectsByLine(rects: RectLike[]) {
   const groups: RectLike[][] = [];
   const sortedRects = [...rects].sort((a, b) => a.top - b.top || a.left - b.left);
@@ -2208,13 +2502,11 @@ function shouldUseSemanticSelectionText(raw: string, semantic: string) {
 function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | null {
   const rects = visibleSelectionRects(range);
   if (rects.length > 0) {
-    const lineGroups = groupRectsByLine(rects);
     if (anchor) {
-      const closestLine = lineGroups
-        .map((group) => ({ group, rect: unionRects(group) }))
-        .sort((a, b) => rectDistanceSquared(a.rect, anchor) - rectDistanceSquared(b.rect, anchor))[0];
-      return closestLine ? closestLine.rect : unionRects(rects);
+      const closestRect = [...rects].sort((a, b) => rectDistanceSquared(a, anchor) - rectDistanceSquared(b, anchor))[0];
+      return closestRect ? rectAnchoredToPoint(closestRect, anchor) : unionRects(rects);
     }
+    const lineGroups = groupRectsByLine(rects);
     return unionRects(lineGroups[0] ?? rects);
   }
 
@@ -2367,18 +2659,20 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
     : recentAnchor;
   clearSelectionCheckTimer();
   if (saveBubbleSuppressed()) return;
-  const selected = selectedPageText(anchor && anchor.detail >= 2 ? anchor : undefined, event?.target ?? null);
+  const selected = selectedPageText(anchor ?? undefined, event?.target ?? null);
 
   if (selected) {
-    const vp = getVisualViewportRect();
-    const rawX = selected.rect.left + selected.rect.width / 2;
+    const placementAnchor = anchor && rectDistanceSquared(selected.rect, anchor) > 96 ** 2 ? anchor : null;
+    const rawX = placementAnchor ? placementAnchor.clientX : selected.rect.left + selected.rect.width / 2;
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-    // rangeAnchorRect already chose the visible selection line to place from.
+    // rangeAnchorRect already chose the visible selected rect to place from.
     // Using every range rect here can catch unrelated RTL/layout rects on some pages.
-    const rawY = fixedViewportY(selected.rect.top);
-    const x = Math.max(vp.left + 30, Math.min(vp.left + vp.width - 30, fixedViewportX(rawX)));
-    const y = Math.max(vp.top + 60, Math.min(vp.top + vp.height - 10, rawY));
+    // Some footnote-heavy RTL pages still report stale rects above the visible highlight,
+    // so fall back to the release point when the chosen rect is clearly far away.
+    const rawY = placementAnchor ? placementAnchor.clientY : selected.rect.top;
+    const x = Math.max(30, Math.min(viewportWidth() - 30, rawX));
+    const y = Math.max(60, Math.min(viewportHeight() - 10, rawY));
 
     chrome.storage.local.get("save_triggers", async (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };

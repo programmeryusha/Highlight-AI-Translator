@@ -20,6 +20,7 @@ export interface FlashcardSet {
   id: string;
   name: string;
   captureIds: string[];
+  parentSetId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,13 +46,13 @@ export type Message =
   | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string }
   | { type: "RETRY_CAPTURE"; captureId: string }
-  | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean }
+  | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SIGN_UP"; email: string; password: string }
   | { type: "SIGN_IN"; email: string; password: string }
   | { type: "SIGN_IN_OR_SIGN_UP"; email: string; password: string }
   | { type: "SIGN_OUT" }
   | { type: "DELETE_ACCOUNT" }
-  | { type: "DEEP_DIVE"; captureId: string }
+  | { type: "DEEP_DIVE"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "OPEN_DASHBOARD" }
