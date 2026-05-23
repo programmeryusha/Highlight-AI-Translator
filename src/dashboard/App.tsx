@@ -216,6 +216,93 @@ function renderMarkdown(text: string): React.ReactNode {
   return <>{nodes}</>;
 }
 
+const EXPL_TERM_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
+const EXPL_LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(.*)/;
+const EXPL_SILENT = new Set(["Arabic/source", "Meaning"]);
+const EXPL_RENAME: Record<string, string> = { "Direct": "Direct meaning" };
+const ARABIC_RANGE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const ARABIC_RUN = new RegExp(
+  "([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]" +
+  "(?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿" +
+  "\\s‌‍.,;:!?'\"()\\[\\]{}‐-—،؛؟]*" +
+  "[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿])?)",
+  "gu",
+);
+
+function bidiSpan(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  const re = new RegExp(ARABIC_RUN.source, "gu");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <bdi key={m.index} dir="rtl" lang="ar" style={{ fontFamily: "'Noto Naskh Arabic',serif", unicodeBidi: "isolate" }}>
+        {m[0]}
+      </bdi>
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+function inlineParts(text: string): React.ReactNode {
+  return text.split(/\*\*(.*?)\*\*/g).map((part, i) =>
+    i % 2 === 1
+      ? <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(part) ? "'Noto Naskh Arabic',serif" : "inherit" }}>{bidiSpan(part)}</strong>
+      : bidiSpan(part)
+  );
+}
+
+function renderExplanation(text: string, colors: DashboardColors): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+
+    const termMatch = line.match(EXPL_TERM_RE);
+    if (termMatch) {
+      nodes.push(
+        <div key={i} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 6px", margin: "6px 0" }}>
+          <strong style={{ fontFamily: "'Noto Naskh Arabic',serif", fontWeight: 700, fontSize: "1.05em" }}>{bidiSpan(termMatch[1])}</strong>
+          <span style={{ color: colors.muted }}>—</span>
+          <span>{termMatch[2]}</span>
+        </div>
+      );
+      return;
+    }
+
+    const lm = line.match(EXPL_LABEL_RE);
+    if (lm) {
+      const [, label, rest] = lm;
+      const body = rest.trim();
+      if (EXPL_SILENT.has(label)) {
+        if (body) {
+          const isAr = ARABIC_RANGE.test(body);
+          nodes.push(
+            <p key={i} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? "'Noto Naskh Arabic',serif" : "inherit" }}>
+              {bidiSpan(body)}
+            </p>
+          );
+        }
+        return;
+      }
+      const display = EXPL_RENAME[label] ?? label;
+      nodes.push(
+        <p key={i} style={{ margin: "8px 0 2px", lineHeight: 1.75 }}>
+          <span style={{ fontWeight: 700, color: colors.muted, fontSize: "0.82em", letterSpacing: "0.05em", textTransform: "uppercase" }}>{display}:</span>
+          {body && <> {inlineParts(body)}</>}
+        </p>
+      );
+      return;
+    }
+
+    nodes.push(<p key={i} style={{ margin: "0 0 8px", lineHeight: 1.78 }}>{inlineParts(line)}</p>);
+  });
+  return <>{nodes}</>;
+}
+
 type ParsedError = {
   summary: string;
   userMessage: string;
@@ -605,12 +692,12 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
   const sourceStyle: React.CSSProperties = {
     background: "none",
     border: "none",
-    color: colors.softText,
+    color: colors.text,
     cursor: "pointer",
     display: "block",
     font: "inherit",
     fontSize: typography.source,
-    fontWeight: 500,
+    fontWeight: 600,
     lineHeight: 1.6,
     margin: 0,
     maxWidth: "74ch",
@@ -840,10 +927,10 @@ function SavesView({
                 style={{
                   background: selectedIds.has(c.id) ? colors.accentSoft : colors.surface,
                   border: `1px solid ${selectedIds.has(c.id) ? colorWithAlpha(colors.accent, 0.45) : colors.border}`,
-                  borderRadius: 8,
-                  padding: "16px",
+                  borderRadius: 10,
+                  padding: "22px 24px",
                   maxWidth: "100%",
-                  boxShadow: "0 1px 0 rgba(15,15,15,0.03)",
+                  boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
@@ -881,7 +968,7 @@ function SavesView({
                     )}
                     {c.status === "done" && c.explanation && (
                       <div style={{ fontSize: typography.answer, color: colors.text, margin: "16px 0 0", lineHeight: 1.78, maxWidth: "74ch", overflowWrap: "break-word" }}>
-                        {renderMarkdown(c.explanation)}
+                        {renderExplanation(c.explanation, colors)}
                       </div>
                     )}
                   </div>
