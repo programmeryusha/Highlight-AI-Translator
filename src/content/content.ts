@@ -324,6 +324,7 @@ const ARABIC_RUN_RE = new RegExp(
   `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}\\s\\u200c\\u200d.,;:!?'"()[\\]{}\\-–—،؛؟]*[${ARABIC_CHAR}])?)`,
   "gu",
 );
+type HardWordEntry = { term: string; definition: string };
 
 function appendBidiText(container: HTMLElement, text: string) {
   let start = 0;
@@ -348,6 +349,27 @@ function appendBidiText(container: HTMLElement, text: string) {
   }
 }
 
+function hardWordEntries(text: string): HardWordEntry[] {
+  return text
+    .split("\n")
+    .map((line) => line.match(TERM_DEF_RE))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({ term: match[1], definition: match[2] }));
+}
+
+function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
+  entries.forEach(({ term, definition }) => {
+    const termRow = document.createElement("div");
+    termRow.style.cssText = "margin:5px 0;font-size:inherit;line-height:1.65;";
+    const strong = document.createElement("strong");
+    strong.style.fontWeight = "800";
+    appendBidiText(strong, term);
+    termRow.appendChild(strong);
+    appendBidiText(termRow, ` — ${definition}`);
+    container.appendChild(termRow);
+  });
+}
+
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
   let lastWasInline = false;
@@ -366,14 +388,7 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
         container.appendChild(hardWordsDiv);
       }
 
-      const termRow = document.createElement("div");
-      termRow.style.cssText = "margin:2px 0;font-size:inherit;line-height:1.65;";
-      const strong = document.createElement("strong");
-      strong.style.fontWeight = "700";
-      appendBidiText(strong, term);
-      termRow.appendChild(strong);
-      appendBidiText(termRow, ` — ${definition}`);
-      hardWordsDiv.appendChild(termRow);
+      appendHardWordRows(hardWordsDiv, [{ term, definition }]);
     } else {
       if (lastWasInline) container.appendChild(document.createElement("br"));
       lastWasInline = true;
@@ -926,27 +941,54 @@ function showContextInput(x: number, y: number, selectedText: string) {
     list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
     trapScroll(list);
 
-    let hardWordsDivRef: HTMLElement | null = null;
-    messages.forEach((message, index) => {
-      const label = document.createElement("div");
-      label.textContent = message.role === "assistant" ? "AI" : "You";
-      label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
+    const initialHardWords = messages.length === 1 && messages[0].role === "assistant"
+      ? hardWordEntries(messages[0].content)
+      : [];
+    const focusedHardWords = hardWordsOpen && initialHardWords.length > 0;
+    let latestUserBlock: HTMLElement | null = null;
 
+    if (focusedHardWords) {
+      const label = document.createElement("div");
+      label.textContent = "Hard Words";
+      label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 6px;`);
       const body = document.createElement("div");
-      const hwEl = appendMarkdownText(body, message.content, index === 0, hardWordsOpen);
-      if (index === 0) hardWordsDivRef = hwEl;
-      const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
       body.setAttribute("style", `
-        color: ${message.role === "assistant" ? colors.text : colors.userText};
-        font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
+        color: ${colors.text};
+        font-size: ${cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px"};
         line-height: 1.65;
-        margin-bottom: 8px;
         white-space: pre-wrap;
       `);
-
+      appendHardWordRows(body, initialHardWords);
       list.appendChild(label);
       list.appendChild(body);
-    });
+    } else {
+      messages.forEach((message, index) => {
+        const messageBlock = document.createElement("div");
+        if (message.role === "user") {
+          messageBlock.setAttribute("style", `border-left:2px solid ${colorWithAlpha(accentColor, 0.45)};padding-left:10px;margin:10px 0 12px;`);
+          latestUserBlock = messageBlock;
+        }
+
+        const label = document.createElement("div");
+        label.textContent = message.role === "assistant" ? "AI" : "You";
+        label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
+
+        const body = document.createElement("div");
+        appendMarkdownText(body, message.content, index === 0, false);
+        const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
+        body.setAttribute("style", `
+          color: ${message.role === "assistant" ? colors.text : colors.userText};
+          font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
+          line-height: 1.65;
+          margin-bottom: 8px;
+          white-space: pre-wrap;
+        `);
+
+        messageBlock.appendChild(label);
+        messageBlock.appendChild(body);
+        list.appendChild(messageBlock);
+      });
+    }
 
     if (loading) {
       const label = document.createElement("div");
@@ -1025,6 +1067,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     function askFollowup() {
       const question = followupInput.value.trim();
       if (!question || loading) return;
+      hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
       renderConversation(captureId, nextMessages, true, widgetDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
       sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1069,9 +1112,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
     `);
     let analogyBox: HTMLElement | null = null;
 
-    if (!loading && messages.length === 1 && messages[0].role === "assistant" && hardWordsDivRef) {
+    if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialHardWords.length > 0) {
       const hwBtn = document.createElement("button");
-      hwBtn.textContent = "📘 Hard Words";
+      hwBtn.textContent = hardWordsOpen ? "Back" : "📘 Hard Words";
       const hwBase = `
         align-self: flex-start;
         background: rgba(255,255,255,0.075);
@@ -1093,16 +1136,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
         hwBtn.style.background = "rgba(255,255,255,0.075)";
         hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
       });
-      const capturedDiv = hardWordsDivRef as HTMLElement;
       hwBtn.addEventListener("click", () => {
         hardWordsOpen = !hardWordsOpen;
-        capturedDiv.style.display = hardWordsOpen ? "block" : "none";
-        styleExpandedWidget();
-        if (hardWordsOpen) {
-          requestAnimationFrame(() => {
-            list.scrollBy({ top: Math.min(140, Math.max(52, capturedDiv.getBoundingClientRect().height * 0.45)), behavior: "smooth" });
-          });
-        }
+        renderConversation(captureId, messages, false, loadingText);
       });
       actionRow.appendChild(hwBtn);
     }
@@ -1229,7 +1265,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
     requestAnimationFrame(() => {
       settleExpandedWidgetPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
       addResizeHandles();
-      if ((loading || messages.length > 1) && list.isConnected) list.scrollTop = list.scrollHeight;
+      if (latestUserBlock && list.isConnected) {
+        list.scrollTop = Math.max(0, latestUserBlock.offsetTop - 12);
+      } else if (loading && list.isConnected) {
+        list.scrollTop = Math.min(list.scrollHeight, list.scrollTop + 80);
+      }
     });
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
@@ -1654,27 +1694,54 @@ function showCropOverlay(screenshotDataUrl: string) {
       list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
       trapScroll(list);
 
-      let panelHardWordsDivRef: HTMLElement | null = null;
-      messages.forEach((message, index) => {
-        const label = document.createElement("div");
-        label.textContent = message.role === "assistant" ? "AI" : "You";
-        label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
+      const initialPanelHardWords = messages.length === 1 && messages[0].role === "assistant"
+        ? hardWordEntries(messages[0].content)
+        : [];
+      const focusedPanelHardWords = panelHardWordsOpen && initialPanelHardWords.length > 0;
+      let latestPanelUserBlock: HTMLElement | null = null;
 
+      if (focusedPanelHardWords) {
+        const label = document.createElement("div");
+        label.textContent = "Hard Words";
+        label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 6px;`);
         const body = document.createElement("div");
-        const hwEl = appendMarkdownText(body, message.content, index === 0, panelHardWordsOpen);
-        if (index === 0) panelHardWordsDivRef = hwEl;
-        const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
         body.setAttribute("style", `
-          color: ${message.role === "assistant" ? colors.text : colors.userText};
-          font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
+          color: ${colors.text};
+          font-size: ${cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px"};
           line-height: 1.65;
-          margin-bottom: 12px;
           white-space: pre-wrap;
         `);
-
+        appendHardWordRows(body, initialPanelHardWords);
         list.appendChild(label);
         list.appendChild(body);
-      });
+      } else {
+        messages.forEach((message, index) => {
+          const messageBlock = document.createElement("div");
+          if (message.role === "user") {
+            messageBlock.setAttribute("style", `border-left:2px solid ${colorWithAlpha(accentColor, 0.45)};padding-left:10px;margin:10px 0 12px;`);
+            latestPanelUserBlock = messageBlock;
+          }
+
+          const label = document.createElement("div");
+          label.textContent = message.role === "assistant" ? "AI" : "You";
+          label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
+
+          const body = document.createElement("div");
+          appendMarkdownText(body, message.content, index === 0, false);
+          const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
+          body.setAttribute("style", `
+            color: ${message.role === "assistant" ? colors.text : colors.userText};
+            font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
+            line-height: 1.65;
+            margin-bottom: 12px;
+            white-space: pre-wrap;
+          `);
+
+          messageBlock.appendChild(label);
+          messageBlock.appendChild(body);
+          list.appendChild(messageBlock);
+        });
+      }
 
       if (loading) {
         const label = document.createElement("div");
@@ -1753,6 +1820,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       function askFollowup() {
         const question = input.value.trim();
         if (!question || loading) return;
+        panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
         renderConversationPanel(captureId, nextMessages, true, panelDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
         sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1797,9 +1865,9 @@ function showCropOverlay(screenshotDataUrl: string) {
       `);
       let analogyBox: HTMLElement | null = null;
 
-      if (!loading && messages.length === 1 && messages[0].role === "assistant" && panelHardWordsDivRef) {
+      if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialPanelHardWords.length > 0) {
         const hwBtn = document.createElement("button");
-        hwBtn.textContent = "📘 Hard Words";
+        hwBtn.textContent = panelHardWordsOpen ? "Back" : "📘 Hard Words";
         const hwBase = `
           align-self: flex-start;
           background: rgba(255,255,255,0.075);
@@ -1821,16 +1889,9 @@ function showCropOverlay(screenshotDataUrl: string) {
           hwBtn.style.background = "rgba(255,255,255,0.075)";
           hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
         });
-        const capturedPanelDiv = panelHardWordsDivRef as HTMLElement;
         hwBtn.addEventListener("click", () => {
           panelHardWordsOpen = !panelHardWordsOpen;
-          capturedPanelDiv.style.display = panelHardWordsOpen ? "block" : "none";
-          styleAnswerPanel();
-          if (panelHardWordsOpen) {
-            requestAnimationFrame(() => {
-              list.scrollBy({ top: Math.min(140, Math.max(52, capturedPanelDiv.getBoundingClientRect().height * 0.45)), behavior: "smooth" });
-            });
-          }
+          renderConversationPanel(captureId, messages, false, loadingText);
         });
         actionRow.appendChild(hwBtn);
       }
@@ -1955,7 +2016,11 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(dragHandle, ...panelChildren);
       requestAnimationFrame(() => {
         settleAnswerPanelPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
-        if ((loading || messages.length > 1) && list.isConnected) list.scrollTop = list.scrollHeight;
+        if (latestPanelUserBlock && list.isConnected) {
+          list.scrollTop = Math.max(0, latestPanelUserBlock.offsetTop - 12);
+        } else if (loading && list.isConnected) {
+          list.scrollTop = Math.min(list.scrollHeight, list.scrollTop + 80);
+        }
       });
       setTimeout(() => input.focus({ preventScroll: true }), 50);
       closeContextPanelOnOutsideClick();
