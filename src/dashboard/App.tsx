@@ -536,7 +536,6 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
     <button
       type="button"
       aria-label={selected ? "Deselect save" : "Select save"}
-      title={selected ? "Deselect save" : "Select save"}
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -549,21 +548,19 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 24,
-        height: 24,
-        borderRadius: 6,
+        width: 18,
+        height: 18,
+        borderRadius: 4,
         border: selected ? `2px solid ${colors.accent}` : `2px solid ${hovered ? colors.accent : colors.border}`,
         background: selected ? colors.accent : hovered ? colors.accentSoft : colors.surfaceAlt,
         color: selected ? colors.selectedText : colors.accent,
         cursor: "pointer",
-        fontSize: 13,
-        lineHeight: "20px",
+        fontSize: 11,
+        lineHeight: "14px",
         fontWeight: 800,
         flexShrink: 0,
         padding: 0,
-        boxShadow: hovered ? `0 0 0 2px ${colors.accentSoft}` : "none",
-        transition: "background 120ms ease, border 120ms ease, box-shadow 120ms ease, transform 120ms ease",
-        transform: hovered ? "translateY(-1px)" : "none",
+        transition: "background 120ms ease, border 120ms ease",
       }}
     >
       {selected ? "✓" : ""}
@@ -571,101 +568,34 @@ function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; o
   );
 }
 
-function SaveOverflowMenu({
-  open,
-  onToggle,
-  onDelete,
-  colors,
-}: {
-  open: boolean;
-  onToggle: () => void;
-  onDelete: () => void;
-  colors: DashboardColors;
-}) {
+function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: DashboardColors }) {
+  const [hovered, setHovered] = useState(false);
   return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
-      <button
-        type="button"
-        aria-label="Save options"
-        title="Save options"
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onToggle();
-        }}
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 999,
-          border: `1px solid ${open ? colors.accent : colors.border}`,
-          background: open ? colors.accentSoft : colors.surface,
-          color: open ? colors.accent : colors.muted,
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 18,
-          fontWeight: 850,
-          lineHeight: 1,
-          padding: 0,
-        }}
-      >
-        ⋯
-      </button>
-      {open && (
-        <div
-          role="menu"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: 36,
-            zIndex: 20,
-            minWidth: 142,
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            padding: 6,
-            boxShadow: "0 14px 34px rgba(15, 15, 15, 0.16)",
-          }}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onDelete();
-            }}
-            style={{
-              width: "100%",
-              border: "none",
-              borderRadius: 6,
-              background: "transparent",
-              color: colors.danger,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 9px",
-              fontSize: 13,
-              fontWeight: 750,
-              textAlign: "left",
-            }}
-          >
-            <TrashIcon />
-            Delete save
-          </button>
-        </div>
-      )}
-    </div>
+    <button
+      type="button"
+      aria-label="Delete save"
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 7,
+        border: `1px solid ${hovered ? colors.dangerBorder : colors.border}`,
+        background: hovered ? colors.dangerSoft : "transparent",
+        color: hovered ? colors.danger : colors.muted,
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        padding: 0,
+        transition: "background 120ms ease, border 120ms ease, color 120ms ease",
+      }}
+    >
+      <TrashIcon />
+    </button>
   );
 }
 
@@ -675,8 +605,6 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
   const sourceStyle: React.CSSProperties = {
     background: "none",
     border: "none",
-    borderRight: rtl ? `3px solid ${colors.border}` : undefined,
-    borderLeft: rtl ? undefined : `3px solid ${colors.border}`,
     color: colors.softText,
     cursor: "pointer",
     display: "block",
@@ -686,7 +614,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     lineHeight: 1.6,
     margin: 0,
     maxWidth: "74ch",
-    padding: rtl ? "2px 13px 2px 0" : "2px 0 2px 13px",
+    padding: "2px 0",
     direction: rtl ? "rtl" : "ltr",
     textAlign: rtl ? "right" : "left",
     textDecoration: hovered ? "underline" : "none",
@@ -769,7 +697,6 @@ function SavesView({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastRangeAnchorId, setLastRangeAnchorId] = useState<string | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
@@ -777,7 +704,6 @@ function SavesView({
     const visibleIds = new Set(captures.map((capture) => capture.id));
     setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
     setLastRangeAnchorId((current) => current && visibleIds.has(current) ? current : null);
-    setOpenMenuId((current) => current && visibleIds.has(current) ? current : null);
   }, [captures]);
 
   if (captures.length === 0) {
@@ -807,7 +733,6 @@ function SavesView({
   function toggleSelectionMode() {
     const nextMode = !selectionMode;
     setSelectionMode(nextMode);
-    setOpenMenuId(null);
     if (!nextMode) {
       setSelectedIds(new Set());
       setLastRangeAnchorId(null);
@@ -857,7 +782,7 @@ function SavesView({
   }
 
   return (
-    <div onClick={() => openMenuId && setOpenMenuId(null)}>
+    <div>
       <div
         style={{
           display: "flex",
@@ -867,60 +792,40 @@ function SavesView({
           marginBottom: 18,
         }}
       >
-        <button
-          type="button"
-          onClick={toggleSelectionMode}
-          title="Shift-click save checkboxes to select a range"
-          style={{
-            ...subtleButtonStyle(colors, 13),
-            background: selectionMode ? colors.accent : colors.surfaceAlt,
-            color: selectionMode ? colors.selectedText : colors.text,
-            borderColor: selectionMode ? colors.accent : colors.border,
-          }}
-        >
-          {selectionMode ? "Done selecting" : "Select"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={toggleSelectionMode}
+            style={{
+              ...subtleButtonStyle(colors, 13),
+              background: selectionMode ? colors.accent : colors.surfaceAlt,
+              color: selectionMode ? colors.selectedText : colors.text,
+              borderColor: selectionMode ? colors.accent : colors.border,
+            }}
+          >
+            {selectionMode ? "Done" : "Select"}
+          </button>
+          {selectionMode && selectedCount > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={deleteSelected}
+                style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                Delete {selectedCount}
+              </button>
+              <button
+                type="button"
+                onClick={toggleSelectionMode}
+                style={{ background: "none", color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
         {headerAction}
       </div>
-      {selectedCount > 0 && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            padding: "10px 12px",
-            marginBottom: 22,
-            background: colors.surface,
-            boxShadow: "0 8px 22px rgba(15,15,15,0.10)",
-            position: "sticky",
-            top: 12,
-            zIndex: 10,
-          }}
-        >
-          <span style={{ fontSize: 13, color: colors.text, fontWeight: 700 }}>
-            {selectedCount} selected
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              type="button"
-              onClick={deleteSelected}
-              style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-            >
-              Delete selected
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedIds(new Set())}
-              style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-            >
-              Unselect all
-            </button>
-          </div>
-        </div>
-      )}
       {groups.map((group) => (
         <div key={group.label} style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
@@ -935,9 +840,8 @@ function SavesView({
                 style={{
                   background: selectedIds.has(c.id) ? colors.accentSoft : colors.surface,
                   border: `1px solid ${selectedIds.has(c.id) ? colorWithAlpha(colors.accent, 0.45) : colors.border}`,
-                  borderLeft: `3px solid ${selectedIds.has(c.id) ? colors.accent : colorWithAlpha(colors.accent, 0.22)}`,
                   borderRadius: 8,
-                  padding: "18px 18px 18px 16px",
+                  padding: "16px",
                   maxWidth: "100%",
                   boxShadow: "0 1px 0 rgba(15,15,15,0.03)",
                 }}
@@ -952,8 +856,8 @@ function SavesView({
                     <CapturePreview capture={c} colors={colors} typography={typography} />
 
                     {c.context && (
-                      <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 12, margin: "13px 0 0", maxWidth: "74ch" }}>
-                        <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 4px" }}>
+                      <div style={{ margin: "10px 0 0", maxWidth: "74ch" }}>
+                        <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 3px" }}>
                           Your question
                         </p>
                         <p style={{ fontSize: typography.context, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
@@ -981,15 +885,12 @@ function SavesView({
                       </div>
                     )}
                   </div>
-                  <SaveOverflowMenu
-                    open={openMenuId === c.id}
-                    onToggle={() => setOpenMenuId((current) => current === c.id ? null : c.id)}
-                    onDelete={() => {
-                      setOpenMenuId(null);
-                      onDeleteCaptures([c.id]);
-                    }}
-                    colors={colors}
-                  />
+                  {!selectionMode && (
+                    <SaveDeleteButton
+                      onDelete={() => onDeleteCaptures([c.id])}
+                      colors={colors}
+                    />
+                  )}
                 </div>
               </div>
             ))}
@@ -1396,7 +1297,7 @@ function FlashcardPopup({
 function WordsView({ captures, colors, theme, accentColor }: { captures: Capture[]; colors: DashboardColors; theme: ThemeName; accentColor: string }) {
   const [studyWords, setStudyWords] = useState<WordEntry[] | null>(null);
   const [showExport, setShowExport] = useState(false);
-  const [source, setSource] = useState<FlashcardSource>({ kind: "range", range: "pastDay" });
+  const [source, setSource] = useState<FlashcardSource>({ kind: "days" });
   const [selectedDays, setSelectedDays] = useState<Set<string>>(() => new Set([todayKey()]));
   const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
   const [sets, setSets] = useState<FlashcardSet[]>([]);
@@ -1524,7 +1425,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
           <p style={{ fontSize: 13, color: colors.muted, margin: 0 }}>
@@ -1547,15 +1448,8 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
-        {FLASHCARD_RANGES.map((range) => {
-          const selected = source.kind === "range" && source.range === range.value;
-          return (
-            <button key={range.value} type="button" onClick={() => setSource({ kind: "range", range: range.value })} style={{ background: selected ? colors.accent : colors.surface, color: selected ? colors.selectedText : colors.text, border: `1px solid ${selected ? colors.accent : colors.border}`, borderRadius: 999, padding: "7px 12px", fontSize: 13, fontWeight: 750, cursor: "pointer" }}>
-              {range.label}
-            </button>
-          );
-        })}
+      <div style={{ marginBottom: 24 }}>
+        <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
       </div>
 
       {showExport && (
@@ -1566,14 +1460,6 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
           {exportButtons(words, "Current selection")}
         </div>
       )}
-
-      <div style={{ width: "min(360px, 100%)", marginBottom: 28, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16 }}>
-        <p style={{ fontSize: 14, color: colors.text, fontWeight: 800, margin: "0 0 5px" }}>Pick days</p>
-        <p style={{ fontSize: 12, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
-          Click dates to study or export only those saves.
-        </p>
-        <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
-      </div>
 
       {showCreateSet && (
         <FlashcardPopup title="Create set" onClose={() => setShowCreateSet(false)} colors={colors}>
@@ -1671,7 +1557,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
 
       {words.length === 0 ? (
         <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No cards · {sourceLabel}. Pick another range or click days in the calendar.
+          No cards · {sourceLabel}. Pick days from the calendar above.
         </p>
       ) : (
         <div>
@@ -2754,9 +2640,9 @@ export default function App() {
             {streak > 0 && (
               <button
                 onClick={() => navigateView("saves")}
-                aria-label={`${streak} day save streak. Go to today.`}
-                style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "5px 8px", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
-                title={`${streak} day save streak. Consecutive days with at least one save.`}
+                aria-label={`${streak} day streak`}
+                title={`${streak} day streak`}
+                style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
               >
                 <span style={{ fontSize: 16 }}>🔥</span>
                 <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{streak}</span>

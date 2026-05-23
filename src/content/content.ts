@@ -80,11 +80,17 @@ function ensureBaseStyles() {
   `;
   document.head.appendChild(style);
 
-  if (!document.querySelector('link[href*="Noto+Naskh+Arabic"]')) {
-    const font = document.createElement("link");
-    font.rel = "stylesheet";
-    font.href = "https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;700&display=swap";
-    document.head.appendChild(font);
+  if (!document.querySelector('[data-cl-font]')) {
+    fetch("https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;700&display=swap")
+      .then((r) => r.text())
+      .then((css) => {
+        if (document.querySelector("[data-cl-font]")) return;
+        const fontStyle = document.createElement("style");
+        fontStyle.setAttribute("data-cl-font", "1");
+        fontStyle.textContent = css;
+        document.head.appendChild(fontStyle);
+      })
+      .catch(() => {});
   }
 }
 
@@ -419,6 +425,7 @@ function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
 }
 
 const LABEL_RE = /^(Line \d+|Arabic\/source|Meaning|Direct|Plain meaning):(.*)/;
+const SILENT_LABELS = new Set(["Arabic/source", "Meaning"]);
 
 function appendMarkdownText(container: HTMLElement, text: string, renderChips = true, showHardWords = false): HTMLElement | null {
   const lines = text.split("\n");
@@ -447,12 +454,15 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
 
       const labelMatch = stripped.match(LABEL_RE);
       if (labelMatch) {
-        const labelSpan = document.createElement("span");
-        labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.8em;letter-spacing:0.05em;text-transform:uppercase;`;
-        labelSpan.textContent = labelMatch[1] + ":";
-        container.appendChild(labelSpan);
-        if (labelMatch[2].trim()) {
-          appendBidiText(container, labelMatch[2]);
+        if (SILENT_LABELS.has(labelMatch[1])) {
+          if (labelMatch[2].trim()) appendBidiText(container, labelMatch[2]);
+          else lastWasInline = false;
+        } else {
+          const labelSpan = document.createElement("span");
+          labelSpan.style.cssText = `font-weight:700;color:${colors.muted};font-size:0.8em;letter-spacing:0.05em;text-transform:uppercase;`;
+          labelSpan.textContent = labelMatch[1] + ":";
+          container.appendChild(labelSpan);
+          if (labelMatch[2].trim()) appendBidiText(container, labelMatch[2]);
         }
       } else {
         stripped.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
@@ -842,6 +852,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       const next = overlayPositionAwayFromRect(selectionForPlacement, widgetWidth, heightForClamp, x, y);
       left = next.left;
       top = next.top;
+      userPlacedWidget = true;
     } else {
       left = clampLeftToViewport(left, widgetWidth);
       top = panelTopFor(top - lift, heightForClamp);
