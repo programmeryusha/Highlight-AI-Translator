@@ -1860,16 +1860,16 @@ function WordsView({
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button type="button" onClick={openCreateSet} style={{ background: showCreateSet ? colors.accent : colors.surface, color: showCreateSet ? colors.selectedText : colors.text, border: `1px solid ${showCreateSet ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          <button type="button" onClick={openCreateSet} style={{ ...subtleButtonStyle(colors, 13) }}>
             Create set
           </button>
-          <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ background: showSets ? colors.accent : colors.surface, color: showSets ? colors.selectedText : colors.text, border: `1px solid ${showSets ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ ...subtleButtonStyle(colors, 13) }}>
             Sets
           </button>
-          <button type="button" onClick={() => setShowExport((open) => !open)} style={{ background: showExport ? colors.accent : colors.surface, color: showExport ? colors.selectedText : colors.text, border: `1px solid ${showExport ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
             Export
           </button>
-          <button type="button" disabled={words.length === 0} onClick={() => setStudyWords(words)} style={{ background: words.length ? colors.accent : colors.border, color: words.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: words.length ? "pointer" : "default" }}>
+          <button type="button" disabled={words.length === 0} onClick={() => setStudyWords(words)} style={{ ...subtleButtonStyle(colors, 13), opacity: words.length ? 1 : 0.5, cursor: words.length ? "pointer" : "default" }}>
             Study
           </button>
         </div>
