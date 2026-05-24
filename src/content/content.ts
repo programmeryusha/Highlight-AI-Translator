@@ -193,6 +193,63 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   });
 }
 
+const STREAM_DISCONNECTED_MESSAGE = "Explanation stream disconnected.";
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function fallbackForDisconnectedStream(message: Record<string, unknown>, startedCaptureId: string): Message | null {
+  if (message.type === "SAVE_HIGHLIGHT_STREAM") {
+    const replaceCaptureId = startedCaptureId || optionalString(message.replaceCaptureId);
+    return {
+      type: "SAVE_HIGHLIGHT",
+      text: String(message.text ?? ""),
+      url: String(message.url ?? location.href),
+      title: String(message.title ?? document.title),
+      context: String(message.context ?? ""),
+      ...(replaceCaptureId ? { replaceCaptureId } : {}),
+    };
+  }
+
+  if (message.type === "ASK_FOLLOWUP_STREAM") {
+    return {
+      type: "ASK_FOLLOWUP",
+      captureId: String(message.captureId ?? ""),
+      question: String(message.question ?? ""),
+      deepDive: Boolean(message.deepDive),
+      fallbackText: optionalString(message.fallbackText),
+      fallbackContext: optionalString(message.fallbackContext),
+      fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackUrl: optionalString(message.fallbackUrl),
+      fallbackTitle: optionalString(message.fallbackTitle),
+    };
+  }
+
+  if (message.type === "EXPLAIN_SCREENSHOT_STREAM") {
+    return {
+      type: "EXPLAIN_SCREENSHOT",
+      imageData: String(message.imageData ?? ""),
+      context: String(message.context ?? ""),
+      replaceCaptureId: startedCaptureId || undefined,
+    };
+  }
+
+  if (message.type === "DEEP_DIVE_STREAM") {
+    return {
+      type: "DEEP_DIVE",
+      captureId: String(message.captureId ?? ""),
+      fallbackText: optionalString(message.fallbackText),
+      fallbackContext: optionalString(message.fallbackContext),
+      fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackUrl: optionalString(message.fallbackUrl),
+      fallbackTitle: optionalString(message.fallbackTitle),
+    };
+  }
+
+  return null;
+}
+
 function streamRuntimeMessage<T>(
   message: Record<string, unknown>,
   handlers: {
@@ -203,9 +260,11 @@ function streamRuntimeMessage<T>(
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: "contextlens-explain-stream" });
     let settled = false;
+    let startedCaptureId = "";
 
     port.onMessage.addListener((event: Record<string, unknown>) => {
       if (event.type === "started" && typeof event.captureId === "string") {
+        startedCaptureId = event.captureId;
         handlers.onStart?.(event.captureId);
         return;
       }
@@ -227,7 +286,16 @@ function streamRuntimeMessage<T>(
     });
 
     port.onDisconnect.addListener(() => {
-      if (!settled) reject(new Error("Explanation stream disconnected."));
+      if (settled) return;
+      settled = true;
+
+      const fallbackMessage = fallbackForDisconnectedStream(message, startedCaptureId);
+      if (fallbackMessage) {
+        sendRuntimeMessage<T>(fallbackMessage).then(resolve).catch(reject);
+        return;
+      }
+
+      reject(new Error(STREAM_DISCONNECTED_MESSAGE));
     });
 
     port.postMessage(message);
@@ -326,22 +394,17 @@ function overlayPositionAwayFromRect(
 type DragBounds = { left: number; top: number; width: number; height: number };
 
 function elementDragState(element: HTMLElement, fallback: { left: number; top: number }) {
-  const rect = element.getBoundingClientRect();
   const styleLeft = Number.parseFloat(element.style.left);
   const styleTop = Number.parseFloat(element.style.top);
   const position = {
     left: Number.isFinite(styleLeft) ? styleLeft : fallback.left,
     top: Number.isFinite(styleTop) ? styleTop : fallback.top,
   };
+  const viewport = getVisualViewportRect();
 
   return {
     position,
-    bounds: {
-      left: position.left - rect.left,
-      top: position.top - rect.top,
-      width: viewportWidth(),
-      height: viewportHeight(),
-    },
+    bounds: viewport,
   };
 }
 
@@ -640,7 +703,15 @@ function createCameraButton() {
     queueCameraButtonPosition();
   });
   cameraBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT" } as Message);
+    cameraBtn!.style.display = "none";
+    window.setTimeout(() => {
+      chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
+        if (chrome.runtime.lastError && cameraBtn) cameraBtn.style.display = "";
+      });
+    }, 80);
+    window.setTimeout(() => {
+      if (!cropOverlay && cameraBtn) cameraBtn.style.display = "";
+    }, 4000);
   });
   appendToPage(cameraBtn);
   queueCameraButtonPosition();
@@ -779,6 +850,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   let widgetHeight = 0;
   const selectionForPlacement = selectedPageText()?.rect ?? null;
   let userPlacedWidget = false;
+  let widgetHasSettledFromSelection = false;
   const initialPosition = selectionForPlacement
     ? overlayPositionAwayFromRect(selectionForPlacement, widgetWidth, 132, x, y)
     : { left: clampLeftToViewport(x - widgetWidth / 2, widgetWidth), top: panelTopFor(y - 138, 132) };
@@ -829,6 +901,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    userPlacedWidget = true;
     const startX = e.clientX;
     const startY = e.clientY;
     const drag = widget
@@ -939,14 +1012,14 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const maxH = expandedPanelMaxHeight();
     const actualHeight = widget.getBoundingClientRect().height;
     const heightForClamp = Math.min(actualHeight > 0 ? actualHeight : maxH, maxH);
-    if (selectionForPlacement && !userPlacedWidget) {
+    if (selectionForPlacement && !userPlacedWidget && !widgetHasSettledFromSelection) {
       const next = overlayPositionAwayFromRect(selectionForPlacement, widgetWidth, heightForClamp, x, y);
       left = next.left;
       top = next.top;
-      userPlacedWidget = true;
+      widgetHasSettledFromSelection = true;
     } else {
       left = clampLeftToViewport(left, widgetWidth);
-      top = panelTopFor(top - lift, heightForClamp);
+      top = panelTopFor(userPlacedWidget || widgetHasSettledFromSelection ? top : top - lift, heightForClamp);
     }
     widget.style.left = `${left}px`;
     widget.style.top = `${top}px`;
@@ -1121,6 +1194,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+      userPlacedWidget = true;
       const startX = e.clientX;
       const startY = e.clientY;
       const drag = widget
@@ -1280,13 +1354,13 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (!question || loading) return;
       hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-      renderConversation(captureId, nextMessages, true, widgetDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
+      renderConversation(captureId, nextMessages, true, "Thinking…");
       let streamed = "";
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
         type: "ASK_FOLLOWUP_STREAM",
         captureId,
         question,
-        deepDive: widgetDeepDiveActive,
+        deepDive: false,
         fallbackText: selectedText,
         fallbackContext: input.value.trim(),
         fallbackUrl: location.href,
@@ -1438,14 +1512,20 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
         );
+        let streamed = "";
         Promise.race([
-          sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
-            type: "DEEP_DIVE",
+          streamRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+            type: "DEEP_DIVE_STREAM",
             captureId,
             fallbackText: selectedText,
             fallbackContext: input.value.trim(),
             fallbackUrl: location.href,
             fallbackTitle: document.title,
+          }, {
+            onChunk: (chunk) => {
+              streamed += chunk;
+              renderConversation(captureId, [...messages, { role: "assistant", content: streamed }], true, "Writing…");
+            },
           }),
           timeout,
         ])
@@ -1482,10 +1562,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
     requestAnimationFrame(() => {
       settleExpandedWidgetPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
       addResizeHandles();
-      if (latestUserBlock && list.isConnected) {
+      if (!loading && latestUserBlock && list.isConnected) {
         list.scrollTop = Math.max(0, latestUserBlock.offsetTop - 12);
-      } else if (loading && list.isConnected) {
-        list.scrollTop = Math.min(list.scrollHeight, list.scrollTop + 80);
       }
     });
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
@@ -1604,44 +1682,75 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
+let screenshotRepositionTimer: number | null = null;
+let screenshotRepositionCleanup: (() => void) | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
 
-function lockPageScroll() {
-  const elements = [document.documentElement, document.body].filter((element): element is HTMLElement => Boolean(element));
-  const snapshots = elements.map((element) => ({
-    element,
-    overflowX: element.style.overflowX,
-    overflowY: element.style.overflowY,
-    overscrollBehaviorX: element.style.overscrollBehaviorX,
-    overscrollBehaviorY: element.style.overscrollBehaviorY,
-  }));
-
-  elements.forEach((element) => {
-    element.style.overflowX = "hidden";
-    element.style.overflowY = "hidden";
-    element.style.overscrollBehaviorX = "none";
-    element.style.overscrollBehaviorY = "none";
-  });
-
-  return () => {
-    snapshots.forEach(({ element, overflowX, overflowY, overscrollBehaviorX, overscrollBehaviorY }) => {
-      element.style.overflowX = overflowX;
-      element.style.overflowY = overflowY;
-      element.style.overscrollBehaviorX = overscrollBehaviorX;
-      element.style.overscrollBehaviorY = overscrollBehaviorY;
-    });
-  };
+function clearScreenshotReposition() {
+  if (screenshotRepositionTimer !== null) {
+    window.clearTimeout(screenshotRepositionTimer);
+    screenshotRepositionTimer = null;
+  }
+  screenshotRepositionCleanup?.();
+  screenshotRepositionCleanup = null;
 }
 
-function removeCropOverlay() {
+function removeCropOverlay(showCamera = true) {
   (cropOverlay as CropOverlayElement | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
-  if (cameraBtn) cameraBtn.style.display = "";
+  if (showCamera && cameraBtn) cameraBtn.style.display = "";
 }
 
-function showCropOverlay(screenshotDataUrl: string) {
+function recaptureScreenshotAfterScroll(delay = 450) {
+  if (screenshotRepositionTimer !== null) window.clearTimeout(screenshotRepositionTimer);
+  screenshotRepositionTimer = window.setTimeout(() => {
+    screenshotRepositionTimer = null;
+    screenshotRepositionCleanup?.();
+    screenshotRepositionCleanup = null;
+    if (cameraBtn) cameraBtn.style.display = "none";
+    chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
+      if (chrome.runtime.lastError && cameraBtn) cameraBtn.style.display = "";
+    });
+    window.setTimeout(() => {
+      if (!cropOverlay && cameraBtn) cameraBtn.style.display = "";
+    }, 4000);
+  }, delay);
+}
+
+function startScreenshotReposition(initialWheel?: WheelEvent) {
+  clearScreenshotReposition();
+  removeCropOverlay(false);
+  if (cameraBtn) cameraBtn.style.display = "none";
+
+  const schedule = () => recaptureScreenshotAfterScroll();
+  const cancel = (event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    clearScreenshotReposition();
+    if (cameraBtn) cameraBtn.style.display = "";
+  };
+
+  window.addEventListener("scroll", schedule, true);
+  window.addEventListener("wheel", schedule, { capture: true, passive: true });
+  window.addEventListener("touchend", schedule, true);
+  window.addEventListener("keydown", cancel, true);
+  screenshotRepositionCleanup = () => {
+    window.removeEventListener("scroll", schedule, true);
+    window.removeEventListener("wheel", schedule, true);
+    window.removeEventListener("touchend", schedule, true);
+    window.removeEventListener("keydown", cancel, true);
+  };
+
+  if (initialWheel) {
+    window.scrollBy({ left: initialWheel.deltaX, top: initialWheel.deltaY, behavior: "auto" });
+  }
+  recaptureScreenshotAfterScroll();
+}
+
+function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number; y: number }) {
+  clearScreenshotReposition();
   removeCropOverlay();
   if (cameraBtn) cameraBtn.style.display = "none";
+  if (restoreScroll) window.scrollTo(restoreScroll.x, restoreScroll.y);
 
   cropOverlay = document.createElement("div");
   cropOverlay.setAttribute("style", `
@@ -1658,9 +1767,9 @@ function showCropOverlay(screenshotDataUrl: string) {
     box-sizing: border-box;
     direction: ltr;
     text-align: left;
-    touch-action: none;
+    touch-action: auto;
   `);
-  const cropCleanupTasks: Array<() => void> = [lockPageScroll()];
+  const cropCleanupTasks: Array<() => void> = [];
   (cropOverlay as CropOverlayElement).__contextLensCleanup = () => {
     while (cropCleanupTasks.length) {
       try {
@@ -1690,13 +1799,41 @@ function showCropOverlay(screenshotDataUrl: string) {
     window.removeEventListener("resize", syncCropOverlayToViewport);
   });
 
+  let dragStart: { x: number; y: number } | null = null;
+  let selection: { x: number; y: number; w: number; h: number } | null = null;
+  let contextPanel: HTMLElement | null = null;
+  let contextPanelOutsideHandler: ((event: MouseEvent) => void) | null = null;
+  let contextPanelSubmitted = false;
+  let contextPanelLeft = 8;
+  let contextPanelTop = 8;
+  let contextPanelWidth = panelWidthFor();
+  let panelDeepDiveActive = false;
+  let panelHardWordsOpen = false;
+  let panelAnalogyText = "";
+  let panelAnalogyLoading = false;
+  let activePanelImageData = "";
+  let activePanelContext = "";
+  let userPlacedContextPanel = false;
+
   cropOverlay.addEventListener("wheel", (event) => {
+    if (event.target instanceof Element && event.target.closest(".cl-scroll")) return;
+    if (dragStart || contextPanel) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
+    startScreenshotReposition(event);
   }, { passive: false });
   cropOverlay.addEventListener("touchmove", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest(".cl-scroll")) return;
+    if (dragStart || contextPanel) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    startScreenshotReposition();
   }, { passive: false });
 
   const canvas = document.createElement("canvas");
@@ -1712,21 +1849,6 @@ function showCropOverlay(screenshotDataUrl: string) {
     canvas.height = img.height;
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(img, 0, 0);
-
-    let dragStart: { x: number; y: number } | null = null;
-    let selection: { x: number; y: number; w: number; h: number } | null = null;
-    let contextPanel: HTMLElement | null = null;
-    let contextPanelOutsideHandler: ((event: MouseEvent) => void) | null = null;
-    let contextPanelSubmitted = false;
-    let contextPanelLeft = 8;
-    let contextPanelTop = 8;
-    let contextPanelWidth = panelWidthFor();
-    let panelDeepDiveActive = false;
-    let panelHardWordsOpen = false;
-    let panelAnalogyText = "";
-    let panelAnalogyLoading = false;
-    let activePanelImageData = "";
-    let activePanelContext = "";
 
     function removeContextPanelOutsideHandler() {
       if (!contextPanelOutsideHandler) return;
@@ -1813,6 +1935,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         flex-direction: column;
         direction: ltr;
         text-align: left;
+        overflow: hidden;
       `);
     }
 
@@ -1822,7 +1945,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       const actualHeight = contextPanel.getBoundingClientRect().height;
       const heightForClamp = Math.min(actualHeight > 0 ? actualHeight : maxHeight, maxHeight);
       contextPanelLeft = clampLeftToViewport(contextPanelLeft, contextPanelWidth);
-      contextPanelTop = panelTopFor(contextPanelTop - lift, heightForClamp);
+      contextPanelTop = panelTopFor(userPlacedContextPanel ? contextPanelTop : contextPanelTop - lift, heightForClamp);
       contextPanel.style.left = `${contextPanelLeft}px`;
       contextPanel.style.top = `${contextPanelTop}px`;
       contextPanel.style.maxHeight = `${maxHeight}px`;
@@ -1848,7 +1971,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Close";
       closeBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;`);
-      closeBtn.addEventListener("click", removeCropOverlay);
+      closeBtn.addEventListener("click", () => removeCropOverlay());
       contextPanel.replaceChildren(message, closeBtn);
     }
 
@@ -1866,7 +1989,7 @@ function showCropOverlay(screenshotDataUrl: string) {
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Dismiss";
       closeBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
-      closeBtn.addEventListener("click", removeCropOverlay);
+      closeBtn.addEventListener("click", () => removeCropOverlay());
       const row = document.createElement("div");
       row.setAttribute("style", "display:flex;gap:0;");
       row.appendChild(signInBtn);
@@ -1901,6 +2024,7 @@ function showCropOverlay(screenshotDataUrl: string) {
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
+          userPlacedContextPanel = true;
           const startX = event.clientX;
           const startY = event.clientY;
           const drag = contextPanel
@@ -2059,7 +2183,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         font-weight: 600;
         cursor: pointer;
       `);
-      closeBtn.addEventListener("click", removeCropOverlay);
+      closeBtn.addEventListener("click", () => removeCropOverlay());
 
       const row = document.createElement("div");
       row.setAttribute("style", "display:flex;gap:8px;align-items:center;flex-shrink:0;");
@@ -2072,13 +2196,13 @@ function showCropOverlay(screenshotDataUrl: string) {
         if (!question || loading) return;
         panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-        renderConversationPanel(captureId, nextMessages, true, panelDeepDiveActive ? "Thinking through a deeper answer…" : "Thinking…");
+        renderConversationPanel(captureId, nextMessages, true, "Thinking…");
         let streamed = "";
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
           type: "ASK_FOLLOWUP_STREAM",
           captureId,
           question,
-          deepDive: panelDeepDiveActive,
+          deepDive: false,
           fallbackImageData: activePanelImageData,
           fallbackContext: activePanelContext,
           fallbackUrl: location.href,
@@ -2230,14 +2354,20 @@ function showCropOverlay(screenshotDataUrl: string) {
           const timeout = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
           );
+          let streamed = "";
           Promise.race([
-            sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
-              type: "DEEP_DIVE",
+            streamRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+              type: "DEEP_DIVE_STREAM",
               captureId,
               fallbackImageData: activePanelImageData,
               fallbackContext: activePanelContext,
               fallbackUrl: location.href,
               fallbackTitle: document.title,
+            }, {
+              onChunk: (chunk) => {
+                streamed += chunk;
+                renderConversationPanel(captureId, [...messages, { role: "assistant", content: streamed }], true, "Writing…");
+              },
             }),
             timeout,
           ])
@@ -2272,10 +2402,8 @@ function showCropOverlay(screenshotDataUrl: string) {
       contextPanel.replaceChildren(dragHandle, ...panelChildren);
       requestAnimationFrame(() => {
         settleAnswerPanelPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
-        if (latestPanelUserBlock && list.isConnected) {
+        if (!loading && latestPanelUserBlock && list.isConnected) {
           list.scrollTop = Math.max(0, latestPanelUserBlock.offsetTop - 12);
-        } else if (loading && list.isConnected) {
-          list.scrollTop = Math.min(list.scrollHeight, list.scrollTop + 80);
         }
       });
       setTimeout(() => input.focus({ preventScroll: true }), 50);
@@ -2403,6 +2531,7 @@ function showCropOverlay(screenshotDataUrl: string) {
         if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
+        userPlacedContextPanel = true;
         const startX = e.clientX;
         const startY = e.clientY;
         const drag = contextPanel
@@ -2563,7 +2692,12 @@ const runtimeMessageHandler = (message: Message) => {
     showContextInput(x, y, selected?.text || message.text);
   }
   if (message.type === "SHOW_CROP_OVERLAY") {
-    showCropOverlay(message.imageData);
+    showCropOverlay(
+      message.imageData,
+      typeof message.scrollX === "number" && typeof message.scrollY === "number"
+        ? { x: message.scrollX, y: message.scrollY }
+        : undefined,
+    );
   }
 };
 chrome.runtime.onMessage.addListener(runtimeMessageHandler);
@@ -3073,14 +3207,12 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   const selected = selectedPageText(anchor ?? undefined, event?.target ?? null);
 
   if (selected) {
-    const placementAnchor = anchor && rectDistanceSquared(selected.rect, anchor) > 96 ** 2 ? anchor : null;
+    const placementAnchor = anchor ?? null;
     const rawX = placementAnchor ? placementAnchor.clientX : selected.rect.left + selected.rect.width / 2;
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-    // rangeAnchorRect already chose the visible selected rect to place from.
-    // Using every range rect here can catch unrelated RTL/layout rects on some pages.
-    // Some footnote-heavy RTL pages still report stale rects above the visible highlight,
-    // so fall back to the release point when the chosen rect is clearly far away.
+    // Prefer the release point so reverse drags on RTL passages don't anchor
+    // the Save bubble to an earlier visual line.
     const rawY = placementAnchor ? placementAnchor.clientY : selected.rect.top;
     const x = Math.max(30, Math.min(viewportWidth() - 30, rawX));
     const y = Math.max(60, Math.min(viewportHeight() - 10, rawY));

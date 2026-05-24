@@ -187,17 +187,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-async function takeScreenshot() {
+async function takeScreenshot(scrollX?: number, scrollY?: number) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   const dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+  const overlayMessage = { type: "SHOW_CROP_OVERLAY", imageData: dataUrl, scrollX, scrollY };
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CROP_OVERLAY", imageData: dataUrl });
+    await chrome.tabs.sendMessage(tab.id, overlayMessage);
   } catch {
     const injected = await injectContentScript(tab.id, tab.url);
     if (injected) {
       try {
-        await chrome.tabs.sendMessage(tab.id, { type: "SHOW_CROP_OVERLAY", imageData: dataUrl });
+        await chrome.tabs.sendMessage(tab.id, overlayMessage);
         return;
       } catch {
         // Fall through to the standalone crop page.
@@ -261,13 +262,13 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "TAKE_SCREENSHOT") {
-    void takeScreenshot();
+    void takeScreenshot(message.scrollX, message.scrollY);
   }
   if (message.type === "SAVE_SCREENSHOT") {
     void saveScreenshot(message.imageData, message.context);
   }
   if (message.type === "EXPLAIN_SCREENSHOT") {
-    explainAndSaveScreenshot(message.imageData, message.context)
+    explainAndSaveScreenshot(message.imageData, message.context, message.replaceCaptureId)
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -411,6 +412,23 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
+    if (message.type === "DEEP_DIVE_STREAM") {
+      deepDiveStream(
+        String(message.captureId ?? ""),
+        {
+          text: typeof message.fallbackText === "string" ? message.fallbackText : undefined,
+          context: typeof message.fallbackContext === "string" ? message.fallbackContext : undefined,
+          imageData: typeof message.fallbackImageData === "string" ? message.fallbackImageData : undefined,
+          url: typeof message.fallbackUrl === "string" ? message.fallbackUrl : undefined,
+          title: typeof message.fallbackTitle === "string" ? message.fallbackTitle : undefined,
+        },
+        (chunk) => post({ type: "chunk", text: chunk }),
+      )
+        .then((result) => post({ type: "done", ...result }))
+        .catch((error) => post({ type: "error", error: errorMessage(error) }));
+      return;
+    }
+
     if (message.type === "EXPLAIN_SCREENSHOT_STREAM") {
       explainAndSaveScreenshotStream(
         String(message.imageData ?? ""),
@@ -466,11 +484,17 @@ async function fetchExplanationStream(
   imageBase64: string | undefined,
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
+  deepDive = false,
 ): Promise<string> {
-  const mode = await getAppMode();
+  const account = deepDive ? await getAccount() : null;
+  const mode = deepDive ? "language_learning" : await getAppMode();
   const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null, mode };
   if (messages.length > 0) {
     body.messages = messages.slice(-8);
+  }
+  if (deepDive) {
+    body.deep_dive = true;
+    body.token = account?.token ?? null;
   }
 
   const res = await fetch(`${BACKEND_URL}/explain/stream`, {
@@ -478,8 +502,12 @@ async function fetchExplanationStream(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    if (data.detail === "deep_dive_limit_reached") throw new Error("DEEP_DIVE_LIMIT_REACHED");
+  }
   if (!res.ok) await throwResponseError("Backend error", res);
-  if (!res.body) return fetchExplanation(text, context, imageBase64, false, messages);
+  if (!res.body) return fetchExplanation(text, context, imageBase64, deepDive, messages);
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -816,8 +844,23 @@ async function markDeepDiveCapture(captureId: string): Promise<void> {
   await chrome.storage.local.set({ [DEEP_DIVE_CAPTURE_IDS_KEY]: Array.from(ids) });
 }
 
-async function createPendingScreenshot(imageData: string, context: string): Promise<string> {
-  const id = crypto.randomUUID();
+async function createPendingScreenshot(imageData: string, context: string, captureId?: string): Promise<string> {
+  const id = captureId ?? crypto.randomUUID();
+
+  if (captureId) {
+    const existing = await updateCapture(captureId, {
+      text: "[Screenshot]",
+      context,
+      url: "",
+      title: "Screenshot",
+      explanation: null,
+      status: "pending",
+      errorMessage: undefined,
+      imageData,
+    });
+    if (existing) return captureId;
+  }
+
   const capture: Capture = {
     id,
     text: "[Screenshot]",
@@ -868,8 +911,8 @@ async function restoreCaptureFromFallback(captureId: string, fallback: CaptureFa
   return capture;
 }
 
-async function explainAndSaveScreenshot(imageData: string, context: string): Promise<{ captureId: string; explanation: string }> {
-  const id = await createPendingScreenshot(imageData, context);
+async function explainAndSaveScreenshot(imageData: string, context: string, replaceCaptureId?: string): Promise<{ captureId: string; explanation: string }> {
+  const id = await createPendingScreenshot(imageData, context, replaceCaptureId);
 
   try {
     const base64 = imageData.split(",")[1];
@@ -920,7 +963,7 @@ async function saveScreenshot(imageData: string, context: string) {
   await explainAndSaveScreenshot(imageData, context).catch(() => {});
 }
 
-async function askFollowup(captureId: string, question: string, deepDiveRequested = false, fallback: CaptureFallback = {}): Promise<{ reply: string; messages: ChatMessage[] }> {
+async function askFollowup(captureId: string, question: string, _deepDiveRequested = false, fallback: CaptureFallback = {}): Promise<{ reply: string; messages: ChatMessage[] }> {
   const key = `chat_${captureId}`;
   const storage = await chrome.storage.local.get(["captures", key]);
   const captures: Capture[] = storage.captures ?? [];
@@ -933,15 +976,13 @@ async function askFollowup(captureId: string, question: string, deepDiveRequeste
   const updated: ChatMessage[] = [...prior, { role: "user", content: question }];
   const fallbackImageBase64 = fallback.imageData?.split(",")[1];
   const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
-  const useDeepDive = deepDiveRequested || await isDeepDiveCapture(captureId);
   const reply = await fetchExplanation(
     capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
     capture?.context ?? fallback.context ?? "",
     imageBase64,
-    useDeepDive,
+    false,
     updated,
   );
-  if (useDeepDive) await markDeepDiveCapture(captureId);
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
   return { reply, messages };
@@ -950,7 +991,7 @@ async function askFollowup(captureId: string, question: string, deepDiveRequeste
 async function askFollowupStream(
   captureId: string,
   question: string,
-  deepDiveRequested = false,
+  _deepDiveRequested = false,
   fallback: CaptureFallback = {},
   onChunk: (chunk: string) => void,
 ): Promise<{ reply: string; messages: ChatMessage[] }> {
@@ -966,25 +1007,14 @@ async function askFollowupStream(
   const updated: ChatMessage[] = [...prior, { role: "user", content: question }];
   const fallbackImageBase64 = fallback.imageData?.split(",")[1];
   const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
-  const useDeepDive = deepDiveRequested || await isDeepDiveCapture(captureId);
+  const reply = await fetchExplanationStream(
+    capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+    capture?.context ?? fallback.context ?? "",
+    imageBase64,
+    updated,
+    onChunk,
+  );
 
-  const reply = useDeepDive
-    ? await fetchExplanation(
-      capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
-      capture?.context ?? fallback.context ?? "",
-      imageBase64,
-      true,
-      updated,
-    )
-    : await fetchExplanationStream(
-      capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
-      capture?.context ?? fallback.context ?? "",
-      imageBase64,
-      updated,
-      onChunk,
-    );
-
-  if (useDeepDive) await markDeepDiveCapture(captureId);
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
   return { reply, messages };
@@ -1034,6 +1064,42 @@ async function deepDive(captureId: string, fallback: CaptureFallback = {}): Prom
     imageBase64,
     true,
     hasFollowup || !capture ? prior : [],
+  );
+
+  if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
+  await markDeepDiveCapture(captureId);
+
+  const messages: ChatMessage[] = hasFollowup
+    ? [...prior, { role: "assistant", content: explanation }]
+    : [{ role: "assistant", content: explanation }];
+  await chrome.storage.local.set({ [chatKey]: messages });
+
+  return { explanation, messages };
+}
+
+async function deepDiveStream(
+  captureId: string,
+  fallback: CaptureFallback = {},
+  onChunk: (chunk: string) => void,
+): Promise<{ explanation: string; messages: ChatMessage[] }> {
+  const storage = await chrome.storage.local.get(["captures", `chat_${captureId}`]);
+  const captures: Capture[] = storage.captures ?? [];
+  let capture = captures.find((c) => c.id === captureId);
+  const chatKey = `chat_${captureId}`;
+  const prior: ChatMessage[] = storage[chatKey] ?? (capture?.explanation ? [{ role: "assistant", content: capture.explanation }] : []);
+  if (!capture) capture = await restoreCaptureFromFallback(captureId, fallback, prior);
+  if (!capture && prior.length === 0) throw new Error("Saved item not found.");
+
+  const fallbackImageBase64 = fallback.imageData?.split(",")[1];
+  const imageBase64 = capture?.imageData?.split(",")[1] ?? fallbackImageBase64;
+  const hasFollowup = prior.some((message) => message.role === "user");
+  const explanation = await fetchExplanationStream(
+    capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
+    capture?.context ?? fallback.context ?? "",
+    imageBase64,
+    hasFollowup || !capture ? prior : [],
+    onChunk,
+    true,
   );
 
   if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });

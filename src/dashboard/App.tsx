@@ -171,6 +171,15 @@ function downloadTextFile(filename: string, contents: string) {
   URL.revokeObjectURL(url);
 }
 
+function filenameSlug(value: string) {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06FF]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "contextlens";
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -1572,6 +1581,40 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
     );
   }
 
+  function setFlashcards(set: FlashcardSet) {
+    return buildFlashcardList(
+      set.captureIds
+        .map((id) => captureById.get(id))
+        .filter((capture): capture is Capture => Boolean(capture)),
+    );
+  }
+
+  function compactSetExportButtons(set: FlashcardSet, exportWords: WordEntry[]) {
+    const disabled = exportWords.length === 0;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => exportFlashcards("anki", exportWords, set.name)}
+          title={`Export ${set.name} to Anki`}
+          style={{ background: disabled ? colors.border : colors.accent, color: disabled ? colors.muted : colors.selectedText, border: "none", borderRadius: 6, padding: "6px 8px", fontSize: 12, fontWeight: 850, cursor: disabled ? "default" : "pointer" }}
+        >
+          Anki
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => exportFlashcards("quizlet", exportWords, set.name)}
+          title={`Export ${set.name} to Quizlet`}
+          style={{ background: colors.surface, color: disabled ? colors.muted : colors.text, border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontWeight: 850, cursor: disabled ? "default" : "pointer" }}
+        >
+          Quizlet
+        </button>
+      </div>
+    );
+  }
+
   if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} />;
 
   return (
@@ -1660,7 +1703,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
       )}
 
       {showSets && (
-        <FlashcardPopup title="Sets" onClose={() => setShowSets(false)} colors={colors} width={580}>
+        <FlashcardPopup title="Sets" onClose={() => setShowSets(false)} colors={colors} width={680}>
           {sets.length === 0 ? (
             <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>No saved sets yet.</p>
           ) : (
@@ -1669,14 +1712,16 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
                 const selected = source.kind === "set" && source.setId === set.id;
                 const count = set.captureIds.filter((id) => captureById.has(id)).length;
                 const parent = set.parentSetId ? setById.get(set.parentSetId) : undefined;
+                const exportWords = setFlashcards(set);
                 return (
-                  <div key={set.id} style={{ marginLeft: depth * 18, display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
+                  <div key={set.id} style={{ marginLeft: depth * 18, display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 8, alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
                     <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
                       <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
                       <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>
                         {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
                       </span>
                     </button>
+                    {compactSetExportButtons(set, exportWords)}
                     <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>x</button>
                   </div>
                 );
@@ -1751,11 +1796,12 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
   );
 }
 
-function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[]) {
+function exportFlashcards(format: "anki" | "quizlet", flashcards: WordEntry[], name = "contextlens") {
   const rows = flashcards
     .map((card) => `${cleanExportCell(card.word)}\t${cleanExportCell(card.explanation || card.exampleText || "No explanation yet.")}`)
     .join("\n");
-  const filename = format === "anki" ? "contextlens-anki.tsv" : "contextlens-quizlet.txt";
+  const baseName = filenameSlug(name);
+  const filename = format === "anki" ? `${baseName}-anki.tsv` : `${baseName}-quizlet.txt`;
   downloadTextFile(filename, rows);
 }
 
