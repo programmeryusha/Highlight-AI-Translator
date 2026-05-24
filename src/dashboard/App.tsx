@@ -1822,13 +1822,14 @@ function WordsView({
               boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
             }}
           >
-            {word.imageData ? (
+            {word.imageData && (
               <img
                 src={word.imageData}
                 alt="Saved screenshot"
-                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, background: colors.surfaceAlt, marginBottom: explanationPreview ? 12 : 0 }}
+                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, background: colors.surfaceAlt, marginBottom: promptPreview || explanationPreview ? 12 : 0 }}
               />
-            ) : (
+            )}
+            {promptPreview && (
               <p
                 style={{
                   color: colors.text,
@@ -1846,7 +1847,7 @@ function WordsView({
               </p>
             )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.softText, margin: word.imageData ? 0 : "12px 0 0", lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
+              <div style={{ fontSize: typography.answer, color: colors.softText, margin: promptPreview ? "12px 0 0" : 0, lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
                 {renderMarkdown(explanationPreview)}
               </div>
             )}
