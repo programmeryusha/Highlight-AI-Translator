@@ -570,6 +570,19 @@ function useWindowWidth(): number {
   return width;
 }
 
+function useScrolledPast(threshold = 360): boolean {
+  const [past, setPast] = useState(() => window.scrollY > threshold);
+
+  useEffect(() => {
+    const update = () => setPast(window.scrollY > threshold);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, [threshold]);
+
+  return past;
+}
+
 function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1177,7 +1190,7 @@ function HistoryView({
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
   const wideLayout = windowWidth >= 1040;
-  const [calendarVisible, setCalendarVisible] = useState(true);
+  const calendarVisible = !useScrolledPast(360);
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -1232,15 +1245,6 @@ function HistoryView({
               {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
             </p>
           </div>
-          {wideLayout && !calendarVisible && (
-            <button
-              type="button"
-              onClick={() => setCalendarVisible(true)}
-              style={{ ...subtleButtonStyle(colors, 11), padding: "4px 8px", flexShrink: 0 }}
-            >
-              Show calendar
-            </button>
-          )}
         </div>
 
         {!wideLayout && (
@@ -1285,38 +1289,27 @@ function HistoryView({
       </div>
 
       {wideLayout && calendarVisible && (
-        <div style={{ position: "sticky", top: 92, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-          <div
-            style={{
-              background: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 10,
-              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-              display: "flex",
-              justifyContent: "center",
-              padding: "18px 16px",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          >
-            <MonthCalendar
-              captures={captures}
-              selectedDay={selectedDay}
-              visibleMonth={visibleMonth}
-              onVisibleMonthChange={setVisibleMonth}
-              onSelectDay={selectDay}
-              colors={colors}
-              theme={theme}
-              accentColor={accentColor}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setCalendarVisible(false)}
-            style={{ ...subtleButtonStyle(colors, 11), padding: "3px 8px" }}
-          >
-            Hide calendar
-          </button>
+        <div
+          style={{
+            background: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 10,
+            boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+            display: "flex",
+            justifyContent: "center",
+            padding: "18px 16px",
+          }}
+        >
+          <MonthCalendar
+            captures={captures}
+            selectedDay={selectedDay}
+            visibleMonth={visibleMonth}
+            onVisibleMonthChange={setVisibleMonth}
+            onSelectDay={selectDay}
+            colors={colors}
+            theme={theme}
+            accentColor={accentColor}
+          />
         </div>
       )}
     </div>
@@ -1646,7 +1639,7 @@ function WordsView({
   const [newSetName, setNewSetName] = useState("");
   const [showCreateSet, setShowCreateSet] = useState(false);
   const [showSets, setShowSets] = useState(false);
-  const [calendarVisible, setCalendarVisible] = useState(true);
+  const calendarVisible = !useScrolledPast(360);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1867,11 +1860,6 @@ function WordsView({
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {!calendarVisible && (
-            <button type="button" onClick={() => setCalendarVisible(true)} style={{ ...subtleButtonStyle(colors, 11), padding: "4px 8px" }}>
-              Show calendar
-            </button>
-          )}
           <button type="button" onClick={openCreateSet} style={{ background: showCreateSet ? colors.accent : colors.surface, color: showCreateSet ? colors.selectedText : colors.text, border: `1px solid ${showCreateSet ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             Create set
           </button>
@@ -1962,15 +1950,8 @@ function WordsView({
           {cards}
         </div>
         {calendarVisible && (
-          <div style={{ position: "sticky", top: 92, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <div>
             {sourcePanel}
-            <button
-              type="button"
-              onClick={() => setCalendarVisible(false)}
-              style={{ ...subtleButtonStyle(colors, 11), padding: "3px 8px" }}
-            >
-              Hide calendar
-            </button>
           </div>
         )}
       </div>
