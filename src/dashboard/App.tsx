@@ -317,8 +317,12 @@ function QuestionText({
 }) {
   const [hovered, setHovered] = useState(false);
   const direction = firstStrongTextDirection(text);
+  const isRtl = direction === "rtl";
+  const effectiveFontSize = isRtl ? Math.round(fontSize * 1.12) : fontSize;
+  const effectiveFontFamily = isRtl ? ARABIC_FONT_STACK : "inherit";
   const baseStyle: React.CSSProperties = {
-    fontSize,
+    fontSize: effectiveFontSize,
+    fontFamily: effectiveFontFamily,
     color,
     lineHeight,
     margin,
@@ -345,7 +349,8 @@ function QuestionText({
           padding: 0,
           cursor: "pointer",
           font: "inherit",
-          fontSize,
+          fontSize: effectiveFontSize,
+          fontFamily: effectiveFontFamily,
           fontWeight,
           textDecoration: hovered ? "underline" : "none",
           textDecorationColor: colorWithAlpha(color, 0.45),
