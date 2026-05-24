@@ -1232,13 +1232,13 @@ function HistoryView({
               {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
             </p>
           </div>
-          {wideLayout && (
+          {wideLayout && !calendarVisible && (
             <button
               type="button"
-              onClick={() => setCalendarVisible((v) => !v)}
-              style={{ ...subtleButtonStyle(colors, 13), flexShrink: 0 }}
+              onClick={() => setCalendarVisible(true)}
+              style={{ ...subtleButtonStyle(colors, 11), padding: "4px 8px", flexShrink: 0 }}
             >
-              {calendarVisible ? "Hide calendar" : "Show calendar"}
+              Show calendar
             </button>
           )}
         </div>
@@ -1285,29 +1285,38 @@ function HistoryView({
       </div>
 
       {wideLayout && calendarVisible && (
-        <div
-          style={{
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 10,
-            boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-            display: "flex",
-            justifyContent: "center",
-            padding: "18px 16px",
-            position: "sticky",
-            top: 92,
-          }}
-        >
-          <MonthCalendar
-            captures={captures}
-            selectedDay={selectedDay}
-            visibleMonth={visibleMonth}
-            onVisibleMonthChange={setVisibleMonth}
-            onSelectDay={selectDay}
-            colors={colors}
-            theme={theme}
-            accentColor={accentColor}
-          />
+        <div style={{ position: "sticky", top: 92, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <div
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 10,
+              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+              display: "flex",
+              justifyContent: "center",
+              padding: "18px 16px",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          >
+            <MonthCalendar
+              captures={captures}
+              selectedDay={selectedDay}
+              visibleMonth={visibleMonth}
+              onVisibleMonthChange={setVisibleMonth}
+              onSelectDay={selectDay}
+              colors={colors}
+              theme={theme}
+              accentColor={accentColor}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setCalendarVisible(false)}
+            style={{ ...subtleButtonStyle(colors, 11), padding: "3px 8px" }}
+          >
+            Hide calendar
+          </button>
         </div>
       )}
     </div>
@@ -1857,9 +1866,11 @@ function WordsView({
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button type="button" onClick={() => setCalendarVisible((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
-            {calendarVisible ? "Hide calendar" : "Show calendar"}
-          </button>
+          {!calendarVisible && (
+            <button type="button" onClick={() => setCalendarVisible(true)} style={{ ...subtleButtonStyle(colors, 11), padding: "4px 8px" }}>
+              Show calendar
+            </button>
+          )}
           <button type="button" onClick={openCreateSet} style={{ background: showCreateSet ? colors.accent : colors.surface, color: showCreateSet ? colors.selectedText : colors.text, border: `1px solid ${showCreateSet ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             Create set
           </button>
@@ -1950,8 +1961,15 @@ function WordsView({
           {cards}
         </div>
         {calendarVisible && (
-          <div style={{ position: "sticky", top: 92 }}>
+          <div style={{ position: "sticky", top: 92, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
             {sourcePanel}
+            <button
+              type="button"
+              onClick={() => setCalendarVisible(false)}
+              style={{ ...subtleButtonStyle(colors, 11), padding: "3px 8px" }}
+            >
+              Hide calendar
+            </button>
           </div>
         )}
       </div>
