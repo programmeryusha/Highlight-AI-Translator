@@ -1848,7 +1848,7 @@ function WordsView({
   );
 
   return (
-    <div>
+    <div style={{ maxWidth: 1220, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
@@ -1928,8 +1928,17 @@ function WordsView({
         </FlashcardPopup>
       )}
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 32, flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 620px", minWidth: 0 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: calendarVisible ? "minmax(0, 1fr) 332px" : "1fr",
+          gap: 28,
+          alignItems: "start",
+          maxWidth: 1220,
+          margin: "0 auto",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
           {showExport && (
             <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
@@ -1941,9 +1950,9 @@ function WordsView({
           {cards}
         </div>
         {calendarVisible && (
-          <aside style={{ flex: "0 0 332px", width: 332, maxWidth: "100%", position: "sticky", top: 92 }}>
+          <div style={{ position: "sticky", top: 92 }}>
             {sourcePanel}
-          </aside>
+          </div>
         )}
       </div>
     </div>
