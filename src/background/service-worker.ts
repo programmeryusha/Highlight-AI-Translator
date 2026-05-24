@@ -696,8 +696,13 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options
   localCaptures.forEach((capture) => {
     if (!merged.has(capture.id)) {
       merged.set(capture.id, capture);
-    } else if (capture.imageData && !merged.get(capture.id)!.imageData) {
-      merged.set(capture.id, { ...merged.get(capture.id)!, imageData: capture.imageData });
+    } else {
+      const remote = merged.get(capture.id)!;
+      // Local base64 (data: prefix) never expires — always prefer it over presigned URLs
+      const imageData = capture.imageData?.startsWith("data:")
+        ? capture.imageData
+        : (remote.imageData ?? capture.imageData);
+      merged.set(capture.id, { ...remote, imageData });
     }
   });
   const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());

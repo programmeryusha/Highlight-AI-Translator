@@ -1089,7 +1089,7 @@ function SavesView({
                         <QuestionText
                           text={c.context}
                           color={colors.text}
-                          fontSize={typography.source}
+                          fontSize={typography.source + 5}
                           onClick={(event) => openCaptureFromClick(event, c.id)}
                         />
                       </div>
@@ -1772,7 +1772,9 @@ function WordsView({
       </div>
     </div>
   ) : (
-    <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
+    <div style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 10, boxShadow: "0 2px 12px rgba(15,15,15,0.05)", display: "flex", justifyContent: "center", padding: "18px 16px" }}>
+      <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
+    </div>
   );
 
   const cards = words.length === 0 ? (
@@ -2754,9 +2756,27 @@ function FlashcardDayCalendar({
 }) {
   const counts = captureCountsByDay(captures);
   const days = calendarDayKeys(visibleMonth);
+  const realDays = days.filter((key): key is string => Boolean(key));
+  const max = Math.max(1, ...realDays.map((day) => counts.get(day) ?? 0));
   const previousMonth = addMonths(visibleMonth, -1);
   const nextMonth = addMonths(visibleMonth, 1);
   const canGoNext = nextMonth <= currentMonthKey();
+
+  function colorFor(count: number) {
+    if (count === 0) return colors.surfaceAlt;
+    const cappedMax = Math.max(12, Math.min(48, max));
+    const intensity = Math.min(1, Math.log1p(count) / Math.log1p(cappedMax));
+    const alpha = theme === "dark"
+      ? 0.16 + intensity * 0.42
+      : 0.07 + intensity * 0.34;
+    return colorWithAlpha(accentColor, alpha);
+  }
+
+  function borderFor(count: number, isSelected: boolean) {
+    if (isSelected) return `2px solid ${colors.accent}`;
+    if (count > 0) return `1px solid ${colorWithAlpha(accentColor, theme === "dark" ? 0.42 : 0.28)}`;
+    return `1px solid ${colors.border}`;
+  }
 
   return (
     <div style={{ width: 300, maxWidth: "100%" }}>
@@ -2786,8 +2806,8 @@ function FlashcardDayCalendar({
                 width: 34,
                 height: 34,
                 borderRadius: 8,
-                border: selected ? `2px solid ${colors.accent}` : `1px solid ${count ? colorWithAlpha(accentColor, theme === "dark" ? 0.44 : 0.30) : colors.border}`,
-                background: selected ? colors.accent : count ? colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.12) : colors.surfaceAlt,
+                border: borderFor(count, selected),
+                background: selected ? colors.accent : colorFor(count),
                 boxShadow: selected ? `0 0 0 2px ${colors.accentSoft}` : "none",
                 color: selected ? colors.selectedText : future ? colors.muted : colors.text,
                 cursor: future ? "default" : "pointer",
