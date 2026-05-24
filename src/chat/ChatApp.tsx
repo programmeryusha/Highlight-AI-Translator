@@ -242,6 +242,8 @@ export default function ChatApp() {
     setImageFailed(false);
   }, [capture?.id]);
 
+  useEffect(() => { setImageFailed(false); }, [capture?.imageData]);
+
   // Apply background color to document body
   useEffect(() => {
     const dark = theme === "dark";
