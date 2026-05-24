@@ -1633,6 +1633,7 @@ function WordsView({
   const [newSetName, setNewSetName] = useState("");
   const [showCreateSet, setShowCreateSet] = useState(false);
   const [showSets, setShowSets] = useState(false);
+  const [calendarVisible, setCalendarVisible] = useState(true);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1844,6 +1845,9 @@ function WordsView({
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button type="button" onClick={() => setCalendarVisible((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
+            {calendarVisible ? "Hide calendar" : "Show calendar"}
+          </button>
           <button type="button" onClick={openCreateSet} style={{ background: showCreateSet ? colors.accent : colors.surface, color: showCreateSet ? colors.selectedText : colors.text, border: `1px solid ${showCreateSet ? colors.accent : colors.border}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             Create set
           </button>
@@ -1924,9 +1928,11 @@ function WordsView({
           )}
           {cards}
         </div>
-        <aside style={{ flex: "0 0 332px", width: 332, maxWidth: "100%", position: "sticky", top: 92 }}>
-          {sourcePanel}
-        </aside>
+        {calendarVisible && (
+          <aside style={{ flex: "0 0 332px", width: 332, maxWidth: "100%", position: "sticky", top: 92 }}>
+            {sourcePanel}
+          </aside>
+        )}
       </div>
     </div>
   );
