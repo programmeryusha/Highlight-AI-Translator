@@ -807,6 +807,7 @@ function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: 
 function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
   const [hovered, setHovered] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => { setImageFailed(false); }, [capture.imageData]);
   const rtl = hasRtlText(capture.text);
   const sourceStyle: React.CSSProperties = {
     background: "none",
