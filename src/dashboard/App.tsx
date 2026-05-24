@@ -1331,8 +1331,8 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
   const map = new Map<string, WordEntry>();
   for (const c of captures) {
     const word = flashcardPrompt(c);
-    if (!word) continue;
-    const key = normalizeQuestion(word);
+    if (!word && !c.imageData) continue;
+    const key = word ? normalizeQuestion(word) : c.id;
     if (!map.has(key)) {
       map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.imageData ? "" : c.text, imageData: c.imageData, captureIds: [] });
     }
@@ -1809,23 +1809,31 @@ function WordsView({
               boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
             }}
           >
-            <p
-              style={{
-                color: colors.text,
-                fontSize: typography.context,
-                fontWeight: 600,
-                lineHeight: 1.6,
-                margin: 0,
-                maxHeight: "8.1em",
-                overflow: "hidden",
-                overflowWrap: "break-word",
-                textAlign: "left",
-              }}
-            >
-              {inlineParts(promptPreview)}
-            </p>
+            {word.imageData ? (
+              <img
+                src={word.imageData}
+                alt="Saved screenshot"
+                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, background: colors.surfaceAlt, marginBottom: explanationPreview ? 12 : 0 }}
+              />
+            ) : (
+              <p
+                style={{
+                  color: colors.text,
+                  fontSize: typography.context,
+                  fontWeight: 600,
+                  lineHeight: 1.6,
+                  margin: 0,
+                  maxHeight: "8.1em",
+                  overflow: "hidden",
+                  overflowWrap: "break-word",
+                  textAlign: "left",
+                }}
+              >
+                {inlineParts(promptPreview)}
+              </p>
+            )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.softText, margin: "12px 0 0", lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
+              <div style={{ fontSize: typography.answer, color: colors.softText, margin: word.imageData ? 0 : "12px 0 0", lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
                 {renderMarkdown(explanationPreview)}
               </div>
             )}
