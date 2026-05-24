@@ -695,22 +695,27 @@ function createCameraButton() {
     transition: transform 0.1s;
   `);
   cameraBtn.addEventListener("mouseenter", () => {
-    cameraButtonHoverScale = 1.1;
-    queueCameraButtonPosition();
+    if (cameraBtn) cameraBtn.style.filter = "brightness(1.08)";
   });
   cameraBtn.addEventListener("mouseleave", () => {
-    cameraButtonHoverScale = 1;
-    queueCameraButtonPosition();
+    if (cameraBtn) cameraBtn.style.filter = "";
   });
   cameraBtn.addEventListener("click", () => {
+    screenshotCapturePending = true;
     cameraBtn!.style.display = "none";
     window.setTimeout(() => {
       chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
-        if (chrome.runtime.lastError && cameraBtn) cameraBtn.style.display = "";
+        if (chrome.runtime.lastError && cameraBtn) {
+          screenshotCapturePending = false;
+          cameraBtn.style.display = "";
+        }
       });
     }, 80);
     window.setTimeout(() => {
-      if (!cropOverlay && cameraBtn) cameraBtn.style.display = "";
+      if (screenshotCapturePending && !cropOverlay && cameraBtn) {
+        screenshotCapturePending = false;
+        cameraBtn.style.display = "";
+      }
     }, 4000);
   });
   appendToPage(cameraBtn);
@@ -770,14 +775,46 @@ function removeWidget() {
   widgetDeepDiveActive = false;
 }
 
-function showSaveBubble(x: number, y: number, selectedText: string) {
+function saveBubblePlacement(target: RectLike, bounds: RectLike, anchor: SelectionAnchor | null) {
+  const mobile = viewportWidth() <= 600;
+  const width = mobile ? 76 : 86;
+  const height = mobile ? 32 : 34;
+  const gap = 14;
+  const viewport = getVisualViewportRect();
+  const anchorX = anchor
+    ? Math.max(bounds.left, Math.min(anchor.clientX, bounds.right))
+    : target.left + target.width / 2;
+  const targetCenterY = target.top + target.height / 2;
+  const boundsCenterY = bounds.top + bounds.height / 2;
+  const preferAbove = targetCenterY <= boundsCenterY;
+  const aboveTop = bounds.top - gap - height;
+  const belowTop = bounds.bottom + gap;
+  const minTop = viewport.top + 8;
+  const maxTop = viewport.top + Math.max(0, viewport.height - height - 8);
+  const canAbove = aboveTop >= minTop;
+  const canBelow = belowTop <= maxTop;
+  const top = preferAbove
+    ? (canAbove ? aboveTop : canBelow ? belowTop : Math.max(minTop, Math.min(aboveTop, maxTop)))
+    : (canBelow ? belowTop : canAbove ? aboveTop : Math.max(minTop, Math.min(belowTop, maxTop)));
+
+  return {
+    left: Math.max(viewport.left + 8, Math.min(anchorX - width / 2, viewport.left + viewport.width - width - 8)),
+    top,
+    width,
+    height,
+    anchorX,
+    anchorY: preferAbove ? bounds.top : bounds.bottom,
+  };
+}
+
+function showSaveBubble(target: RectLike, bounds: RectLike, selectedText: string, anchor: SelectionAnchor | null) {
   if (widgetMode === "input") return;
   removeWidget();
   widgetMode = "bubble";
 
   const mobile = viewportWidth() <= 600;
-  const btnHeight  = mobile ? 32 : 34;
-  const btnMinW    = mobile ? 68 : 74;
+  const placement = saveBubblePlacement(target, bounds, anchor);
+  const btnHeight  = placement.height;
   const btnPad     = mobile ? "0 13px" : "0 15px";
   const btnFont    = mobile ? "14.5px" : "15.5px";
 
@@ -787,14 +824,13 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     "style",
     `
     position: fixed;
-    left: ${x}px;
-    top: ${y - 12}px;
-    transform: translate(-50%, calc(-100% + 4px));
+    left: ${placement.left}px;
+    top: ${placement.top}px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     height: ${btnHeight}px;
-    min-width: ${btnMinW}px;
+    width: ${placement.width}px;
     box-sizing: border-box;
     background: #202231;
     color: #f5f6ff;
@@ -810,7 +846,7 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     box-shadow: 0 5px 14px rgba(0,0,0,0.24);
     user-select: none;
     opacity: 0;
-    transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    transition: opacity 120ms ease, box-shadow 120ms ease, background 120ms ease;
   `
   );
 
@@ -829,14 +865,13 @@ function showSaveBubble(x: number, y: number, selectedText: string) {
     e.preventDefault();
     e.stopPropagation();
     skipNextMouseup = true;
-    showContextInput(x, y, selectedText);
+    showContextInput(placement.anchorX, placement.anchorY, selectedText);
   });
 
   appendToPage(widget);
   requestAnimationFrame(() => {
     if (!widget || widgetMode !== "bubble") return;
     widget.style.opacity = "1";
-    widget.style.transform = "translate(-50%, -100%)";
   });
 }
 
@@ -1682,6 +1717,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
+let screenshotCapturePending = false;
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
@@ -1708,17 +1744,25 @@ function recaptureScreenshotAfterScroll(delay = 450) {
     screenshotRepositionCleanup?.();
     screenshotRepositionCleanup = null;
     if (cameraBtn) cameraBtn.style.display = "none";
+    screenshotCapturePending = true;
     chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
-      if (chrome.runtime.lastError && cameraBtn) cameraBtn.style.display = "";
+      if (chrome.runtime.lastError && cameraBtn) {
+        screenshotCapturePending = false;
+        cameraBtn.style.display = "";
+      }
     });
     window.setTimeout(() => {
-      if (!cropOverlay && cameraBtn) cameraBtn.style.display = "";
+      if (screenshotCapturePending && !cropOverlay && cameraBtn) {
+        screenshotCapturePending = false;
+        cameraBtn.style.display = "";
+      }
     }, 4000);
   }, delay);
 }
 
 function startScreenshotReposition(initialWheel?: WheelEvent) {
   clearScreenshotReposition();
+  screenshotCapturePending = false;
   removeCropOverlay(false);
   if (cameraBtn) cameraBtn.style.display = "none";
 
@@ -1748,7 +1792,8 @@ function startScreenshotReposition(initialWheel?: WheelEvent) {
 
 function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number; y: number }) {
   clearScreenshotReposition();
-  removeCropOverlay();
+  screenshotCapturePending = false;
+  removeCropOverlay(false);
   if (cameraBtn) cameraBtn.style.display = "none";
   if (restoreScroll) window.scrollTo(restoreScroll.x, restoreScroll.y);
 
@@ -2645,7 +2690,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         contextPanelOutsideHandler = (event: MouseEvent) => {
           const target = event.target as Node;
           if (!contextPanel || contextPanel.contains(target)) return;
-          doSave();
+          removeCropOverlay();
         };
         document.addEventListener("mousedown", contextPanelOutsideHandler, true);
       }, 50);
@@ -2672,7 +2717,19 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
     });
 
     canvas.addEventListener("mouseup", () => {
-      if (!selection || selection.w < 10 || selection.h < 10) { dragStart = null; selection = null; removeCropOverlay(); return; }
+      if (!selection) {
+        dragStart = null;
+        removeCropOverlay();
+        return;
+      }
+      if (selection.w < 10 || selection.h < 10) {
+        dragStart = null;
+        selection = null;
+        canvas.style.cursor = "crosshair";
+        cropOverlay!.style.cursor = "crosshair";
+        redraw();
+        return;
+      }
       dragStart = null;
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
@@ -2706,6 +2763,7 @@ cleanupTasks.push(() => chrome.runtime.onMessage.removeListener(runtimeMessageHa
 // Show Save bubble (or immediate context input) on text selection
 type RectLike = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
 type SelectionAnchor = { clientX: number; clientY: number };
+type SelectedTextGeometry = { text: string; rect: RectLike; bounds: RectLike };
 
 function isInContextLensUi(target: EventTarget | null) {
   if (!(target instanceof Node)) return false;
@@ -2802,11 +2860,6 @@ function rectDistanceSquared(rect: RectLike, point: SelectionAnchor) {
   const x = Math.max(rect.left, Math.min(point.clientX, rect.right));
   const y = Math.max(rect.top, Math.min(point.clientY, rect.bottom));
   return (point.clientX - x) ** 2 + (point.clientY - y) ** 2;
-}
-
-function rectAnchoredToPoint(rect: RectLike, point: SelectionAnchor): RectLike {
-  const x = Math.max(rect.left, Math.min(point.clientX, rect.right));
-  return { left: x, right: x, top: rect.top, bottom: rect.bottom, width: 0, height: rect.height };
 }
 
 function groupRectsByLine(rects: RectLike[]) {
@@ -3044,15 +3097,15 @@ function shouldUseSemanticSelectionText(raw: string, semantic: string) {
   return semanticWordCount >= rawWordCount && semanticComparable.length <= rawComparable.length * 2.2;
 }
 
-function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | null {
+function rangeSelectionGeometry(range: Range, anchor?: SelectionAnchor): { rect: RectLike; bounds: RectLike } | null {
   const rects = visibleSelectionRects(range);
   if (rects.length > 0) {
-    if (anchor) {
-      const closestRect = [...rects].sort((a, b) => rectDistanceSquared(a, anchor) - rectDistanceSquared(b, anchor))[0];
-      return closestRect ? rectAnchoredToPoint(closestRect, anchor) : unionRects(rects);
-    }
     const lineGroups = groupRectsByLine(rects);
-    return unionRects(lineGroups[0] ?? rects);
+    const lineRects = lineGroups.map(unionRects);
+    const rect = anchor
+      ? [...lineRects].sort((a, b) => rectDistanceSquared(a, anchor) - rectDistanceSquared(b, anchor))[0]
+      : lineRects[0];
+    return { rect: rect ?? unionRects(rects), bounds: unionRects(rects) };
   }
 
   const startRect = collapsedRangeRect(range, true);
@@ -3069,11 +3122,12 @@ function rangeAnchorRect(range: Range, anchor?: SelectionAnchor): RectLike | nul
     const right = Math.max(startRect.left, endRect.left);
     const top = Math.min(startRect.top, endRect.top);
     const bottom = Math.max(startRect.bottom, endRect.bottom);
-    return { left, top, right, bottom, width: right - left, height: bottom - top };
+    const rect = { left, top, right, bottom, width: right - left, height: bottom - top };
+    return { rect, bounds: rect };
   }
 
   const fallback = range.getBoundingClientRect();
-  if (fallback.width > 1 && fallback.height > 1) return fallback;
+  if (fallback.width > 1 && fallback.height > 1) return { rect: fallback, bounds: fallback };
   return null;
 }
 
@@ -3111,7 +3165,7 @@ function extractSelectionText(selection: Selection): string {
   return raw;
 }
 
-function selectedEditableControlText(target?: EventTarget | null): { text: string; rect: RectLike } | null {
+function selectedEditableControlText(target?: EventTarget | null): SelectedTextGeometry | null {
   const control = editableTextControl(target ?? null) ?? editableTextControl(document.activeElement);
   if (!control) return null;
   if (control instanceof HTMLInputElement) return null;
@@ -3125,10 +3179,10 @@ function selectedEditableControlText(target?: EventTarget | null): { text: strin
 
   const rect = control.getBoundingClientRect();
   if (rect.width <= 1 || rect.height <= 1) return null;
-  return { text, rect };
+  return { text, rect, bounds: rect };
 }
 
-function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null): { text: string; rect: RectLike } | null {
+function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null): SelectedTextGeometry | null {
   const selection = window.getSelection();
   const text = selection ? extractSelectionText(selection) : "";
 
@@ -3139,8 +3193,8 @@ function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null)
       ? range.commonAncestorContainer
       : range.commonAncestorContainer.parentElement;
     if (ancestor?.closest("input, textarea, [contenteditable]")) return null;
-    const rect = rangeAnchorRect(range, anchor);
-    if (rect) return { text, rect };
+    const geometry = rangeSelectionGeometry(range, anchor);
+    if (geometry) return { text, ...geometry };
   }
 
   return selectedEditableControlText(target);
@@ -3200,28 +3254,23 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
     ? lastSelectionAnchor
     : null;
   const anchor = event
-    ? { clientX: event.clientX, clientY: event.clientY, detail: event.detail }
-    : recentAnchor;
+    ? { clientX: event.clientX, clientY: event.clientY }
+    : recentAnchor
+      ? { clientX: recentAnchor.clientX, clientY: recentAnchor.clientY }
+      : null;
   clearSelectionCheckTimer();
   if (saveBubbleSuppressed()) return;
   const selected = selectedPageText(anchor ?? undefined, event?.target ?? null);
 
   if (selected) {
-    const placementAnchor = anchor ?? null;
-    const rawX = placementAnchor ? placementAnchor.clientX : selected.rect.left + selected.rect.width / 2;
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-    // Prefer the release point so reverse drags on RTL passages don't anchor
-    // the Save bubble to an earlier visual line.
-    const rawY = placementAnchor ? placementAnchor.clientY : selected.rect.top;
-    const x = Math.max(30, Math.min(viewportWidth() - 30, rawX));
-    const y = Math.max(60, Math.min(viewportHeight() - 10, rawY));
 
     chrome.storage.local.get("save_triggers", async (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
       if (!triggers.bubble) return;
       const text = range ? await resolveQuranText(selected.text, range) : selected.text;
-      showSaveBubble(x, y, text);
+      showSaveBubble(selected.rect, selected.bounds, text, anchor);
     });
   } else if (pageHasTypingFocus(event?.target ?? null)) {
     if (widgetMode === "bubble") removeWidget();
