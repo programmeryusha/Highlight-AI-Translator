@@ -2817,12 +2817,12 @@ function FlashcardDayCalendar({
                 height: 34,
                 borderRadius: 8,
                 border: borderFor(count, selected),
-                background: selected ? colors.accent : colorFor(count),
-                boxShadow: selected ? `0 0 0 2px ${colors.accentSoft}` : "none",
-                color: selected ? colors.selectedText : future ? colors.muted : colors.text,
+                background: future ? colors.surfaceAlt : colorFor(count),
+                boxShadow: selected ? `0 0 0 2px ${colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.14)}` : "none",
+                color: future ? colors.muted : count > 0 ? (theme === "dark" ? "#f0ede6" : "#1a1916") : colors.muted,
                 cursor: future ? "default" : "pointer",
                 fontSize: 12,
-                fontWeight: selected ? 850 : 650,
+                fontWeight: selected ? 700 : 600,
                 padding: 0,
               }}
             >
