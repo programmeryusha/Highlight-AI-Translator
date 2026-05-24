@@ -111,6 +111,14 @@ function hasRtlText(text: string): boolean {
   return /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(text);
 }
 
+function firstStrongTextDirection(value: string): "ltr" | "rtl" {
+  for (const character of value.trim()) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
+    if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
+  }
+  return "ltr";
+}
+
 function subtleButtonStyle(colors: DashboardColors, fontSize = 13): React.CSSProperties {
   return {
     background: colors.surfaceAlt,
@@ -287,6 +295,76 @@ function inlineParts(text: string): React.ReactNode {
     i % 2 === 1
       ? <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(part) ? ARABIC_FONT_STACK : "inherit" }}>{bidiSpan(part)}</strong>
       : bidiSpan(part)
+  );
+}
+
+function QuestionText({
+  text,
+  color,
+  fontSize,
+  onClick,
+  margin = 0,
+  lineHeight = 1.55,
+  fontWeight = 650,
+}: {
+  text: string;
+  color: string;
+  fontSize: number;
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  margin?: React.CSSProperties["margin"];
+  lineHeight?: React.CSSProperties["lineHeight"];
+  fontWeight?: React.CSSProperties["fontWeight"];
+}) {
+  const [hovered, setHovered] = useState(false);
+  const direction = firstStrongTextDirection(text);
+  const baseStyle: React.CSSProperties = {
+    fontSize,
+    color,
+    lineHeight,
+    margin,
+    fontWeight,
+    direction,
+    textAlign: "left",
+    overflowWrap: "break-word",
+  };
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        dir={direction}
+        onClick={onClick}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          ...baseStyle,
+          display: "block",
+          width: "fit-content",
+          maxWidth: "74ch",
+          background: "none",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          font: "inherit",
+          fontSize,
+          fontWeight,
+          textDecoration: hovered ? "underline" : "none",
+          textDecorationColor: colorWithAlpha(color, 0.45),
+          textDecorationThickness: 1,
+          textUnderlineOffset: 5,
+        }}
+      >
+        {inlineParts(text)}
+      </button>
+    );
+  }
+
+  return (
+    <p
+      dir={direction}
+      style={{ ...baseStyle, width: "fit-content", maxWidth: "74ch" }}
+    >
+      {inlineParts(text)}
+    </p>
   );
 }
 
@@ -723,6 +801,7 @@ function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: 
 
 function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
   const [hovered, setHovered] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const rtl = hasRtlText(capture.text);
   const sourceStyle: React.CSSProperties = {
     background: "none",
@@ -751,17 +830,50 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
 
   if (capture.imageData) {
     return (
-      <>
-        <button
-          type="button"
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          onClick={(event) => openCaptureFromClick(event, capture.id)}
-          style={{ ...subtleButtonStyle(colors, typography.link), marginBottom: 10 }}
-        >
-          Open screenshot save
-        </button>
-      </>
+      <figure
+        style={{
+          width: "min(620px, 100%)",
+          margin: "0 0 18px",
+          border: `1px solid ${colors.border}`,
+          borderRadius: 8,
+          background: colors.surfaceAlt,
+          padding: 8,
+          boxSizing: "border-box",
+          overflow: "hidden",
+        }}
+      >
+        {imageFailed ? (
+          <div
+            style={{
+              minHeight: 124,
+              display: "grid",
+              placeItems: "center",
+              color: colors.muted,
+              fontSize: 13,
+              fontWeight: 700,
+              borderRadius: 5,
+              border: `1px dashed ${colors.border}`,
+              background: colors.surface,
+            }}
+          >
+            Screenshot preview unavailable
+          </div>
+        ) : (
+          <img
+            src={capture.imageData}
+            alt="Saved screenshot"
+            onError={() => setImageFailed(true)}
+            style={{
+              display: "block",
+              width: "100%",
+              maxHeight: 280,
+              objectFit: "contain",
+              borderRadius: 5,
+              background: colors.surface,
+            }}
+          />
+        )}
+      </figure>
     );
   }
 
@@ -802,6 +914,7 @@ function SavesView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastRangeAnchorId, setLastRangeAnchorId] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+  const [expandAll, setExpandAll] = useState(false);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -927,6 +1040,15 @@ function SavesView({
               </button>
             </>
           )}
+          {!selectionMode && (
+            <button
+              type="button"
+              onClick={() => setExpandAll((v) => !v)}
+              style={{ ...subtleButtonStyle(colors, 13) }}
+            >
+              {expandAll ? "Collapse" : "Expand all"}
+            </button>
+          )}
         </div>
         {headerAction}
       </div>
@@ -964,9 +1086,12 @@ function SavesView({
                         <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 3px" }}>
                           Your question
                         </p>
-                        <p style={{ fontSize: typography.context, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
-                          {c.context}
-                        </p>
+                        <QuestionText
+                          text={c.context}
+                          color={colors.text}
+                          fontSize={typography.source}
+                          onClick={(event) => openCaptureFromClick(event, c.id)}
+                        />
                       </div>
                     )}
 
@@ -985,25 +1110,14 @@ function SavesView({
                     )}
                     {c.status === "done" && c.explanation && (
                       <div
-                        role="button"
-                        tabIndex={0}
-                        aria-label="Open full card"
-                        onClick={(event) => openCaptureFromClick(event, c.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openChat(c.id);
-                          }
-                        }}
                         style={{
                           fontSize: typography.answer,
                           color: colors.text,
-                          cursor: "pointer",
                           margin: "16px 0 0",
                           lineHeight: 1.78,
-                          maxHeight: "18em",
+                          maxHeight: expandAll ? undefined : "18em",
                           maxWidth: "74ch",
-                          overflow: "hidden",
+                          overflow: expandAll ? "visible" : "hidden",
                           overflowWrap: "break-word",
                         }}
                       >
@@ -1049,6 +1163,7 @@ function HistoryView({
   const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
   const wideLayout = windowWidth >= 1040;
+  const [calendarVisible, setCalendarVisible] = useState(true);
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -1081,7 +1196,7 @@ function HistoryView({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: wideLayout ? "minmax(0, 1fr) 332px" : "1fr",
+        gridTemplateColumns: wideLayout && calendarVisible ? "minmax(0, 1fr) 332px" : "1fr",
         gap: wideLayout ? 28 : 20,
         alignItems: "start",
         maxWidth: 1220,
@@ -1094,15 +1209,24 @@ function HistoryView({
           minWidth: 0,
         }}
       >
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ maxWidth: 740 }}>
+        <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
             <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>
               {selectedDayLabel()}
             </h2>
             <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
-              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()} · choose a date from the calendar
+              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
             </p>
           </div>
+          {wideLayout && (
+            <button
+              type="button"
+              onClick={() => setCalendarVisible((v) => !v)}
+              style={{ ...subtleButtonStyle(colors, 13), flexShrink: 0 }}
+            >
+              {calendarVisible ? "Hide calendar" : "Show calendar"}
+            </button>
+          )}
         </div>
 
         {!wideLayout && (
@@ -1146,7 +1270,7 @@ function HistoryView({
         )}
       </div>
 
-      {wideLayout && (
+      {wideLayout && calendarVisible && (
         <div
           style={{
             background: colors.surface,
@@ -1182,11 +1306,15 @@ interface WordEntry {
   count: number;
   explanation: string;
   exampleText: string;
+  imageData?: string;
   captureIds: string[];
 }
 
 function flashcardPrompt(capture: Capture) {
-  return capture.context?.trim() || capture.text.slice(0, 120).trim();
+  const context = capture.context?.trim();
+  if (context) return context;
+  if (capture.imageData) return "";
+  return capture.text.slice(0, 120).trim();
 }
 
 function buildFlashcardList(captures: Capture[]): WordEntry[] {
@@ -1196,12 +1324,13 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     if (!word) continue;
     const key = normalizeQuestion(word);
     if (!map.has(key)) {
-      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.text, captureIds: [] });
+      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.imageData ? "" : c.text, imageData: c.imageData, captureIds: [] });
     }
     const entry = map.get(key)!;
     entry.count++;
     entry.captureIds.push(c.id);
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
+    if (!entry.imageData && c.imageData) entry.imageData = c.imageData;
   }
   return Array.from(map.values())
     .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
@@ -1327,11 +1456,17 @@ function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose
             <div style={{ fontSize: 17, color: colors.text, lineHeight: 1.75, margin: 0, maxWidth: "72ch" }}>
               {renderMarkdown(card.explanation || "No explanation yet — save a highlight with this question to get one.")}
             </div>
-            {card.exampleText && (
+            {card.imageData ? (
+              <img
+                src={card.imageData}
+                alt="Saved screenshot"
+                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, marginTop: 16, background: colors.subtle }}
+              />
+            ) : card.exampleText ? (
               <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, lineHeight: 1.55, borderLeft: `3px solid ${colors.border}`, paddingLeft: 10 }}>
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
               </p>
-            )}
+            ) : null}
           </>
         )}
       </div>
@@ -1363,7 +1498,6 @@ type FlashcardSource =
   | { kind: "range"; range: FlashcardRange }
   | { kind: "days" }
   | { kind: "set"; setId: string };
-type FlashcardSetPlacement = "independent" | "nested";
 
 function uniqueCaptureIds(captures: Capture[]) {
   return Array.from(new Set(captures.map((capture) => capture.id)));
@@ -1467,7 +1601,19 @@ function FlashcardPopup({
   );
 }
 
-function WordsView({ captures, colors, theme, accentColor }: { captures: Capture[]; colors: DashboardColors; theme: ThemeName; accentColor: string }) {
+function WordsView({
+  captures,
+  colors,
+  theme,
+  accentColor,
+  cardFontSize,
+}: {
+  captures: Capture[];
+  colors: DashboardColors;
+  theme: ThemeName;
+  accentColor: string;
+  cardFontSize: CardFontSize;
+}) {
   const [studyWords, setStudyWords] = useState<WordEntry[] | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [source, setSource] = useState<FlashcardSource>({ kind: "days" });
@@ -1475,11 +1621,9 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
   const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [newSetName, setNewSetName] = useState("");
-  const [newSetPlacement, setNewSetPlacement] = useState<FlashcardSetPlacement>("independent");
-  const [newSetParentId, setNewSetParentId] = useState("");
   const [showCreateSet, setShowCreateSet] = useState(false);
   const [showSets, setShowSets] = useState(false);
-  const [subsetIds, setSubsetIds] = useState<Set<string>>(new Set());
+  const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     chrome.storage.local.get("flashcard_sets", (result) => setSets(normalizeFlashcardSets(result.flashcard_sets)));
@@ -1495,7 +1639,6 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
       ? capturesForDays(captures, selectedDays)
       : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
   const words = buildFlashcardList(sourceCaptures);
-  const subsetWords = words.filter((word) => subsetIds.has(word.id));
   const sourceLabel = source.kind === "range"
     ? FLASHCARD_RANGES.find((range) => range.value === source.range)?.label ?? "Date range"
     : source.kind === "days"
@@ -1503,14 +1646,8 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
       : activeSet?.name ?? "Saved set";
   const canCreateSet = Boolean(
     newSetName.trim()
-      && sourceCaptures.length > 0
-      && (newSetPlacement === "independent" || setById.has(newSetParentId)),
+      && sourceCaptures.length > 0,
   );
-
-  useEffect(() => {
-    if (source.kind !== "set") return;
-    setSubsetIds(new Set(words.map((word) => word.id)));
-  }, [source.kind, source.kind === "set" ? source.setId : "", words.map((word) => word.id).join("|")]);
 
   function storeSets(next: FlashcardSet[]) {
     setSets(next);
@@ -1529,31 +1666,22 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
 
   function openCreateSet() {
     setShowSets(false);
-    setNewSetPlacement("independent");
-    setNewSetParentId(activeSet?.id ?? sets[0]?.id ?? "");
     setShowCreateSet(true);
   }
 
   function createSet() {
     const name = newSetName.trim();
     const captureIds = uniqueCaptureIds(sourceCaptures);
-    const parentSet = newSetPlacement === "nested" ? setById.get(newSetParentId) : undefined;
-    if (!name || captureIds.length === 0 || (newSetPlacement === "nested" && !parentSet)) return;
+    if (!name || captureIds.length === 0) return;
     const now = new Date().toISOString();
     const nextSet: FlashcardSet = {
       id: crypto.randomUUID(),
       name,
       captureIds,
-      parentSetId: parentSet?.id,
       createdAt: now,
       updatedAt: now,
     };
-    const nextSets = parentSet
-      ? sets.map((set) => set.id === parentSet.id
-        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...captureIds])), updatedAt: now }
-        : set)
-      : sets;
-    storeSets([nextSet, ...nextSets]);
+    storeSets([nextSet, ...sets]);
     setNewSetName("");
     setShowCreateSet(false);
   }
@@ -1566,8 +1694,7 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         const { parentSetId: _parentSetId, ...independentSet } = set;
         return independentSet;
       }));
-    if (newSetParentId === id) setNewSetParentId("");
-    if (source.kind === "set" && source.setId === id) setSource({ kind: "range", range: "pastDay" });
+    if (source.kind === "set" && source.setId === id) setSource({ kind: "days" });
   }
 
   function exportButtons(exportWords: WordEntry[], label: string) {
@@ -1630,6 +1757,71 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
 
   if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} />;
 
+  const sourcePanel = source.kind === "set" && activeSet ? (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, background: colors.surface, display: "grid", gap: 12 }}>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontSize: 12, color: colors.muted, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", margin: "0 0 4px" }}>Selected set</p>
+        <p style={{ fontSize: 17, color: colors.text, fontWeight: 850, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeSet.name}</p>
+        <p style={{ fontSize: 12, color: colors.muted, margin: "3px 0 0" }}>{words.length} {words.length === 1 ? "card" : "cards"}</p>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {exportButtons(words, "Current set")}
+        <button type="button" onClick={() => setSource({ kind: "days" })} style={{ background: colors.surfaceAlt, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          Pick days
+        </button>
+      </div>
+    </div>
+  ) : (
+    <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
+  );
+
+  const cards = words.length === 0 ? (
+    <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+      No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : "Pick days from the selector."}
+    </p>
+  ) : (
+    <div>
+      {words.map((word) => {
+        const promptPreview = previewText(word.word, FLASHCARD_PROMPT_LIMIT);
+        const explanationPreview = word.explanation ? previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT) : "";
+        return (
+          <div
+            key={word.id}
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 10,
+              padding: "22px 24px",
+              marginBottom: 14,
+              boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
+            }}
+          >
+            <p
+              style={{
+                color: colors.text,
+                fontSize: typography.source,
+                fontWeight: 650,
+                lineHeight: 1.6,
+                margin: 0,
+                maxHeight: "8.1em",
+                overflow: "hidden",
+                overflowWrap: "break-word",
+                textAlign: "left",
+              }}
+            >
+              {inlineParts(promptPreview)}
+            </p>
+            {explanationPreview && (
+              <div style={{ fontSize: typography.answer, color: colors.text, margin: "16px 0 0", lineHeight: 1.78, maxHeight: "18em", overflow: "hidden", overflowWrap: "break-word" }}>
+                {renderMarkdown(explanationPreview)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
@@ -1655,19 +1847,6 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         </div>
       </div>
 
-      <div style={{ marginBottom: 24 }}>
-        <FlashcardDayCalendar captures={captures} selectedDays={selectedDays} visibleMonth={calendarMonth} onVisibleMonthChange={setCalendarMonth} onToggleDay={toggleDay} colors={colors} theme={theme} accentColor={accentColor} />
-      </div>
-
-      {showExport && (
-        <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 22, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
-            Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
-          </p>
-          {exportButtons(words, "Current selection")}
-        </div>
-      )}
-
       {showCreateSet && (
         <FlashcardPopup title="Create set" onClose={() => setShowCreateSet(false)} colors={colors}>
           <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
@@ -1681,29 +1860,6 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
             placeholder="Set name"
             style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, outline: "none", marginBottom: 12 }}
           />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 12 }}>
-            <button type="button" onClick={() => setNewSetPlacement("independent")} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "independent" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "independent" ? colors.accentSoft : colors.surfaceAlt, color: colors.text, padding: "10px 11px", cursor: "pointer" }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Independent set</span>
-              <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>Keep it at the top level.</span>
-            </button>
-            {sets.length > 0 && (
-              <button type="button" onClick={() => setNewSetPlacement("nested")} style={{ textAlign: "left", border: `1px solid ${newSetPlacement === "nested" ? colors.accent : colors.border}`, borderRadius: 8, background: newSetPlacement === "nested" ? colors.accentSoft : colors.surfaceAlt, color: colors.text, padding: "10px 11px", cursor: "pointer" }}>
-                <span style={{ display: "block", fontSize: 13, fontWeight: 850 }}>Set within a set</span>
-                <span style={{ display: "block", fontSize: 12, color: colors.muted, lineHeight: 1.4, marginTop: 3 }}>Nest it under an existing set.</span>
-              </button>
-            )}
-          </div>
-          {newSetPlacement === "nested" && (
-            <label style={{ display: "grid", gap: 5, marginBottom: 14 }}>
-              <span style={{ fontSize: 12, color: colors.muted, fontWeight: 800 }}>Parent set</span>
-              <select value={newSetParentId} onChange={(event) => setNewSetParentId(event.target.value)} style={{ width: "100%", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "9px 10px", fontSize: 14 }}>
-                <option value="">Choose a set</option>
-                {setRows.map(({ set, depth }) => (
-                  <option key={set.id} value={set.id}>{`${"- ".repeat(depth)}${set.name}`}</option>
-                ))}
-              </select>
-            </label>
-          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={() => setShowCreateSet(false)} style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
               Cancel
@@ -1744,67 +1900,22 @@ function WordsView({ captures, colors, theme, accentColor }: { captures: Capture
         </FlashcardPopup>
       )}
 
-      {activeSet && words.length > 0 && (
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 16, marginBottom: 24, background: colors.surface }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-            <div>
-              <p style={{ fontSize: 14, fontWeight: 850, color: colors.text, margin: "0 0 3px" }}>{activeSet.name}</p>
-              <p style={{ fontSize: 12, color: colors.muted, margin: 0 }}>Choose which cards from this set to export.</p>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 32, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 620px", minWidth: 0 }}>
+          {showExport && (
+            <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
+                Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
+              </p>
+              {exportButtons(words, "Current selection")}
             </div>
-            {exportButtons(subsetWords, `${subsetWords.length} selected`)}
-          </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            {words.map((word) => (
-              <label key={word.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 8px", borderRadius: 7, background: subsetIds.has(word.id) ? colors.accentSoft : colors.surfaceAlt, cursor: "pointer" }}>
-                <input type="checkbox" checked={subsetIds.has(word.id)} onChange={(event) => setSubsetIds((current) => { const next = new Set(current); if (event.target.checked) next.add(word.id); else next.delete(word.id); return next; })} style={{ accentColor: colors.accent, width: 17, height: 17, marginTop: 2 }} />
-                <span style={{ color: colors.text, fontSize: 13, lineHeight: 1.5 }}>{word.word}</span>
-              </label>
-            ))}
-          </div>
+          )}
+          {cards}
         </div>
-      )}
-
-      {words.length === 0 ? (
-        <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-          No cards · {sourceLabel}. Pick days from the calendar above.
-        </p>
-      ) : (
-        <div>
-          {words.map((word) => {
-            const promptPreview = previewText(word.word, FLASHCARD_PROMPT_LIMIT);
-            const explanationPreview = word.explanation ? previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT) : "";
-            const promptRtl = hasRtlText(promptPreview);
-            return (
-              <div key={word.id} style={{ padding: "12px 0", borderBottom: `1px solid ${colors.border}`, display: "grid", gridTemplateColumns: "1fr", alignItems: "start", gap: 16 }}>
-                <div>
-                  <p
-                    style={{
-                      color: colors.text,
-                      direction: promptRtl ? "rtl" : "ltr",
-                      fontFamily: promptRtl ? ARABIC_FONT_STACK : "inherit",
-                      fontSize: promptRtl ? 18 : 16,
-                      fontWeight: 650,
-                      lineHeight: 1.55,
-                      margin: 0,
-                      maxHeight: "4.7em",
-                      overflow: "hidden",
-                      overflowWrap: "break-word",
-                      textAlign: promptRtl ? "right" : "left",
-                    }}
-                  >
-                    {promptPreview}
-                  </p>
-                  {explanationPreview && (
-                    <div style={{ fontSize: 14, color: colors.softText, margin: "7px 0 0", lineHeight: 1.6, maxHeight: "10em", overflow: "hidden", overflowWrap: "break-word" }}>
-                      {renderMarkdown(explanationPreview)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        <aside style={{ flex: "0 0 300px", width: 300, maxWidth: "100%", position: "sticky", top: 24 }}>
+          {sourcePanel}
+        </aside>
+      </div>
     </div>
   );
 }
@@ -2728,6 +2839,7 @@ export default function App() {
       rememberTheme(t);
       document.documentElement.style.setProperty("--contextlens-accent", accent);
     });
+    void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" }).catch(() => {});
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
@@ -2805,6 +2917,11 @@ export default function App() {
   const contentMaxWidth = view === "history" ? 1280 : 1100;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
+
+  useEffect(() => {
+    document.documentElement.style.background = colors.bg;
+    document.body.style.background = colors.bg;
+  }, [colors.bg]);
 
   function deleteCapturesByIds(ids: string[]) {
     const idsToDelete = new Set(ids);
@@ -3007,7 +3124,7 @@ export default function App() {
             cardFontSize={cardFontSize}
           />
         )}
-        {view === "words" && <WordsView captures={captures} colors={colors} theme={theme} accentColor={accentColor} />}
+        {view === "words" && <WordsView captures={captures} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
         {view === "settings" && (
           <SettingsView
             account={account}

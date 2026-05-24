@@ -1296,12 +1296,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const body = document.createElement("div");
         appendMarkdownText(body, message.content, index === 0, false);
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
+        const messageDirection = firstStrongTextDirection(message.content);
+        const messageBaseDirection = messageDirection === "auto" ? "ltr" : messageDirection;
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? colors.text : colors.userText};
           font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
           line-height: 1.83;
           margin-bottom: 8px;
           white-space: pre-wrap;
+          direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
+          text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
+          unicode-bidi: plaintext;
         `);
 
         messageBlock.appendChild(label);
@@ -2148,12 +2153,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           const body = document.createElement("div");
           appendMarkdownText(body, message.content, index === 0, false);
           const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
+          const messageDirection = firstStrongTextDirection(message.content);
+          const messageBaseDirection = messageDirection === "auto" ? "ltr" : messageDirection;
           body.setAttribute("style", `
             color: ${message.role === "assistant" ? colors.text : colors.userText};
             font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
             line-height: 1.83;
             margin-bottom: 12px;
             white-space: pre-wrap;
+            direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
+            text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
+            unicode-bidi: plaintext;
           `);
 
           messageBlock.appendChild(label);

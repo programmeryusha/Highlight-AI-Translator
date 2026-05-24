@@ -694,7 +694,11 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options
   const merged = new Map<string, Capture>();
   remoteCaptures.forEach((capture) => merged.set(capture.id, capture));
   localCaptures.forEach((capture) => {
-    if (!merged.has(capture.id)) merged.set(capture.id, capture);
+    if (!merged.has(capture.id)) {
+      merged.set(capture.id, capture);
+    } else if (capture.imageData && !merged.get(capture.id)!.imageData) {
+      merged.set(capture.id, { ...merged.get(capture.id)!, imageData: capture.imageData });
+    }
   });
   const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
   const nextSignatures = { ...signatures };

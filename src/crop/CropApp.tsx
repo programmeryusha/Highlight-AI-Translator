@@ -31,6 +31,14 @@ function textOnColor(hex: string): string {
   return luminance > 0.62 ? "#1f2933" : "#fff";
 }
 
+function firstStrongTextDirection(value: string): "ltr" | "rtl" {
+  for (const character of value.trim()) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
+    if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
+  }
+  return "ltr";
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -309,6 +317,8 @@ export default function CropApp() {
   const accentSoft = colorWithAlpha(accentColor, 0.14);
   const accentBorder = colorWithAlpha(accentColor, 0.38);
   const accentText = textOnColor(accentColor);
+  const contextDirection = firstStrongTextDirection(context);
+  const followupDirection = firstStrongTextDirection(followup);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh", background: "#000" }}>
@@ -329,7 +339,8 @@ export default function CropApp() {
             onChange={(e) => setContext(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") { setStage("selecting"); setSelection(null); } }}
             placeholder="Any specific part you don't understand? (optional)"
-            style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#e2e8f0", fontSize: 14, padding: "6px 0", outline: "none", marginBottom: 12 }}
+            dir={contextDirection}
+            style={{ width: "100%", background: "transparent", border: "none", borderBottom: "1px solid rgba(255,255,255,0.15)", color: "#e2e8f0", fontSize: 14, padding: "6px 0", outline: "none", marginBottom: 12, direction: contextDirection, textAlign: contextDirection === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}
           />
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => window.close()} style={{ flex: 1, background: "rgba(255,255,255,0.08)", color: "#e2e8f0", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
@@ -387,7 +398,8 @@ export default function CropApp() {
               onKeyDown={(e) => { if (e.key === "Enter") askFollowup(); if (e.key === "Escape") window.close(); }}
               placeholder="Ask a follow-up…"
               disabled={!captureId || followupLoading || deepDiveLoading}
-              style={{ flex: 1, minWidth: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#e2e8f0", fontSize: 13, outline: "none", padding: "8px 10px" }}
+              dir={followupDirection}
+              style={{ flex: 1, minWidth: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#e2e8f0", fontSize: 13, outline: "none", padding: "8px 10px", direction: followupDirection, textAlign: followupDirection === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}
             />
             <button onClick={askFollowup} disabled={!captureId || followupLoading || deepDiveLoading} style={{ background: accentColor, color: accentText, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: captureId && !followupLoading && !deepDiveLoading ? "pointer" : "default", opacity: captureId && !followupLoading && !deepDiveLoading ? 1 : 0.55 }}>
               Ask

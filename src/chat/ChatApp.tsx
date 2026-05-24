@@ -4,8 +4,71 @@ import type { Capture, ChatMessage, Message } from "../types";
 type ThemeName = "light" | "dark";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const THEME_STORAGE_KEY = "contextlens_theme";
+const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
+const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
+const ARABIC_RUN = new RegExp(
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
+  "gu",
+);
 
 function isThemeName(v: unknown): v is ThemeName { return v === "light" || v === "dark"; }
+
+function firstStrongTextDirection(value: string): "ltr" | "rtl" {
+  for (const character of value.trim()) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
+    if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
+  }
+  return "ltr";
+}
+
+function bidiSpan(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  const re = new RegExp(ARABIC_RUN.source, "gu");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(
+      <bdi key={match.index} dir="rtl" lang="ar" style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}>
+        {match[0]}
+      </bdi>
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+function inlineTextParts(text: string): React.ReactNode {
+  return text.split(/\*\*(.*?)\*\*/g).map((part, index) => (
+    index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{bidiSpan(part)}</strong> : bidiSpan(part)
+  ));
+}
+
+function QuestionText({ text, color, fontSize }: { text: string; color: string; fontSize: number }) {
+  const direction = firstStrongTextDirection(text);
+  return (
+    <p
+      dir={direction}
+      style={{
+        fontSize,
+        color,
+        lineHeight: 1.55,
+        margin: 0,
+        fontWeight: 650,
+        direction,
+        textAlign: "left",
+        unicodeBidi: "plaintext",
+        overflowWrap: "break-word",
+        width: "fit-content",
+        maxWidth: "74ch",
+      }}
+    >
+      {inlineTextParts(text)}
+    </p>
+  );
+}
 
 function storedThemeFallback(fallback: ThemeName): ThemeName {
   try {
@@ -66,7 +129,7 @@ function renderMarkdown(text: string): React.ReactNode {
 
   function inlineBold(line: string, _key: number): React.ReactNode {
     const parts = line.split(/\*\*(.*?)\*\*/g);
-    return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ fontWeight: 800 }}>{part}</strong> : part);
+    return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ fontWeight: 800 }}>{bidiSpan(part)}</strong> : bidiSpan(part));
   }
 
   lines.forEach((line, i) => {
@@ -76,7 +139,22 @@ function renderMarkdown(text: string): React.ReactNode {
       listItems.push(<li key={i} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2), i)}</li>);
     } else {
       flushList();
-      nodes.push(<p key={i} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineBold(trimmed, i)}</p>);
+      const direction = firstStrongTextDirection(trimmed);
+      nodes.push(
+        <p
+          key={i}
+          dir={direction}
+          style={{
+            margin: "0 0 10px",
+            lineHeight: 1.75,
+            direction,
+            textAlign: direction === "rtl" ? "right" : "left",
+            unicodeBidi: "plaintext",
+          }}
+        >
+          {inlineBold(trimmed, i)}
+        </p>
+      );
     }
   });
   flushList();
@@ -93,6 +171,7 @@ export default function ChatApp() {
   const [loading, setLoading] = useState(false);
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
   const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("dark"));
   const [sourceExpanded, setSourceExpanded] = useState(false);
@@ -160,6 +239,7 @@ export default function ChatApp() {
     if (!capture) return;
     setSourceExpanded(false);
     setDeepDiveLoading(false);
+    setImageFailed(false);
   }, [capture?.id]);
 
   // Apply background color to document body
@@ -283,18 +363,37 @@ export default function ChatApp() {
           }}
         >
           {hasScreenshot ? (
-            <img
-              src={capture.imageData}
-              alt="Saved screenshot"
-              style={{
-                display: "block",
-                width: "100%",
-                maxHeight: 460,
-                objectFit: "contain",
-                borderRadius: 6,
-                background: dark ? "#1e1d1b" : "#f7f6f3",
-              }}
-            />
+            imageFailed ? (
+              <div
+                style={{
+                  minHeight: 80,
+                  display: "grid",
+                  placeItems: "center",
+                  color: colors.muted,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  borderRadius: 6,
+                  border: `1px dashed ${colors.border}`,
+                  background: dark ? "#1e1d1b" : "#f7f6f3",
+                }}
+              >
+                Screenshot preview unavailable
+              </div>
+            ) : (
+              <img
+                src={capture.imageData}
+                alt="Saved screenshot"
+                onError={() => setImageFailed(true)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  maxHeight: 460,
+                  objectFit: "contain",
+                  borderRadius: 6,
+                  background: dark ? "#1e1d1b" : "#f7f6f3",
+                }}
+              />
+            )
           ) : (
             <p
               style={{
@@ -324,9 +423,7 @@ export default function ChatApp() {
               <p style={{ fontSize: 12, color: colors.muted, fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Your question
               </p>
-              <p style={{ fontSize: 18, color: colors.text, lineHeight: 1.55, margin: 0, fontWeight: 650 }}>
-                {capture.context}
-              </p>
+              <QuestionText text={capture.context} color={colors.text} fontSize={20} />
             </div>
           )}
         </div>
