@@ -834,13 +834,18 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
         style={{
           width: "min(620px, 100%)",
           margin: "0 0 18px",
-          border: `1px solid ${colors.border}`,
+          border: `1px solid ${hovered ? colors.accent : colors.border}`,
           borderRadius: 8,
           background: colors.surfaceAlt,
           padding: 8,
           boxSizing: "border-box",
           overflow: "hidden",
+          cursor: "pointer",
+          transition: "border-color 0.15s",
         }}
+        onClick={(event) => openCaptureFromClick(event, capture.id)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
         {imageFailed ? (
           <div
