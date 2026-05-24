@@ -1640,6 +1640,7 @@ function WordsView({
   const [showCreateSet, setShowCreateSet] = useState(false);
   const [showSets, setShowSets] = useState(false);
   const calendarVisible = !useScrolledPast(360);
+  const [expandAll, setExpandAll] = useState(false);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1801,8 +1802,8 @@ function WordsView({
   ) : (
     <div>
       {words.map((word) => {
-        const promptPreview = previewText(word.word, FLASHCARD_PROMPT_LIMIT);
-        const explanationPreview = word.explanation ? previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT) : "";
+        const promptPreview = expandAll ? word.word : previewText(word.word, FLASHCARD_PROMPT_LIMIT);
+        const explanationPreview = word.explanation ? (expandAll ? word.explanation : previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT)) : "";
         return (
           <div
             key={word.id}
@@ -1830,8 +1831,8 @@ function WordsView({
                   fontWeight: 600,
                   lineHeight: 1.6,
                   margin: 0,
-                  maxHeight: "8.1em",
-                  overflow: "hidden",
+                  maxHeight: expandAll ? undefined : "8.1em",
+                  overflow: expandAll ? "visible" : "hidden",
                   overflowWrap: "break-word",
                   textAlign: "left",
                 }}
@@ -1840,7 +1841,7 @@ function WordsView({
               </p>
             )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.softText, margin: promptPreview ? "12px 0 0" : 0, lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
+              <div style={{ fontSize: typography.answer, color: colors.softText, margin: promptPreview ? "12px 0 0" : 0, lineHeight: 1.78, maxHeight: expandAll ? undefined : "7em", overflow: expandAll ? "visible" : "hidden", overflowWrap: "break-word" }}>
                 {renderMarkdown(explanationPreview)}
               </div>
             )}
@@ -1860,6 +1861,11 @@ function WordsView({
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {words.length > 0 && (
+            <button type="button" onClick={() => setExpandAll((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
+              {expandAll ? "Collapse" : "Expand all"}
+            </button>
+          )}
           <button type="button" onClick={openCreateSet} style={{ ...subtleButtonStyle(colors, 13) }}>
             Create set
           </button>
