@@ -1095,14 +1095,15 @@ function SavesView({
                     <CapturePreview capture={c} colors={colors} typography={typography} />
 
                     {c.context && (
-                      <div style={{ margin: "10px 0 0", maxWidth: "74ch" }}>
-                        <p style={{ fontSize: 12, color: colors.muted, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", margin: "0 0 3px" }}>
+                      <div style={{ margin: "14px 0 0", maxWidth: "74ch" }}>
+                        <p style={{ fontSize: 14, color: colors.muted, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", margin: "0 0 6px" }}>
                           Your question
                         </p>
                         <QuestionText
                           text={c.context}
                           color={colors.text}
-                          fontSize={typography.source + 5}
+                          fontSize={typography.source + 10}
+                          fontWeight={800}
                           onClick={(event) => openCaptureFromClick(event, c.id)}
                         />
                       </div>
