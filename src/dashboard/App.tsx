@@ -1924,7 +1924,7 @@ function WordsView({
           )}
           {cards}
         </div>
-        <aside style={{ flex: "0 0 300px", width: 300, maxWidth: "100%", position: "sticky", top: 24 }}>
+        <aside style={{ flex: "0 0 332px", width: 332, maxWidth: "100%", position: "sticky", top: 92 }}>
           {sourcePanel}
         </aside>
       </div>
