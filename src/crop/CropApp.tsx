@@ -132,6 +132,12 @@ export default function CropApp() {
   }, []);
 
   useEffect(() => {
+    if (stage !== "selecting") return;
+    const timer = window.setTimeout(() => window.close(), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [stage]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !screenshot) return;
     const img = new Image();

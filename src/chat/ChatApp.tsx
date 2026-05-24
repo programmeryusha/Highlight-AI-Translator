@@ -8,7 +8,7 @@ const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN = new RegExp(
-  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟]*)`,
   "gu",
 );
 

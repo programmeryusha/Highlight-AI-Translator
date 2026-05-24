@@ -268,7 +268,7 @@ const EXPL_RENAME: Record<string, string> = { "Direct": "Direct meaning" };
 const ARABIC_RANGE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN = new RegExp(
-  `([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿](?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿${ARABIC_RUN_GLUE}]*[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
+  `([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿](?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿${ARABIC_RUN_GLUE}]*[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟]*)`,
   "gu",
 );
 
@@ -1313,7 +1313,7 @@ interface WordEntry {
 function flashcardPrompt(capture: Capture) {
   const context = capture.context?.trim();
   if (context) return context;
-  if (capture.imageData) return "";
+  if (capture.imageData || capture.text.trim() === "[Screenshot]") return "";
   return capture.text.slice(0, 120).trim();
 }
 
@@ -1799,8 +1799,8 @@ function WordsView({
             <p
               style={{
                 color: colors.text,
-                fontSize: typography.source,
-                fontWeight: 650,
+                fontSize: typography.context,
+                fontWeight: 600,
                 lineHeight: 1.6,
                 margin: 0,
                 maxHeight: "8.1em",
@@ -1812,7 +1812,7 @@ function WordsView({
               {inlineParts(promptPreview)}
             </p>
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.text, margin: "16px 0 0", lineHeight: 1.78, maxHeight: "18em", overflow: "hidden", overflowWrap: "break-word" }}>
+              <div style={{ fontSize: typography.answer, color: colors.softText, margin: "12px 0 0", lineHeight: 1.78, maxHeight: "7em", overflow: "hidden", overflowWrap: "break-word" }}>
                 {renderMarkdown(explanationPreview)}
               </div>
             )}
