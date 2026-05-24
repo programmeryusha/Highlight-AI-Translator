@@ -1860,8 +1860,8 @@ function WordsView({
     <div style={{ maxWidth: 1220, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: 22, color: colors.text, margin: "0 0 6px", fontWeight: 700 }}>Flashcards</h2>
-          <p style={{ fontSize: 13, color: colors.muted, margin: 0 }}>
+          <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>Flashcards</h2>
+          <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
             {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}
           </p>
         </div>
