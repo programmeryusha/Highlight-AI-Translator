@@ -2962,7 +2962,7 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = view === "history" ? 1280 : 1100;
+  const contentMaxWidth = view === "history" || view === "words" ? 1280 : 1100;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
 
