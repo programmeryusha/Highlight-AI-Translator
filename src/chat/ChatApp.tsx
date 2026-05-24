@@ -2,9 +2,27 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Capture, ChatMessage, Message } from "../types";
 
 type ThemeName = "light" | "dark";
-const DEFAULT_ACCENT_COLOR = "#6466f1";
+const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const THEME_STORAGE_KEY = "contextlens_theme";
 
 function isThemeName(v: unknown): v is ThemeName { return v === "light" || v === "dark"; }
+
+function storedThemeFallback(fallback: ThemeName): ThemeName {
+  try {
+    const theme = localStorage.getItem(THEME_STORAGE_KEY);
+    return isThemeName(theme) ? theme : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function rememberTheme(theme: ThemeName) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // The chrome storage value remains authoritative.
+  }
+}
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
   if (typeof value !== "string") return fallback;
@@ -76,7 +94,7 @@ export default function ChatApp() {
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
-  const [theme, setTheme] = useState<ThemeName>("light");
+  const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("dark"));
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollOnNextUpdate = useRef(false);
@@ -84,11 +102,17 @@ export default function ChatApp() {
   useEffect(() => {
     chrome.storage.local.get(["accent_color", "theme"], (result) => {
       setAccentColor(normalizeHexColor(result.accent_color));
-      if (isThemeName(result.theme)) setTheme(result.theme);
+      const nextTheme = isThemeName(result.theme) ? result.theme : "light";
+      setTheme(nextTheme);
+      rememberTheme(nextTheme);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.accent_color) setAccentColor(normalizeHexColor(changes.accent_color.newValue));
-      if (changes.theme && isThemeName(changes.theme.newValue)) setTheme(changes.theme.newValue);
+      if (changes.theme) {
+        const nextTheme = isThemeName(changes.theme.newValue) ? changes.theme.newValue : "light";
+        setTheme(nextTheme);
+        rememberTheme(nextTheme);
+      }
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -96,8 +120,11 @@ export default function ChatApp() {
 
   useEffect(() => {
     if (!captureId) return;
+    let cancelled = false;
     document.title = "ContextLens";
-    chrome.storage.local.get(["captures", `chat_${captureId}`, "deep_dive_capture_ids"], (result) => {
+
+    const loadCapture = () => chrome.storage.local.get(["captures", `chat_${captureId}`, "deep_dive_capture_ids"], (result) => {
+      if (cancelled) return;
       const captures: Capture[] = result.captures ?? [];
       const found = captures.find((c) => c.id === captureId) ?? null;
       setCapture(found);
@@ -112,6 +139,13 @@ export default function ChatApp() {
         setMessages(prior);
       }
     });
+
+    loadCapture();
+    sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" })
+      .then(loadCapture)
+      .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [captureId]);
 
   // Only auto-scroll when explicitly triggered by user action, never on initial load
@@ -131,7 +165,9 @@ export default function ChatApp() {
   // Apply background color to document body
   useEffect(() => {
     const dark = theme === "dark";
+    document.documentElement.setAttribute("data-theme", theme);
     document.body.style.background = dark ? "#111113" : "#fff";
+    rememberTheme(theme);
     return () => { document.body.style.background = ""; };
   }, [theme]);
 

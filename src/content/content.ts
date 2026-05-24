@@ -1,7 +1,7 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
 const CONTENT_SCRIPT_VERSION = "2026-05-23-overlay-contrast-v1";
-const DEFAULT_ACCENT_COLOR = "#6466f1";
+const DEFAULT_ACCENT_COLOR = "#38bdf8";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;

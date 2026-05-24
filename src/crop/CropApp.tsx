@@ -3,7 +3,7 @@ import type { ChatMessage, Message } from "../types";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
-const DEFAULT_ACCENT_COLOR = "#2563eb";
+const DEFAULT_ACCENT_COLOR = "#38bdf8";
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
   if (typeof value !== "string") return fallback;

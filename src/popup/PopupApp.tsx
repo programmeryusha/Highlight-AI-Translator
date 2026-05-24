@@ -4,7 +4,8 @@ type AppMode = "language_learning" | "student";
 type ThemeName = "light" | "dark";
 type FontSize = "sm" | "md" | "lg";
 
-const DEFAULT_ACCENT_COLOR = "#2563eb";
+const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const THEME_STORAGE_KEY = "contextlens_theme";
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
   if (typeof value !== "string") return fallback;
@@ -16,6 +17,23 @@ function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): str
 
 function isThemeName(value: unknown): value is ThemeName {
   return value === "light" || value === "dark";
+}
+
+function storedThemeFallback(fallback: ThemeName): ThemeName {
+  try {
+    const theme = localStorage.getItem(THEME_STORAGE_KEY);
+    return isThemeName(theme) ? theme : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function rememberTheme(theme: ThemeName) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // The chrome storage value remains authoritative.
+  }
 }
 
 function colorsFor(theme: ThemeName, accent: string) {
@@ -33,14 +51,16 @@ function colorsFor(theme: ThemeName, accent: string) {
 
 export default function PopupApp() {
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
-  const [theme, setTheme] = useState<ThemeName>("light");
+  const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("dark"));
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
   const [fontSize, setFontSize] = useState<FontSize>("md");
 
   useEffect(() => {
     chrome.storage.local.get(["app_mode", "theme", "accent_color", "card_font_size"], (result) => {
       setAppMode(result.app_mode ?? "language_learning");
-      setTheme(isThemeName(result.theme) ? result.theme : "light");
+      const nextTheme = isThemeName(result.theme) ? result.theme : "light";
+      setTheme(nextTheme);
+      rememberTheme(nextTheme);
       setAccentColor(normalizeHexColor(result.accent_color));
       setFontSize(result.card_font_size ?? "md");
     });

@@ -9,8 +9,9 @@ type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediat
 type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
 type CardFontSize = "default" | "large" | "extra_large";
 const LONG_TEXT_LIMIT = 260;
-const DEFAULT_ACCENT_COLOR = "#6466f1";
+const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
+const THEME_STORAGE_KEY = "contextlens_theme";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
   { value: "past3", label: "Past 3 days", days: 3 },
@@ -57,6 +58,23 @@ type DashboardColors = {
 
 function isThemeName(value: unknown): value is ThemeName {
   return value === "light" || value === "dark";
+}
+
+function storedThemeFallback(fallback: ThemeName): ThemeName {
+  try {
+    const theme = localStorage.getItem(THEME_STORAGE_KEY);
+    return isThemeName(theme) ? theme : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function rememberTheme(theme: ThemeName) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // The chrome storage value remains authoritative.
+  }
 }
 
 function isCardFontSize(value: unknown): value is CardFontSize {
@@ -743,11 +761,6 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
         >
           Open screenshot save
         </button>
-        <img
-          src={capture.imageData}
-          alt="screenshot"
-          style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 6, marginBottom: 4, display: "block" }}
-        />
       </>
     );
   }
@@ -2453,7 +2466,7 @@ function SettingsView({
           />
         </label>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {["#6466f1", "#38bdf8", "#0f766e", "#b45309", "#be123c", "#37352f"].filter(s => theme !== "dark" || !tooDarkForDarkMode(s)).map((swatch) => (
+          {["#38bdf8", "#6466f1", "#0f766e", "#b45309", "#be123c", "#37352f"].filter(s => theme !== "dark" || !tooDarkForDarkMode(s)).map((swatch) => (
             <button
               key={swatch}
               type="button"
@@ -2687,7 +2700,7 @@ export default function App() {
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
-  const [theme, setThemeState] = useState<ThemeName>("light");
+  const [theme, setThemeState] = useState<ThemeName>(() => storedThemeFallback("dark"));
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
@@ -2712,6 +2725,7 @@ export default function App() {
       setThemeState(t);
       setAccentColorState(accent);
       document.documentElement.setAttribute("data-theme", t);
+      rememberTheme(t);
       document.documentElement.style.setProperty("--contextlens-accent", accent);
     });
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
@@ -2723,6 +2737,7 @@ export default function App() {
         const nextTheme = isThemeName(changes.theme.newValue) ? changes.theme.newValue : "light";
         setThemeState(nextTheme);
         document.documentElement.setAttribute("data-theme", nextTheme);
+        rememberTheme(nextTheme);
       }
       if (changes.accent_color) {
         const nextAccent = normalizeHexColor(changes.accent_color.newValue);
@@ -2752,6 +2767,7 @@ export default function App() {
     setThemeState(t);
     chrome.storage.local.set({ theme: t });
     document.documentElement.setAttribute("data-theme", t);
+    rememberTheme(t);
   }
 
   function toggleTheme() {
