@@ -1064,11 +1064,13 @@ function SavesView({
       </div>
       {groups.map((group) => (
         <div key={group.label} style={{ marginBottom: 40 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-            <p style={{ fontSize: 12, fontWeight: 600, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
-              {group.label}
-            </p>
-          </div>
+          {groups.length > 1 && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+                {group.label}
+              </p>
+            </div>
+          )}
           <div style={{ display: "grid", gap: 14 }}>
             {group.items.map((c) => (
               <div
