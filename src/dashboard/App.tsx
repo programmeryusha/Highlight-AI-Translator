@@ -29,6 +29,8 @@ const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; a
   large: { source: 24, context: 21, answer: 21, status: 18, link: 15 },
   extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
 };
+const CALENDAR_COLUMN_WIDTH = 332;
+const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
@@ -160,6 +162,30 @@ function savedCardStyle(colors: DashboardColors, selected = false): React.CSSPro
     padding: "22px 24px",
     maxWidth: "100%",
     boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
+  };
+}
+
+function calendarGridStyle(visible: boolean): React.CSSProperties {
+  return {
+    display: "grid",
+    gridTemplateColumns: `minmax(0, 1fr) ${visible ? CALENDAR_COLUMN_WIDTH : 0}px`,
+    gap: visible ? 28 : 0,
+    alignItems: "start",
+    maxWidth: 1220,
+    margin: "0 auto",
+    transition: `grid-template-columns ${CALENDAR_TRANSITION}, gap ${CALENDAR_TRANSITION}`,
+  };
+}
+
+function calendarRailStyle(visible: boolean): React.CSSProperties {
+  return {
+    width: visible ? CALENDAR_COLUMN_WIDTH : 0,
+    maxWidth: visible ? CALENDAR_COLUMN_WIDTH : 0,
+    opacity: visible ? 1 : 0,
+    transform: visible ? "translateY(0)" : "translateY(-10px)",
+    overflow: "hidden",
+    pointerEvents: visible ? "auto" : "none",
+    transition: `width ${CALENDAR_TRANSITION}, max-width ${CALENDAR_TRANSITION}, opacity ${CALENDAR_TRANSITION}, transform ${CALENDAR_TRANSITION}`,
   };
 }
 
@@ -752,8 +778,41 @@ function computeStreak(captures: Capture[]): number {
   return streak;
 }
 
+function pageTransitionColor() {
+  const bodyBg = getComputedStyle(document.body).backgroundColor;
+  if (bodyBg && bodyBg !== "rgba(0, 0, 0, 0)") return bodyBg;
+  const htmlBg = getComputedStyle(document.documentElement).backgroundColor;
+  return htmlBg && htmlBg !== "rgba(0, 0, 0, 0)" ? htmlBg : "#fff";
+}
+
+function navigateWithSoftFade(url: string) {
+  const existing = document.getElementById("contextlens-page-transition");
+  existing?.remove();
+
+  const cover = document.createElement("div");
+  cover.id = "contextlens-page-transition";
+  cover.setAttribute("aria-hidden", "true");
+  cover.style.cssText = `
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    pointer-events: none;
+    background: ${pageTransitionColor()};
+    opacity: 0;
+    transition: opacity 140ms cubic-bezier(0.2, 0, 0, 1);
+  `;
+  document.body.appendChild(cover);
+
+  requestAnimationFrame(() => {
+    cover.style.opacity = "1";
+  });
+  window.setTimeout(() => {
+    window.location.assign(url);
+  }, 150);
+}
+
 function openChat(id: string) {
-  window.location.assign(chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}`);
+  navigateWithSoftFade(chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}`);
 }
 
 function openCaptureFromClick(event: React.MouseEvent, id: string) {
@@ -979,6 +1038,8 @@ function SavesView({
   onDeleteCaptures,
   onRetryCapture,
   headerAction,
+  sidePanel,
+  sidePanelVisible = false,
   colors,
   cardFontSize,
 }: {
@@ -986,6 +1047,8 @@ function SavesView({
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
   headerAction?: React.ReactNode;
+  sidePanel?: React.ReactNode;
+  sidePanelVisible?: boolean;
   colors: DashboardColors;
   cardFontSize: CardFontSize;
 }) {
@@ -1077,60 +1140,8 @@ function SavesView({
     }, 1200);
   }
 
-  return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          marginBottom: 18,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button
-            type="button"
-            onClick={toggleSelectionMode}
-            style={{
-              ...subtleButtonStyle(colors, 13),
-              background: selectionMode ? colors.accent : colors.surfaceAlt,
-              color: selectionMode ? colors.selectedText : colors.text,
-              borderColor: selectionMode ? colors.accent : colors.border,
-            }}
-          >
-            {selectionMode ? "Done" : "Select"}
-          </button>
-          {selectionMode && selectedCount > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={deleteSelected}
-                style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-              >
-                Delete {selectedCount}
-              </button>
-              <button
-                type="button"
-                onClick={toggleSelectionMode}
-                style={{ background: "none", color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {!selectionMode && (
-            <button
-              type="button"
-              onClick={() => setExpandAll((v) => !v)}
-              style={{ ...subtleButtonStyle(colors, 13) }}
-            >
-              {expandAll ? "Collapse" : "Expand all"}
-            </button>
-          )}
-        </div>
-        {headerAction}
-      </div>
+  const cards = (
+    <>
       {groups.map((group) => (
         <div key={group.label} style={{ marginBottom: 40 }}>
           {groups.length > 1 && (
@@ -1212,6 +1223,75 @@ function SavesView({
           </div>
         </div>
       ))}
+    </>
+  );
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 18,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={toggleSelectionMode}
+            style={{
+              ...subtleButtonStyle(colors, 13),
+              background: selectionMode ? colors.accent : colors.surfaceAlt,
+              color: selectionMode ? colors.selectedText : colors.text,
+              borderColor: selectionMode ? colors.accent : colors.border,
+            }}
+          >
+            {selectionMode ? "Done" : "Select"}
+          </button>
+          {selectionMode && selectedCount > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={deleteSelected}
+                style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                Delete {selectedCount}
+              </button>
+              <button
+                type="button"
+                onClick={toggleSelectionMode}
+                style={{ background: "none", color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+          {!selectionMode && (
+            <button
+              type="button"
+              onClick={() => setExpandAll((v) => !v)}
+              style={{ ...subtleButtonStyle(colors, 13) }}
+            >
+              {expandAll ? "Collapse" : "Expand all"}
+            </button>
+          )}
+        </div>
+        {headerAction}
+      </div>
+      {sidePanel ? (
+        <div style={calendarGridStyle(sidePanelVisible)}>
+          <div style={{ minWidth: 0 }}>
+            {cards}
+          </div>
+          <div aria-hidden={!sidePanelVisible} style={calendarRailStyle(sidePanelVisible)}>
+            <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
+              {sidePanel}
+            </div>
+          </div>
+        </div>
+      ) : cards}
     </div>
   );
 }
@@ -1220,6 +1300,7 @@ function HistoryView({
   captures,
   onDeleteCaptures,
   onRetryCapture,
+  initialSelectedDay,
   colors,
   theme,
   accentColor,
@@ -1228,17 +1309,24 @@ function HistoryView({
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
+  initialSelectedDay?: string;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
   cardFontSize: CardFontSize;
 }) {
   const windowWidth = useWindowWidth();
-  const [selectedDay, setSelectedDay] = useState(todayKey());
-  const [visibleMonth, setVisibleMonth] = useState(currentMonthKey());
+  const [selectedDay, setSelectedDay] = useState(initialSelectedDay ?? todayKey());
+  const [visibleMonth, setVisibleMonth] = useState(() => monthKeyFromDate(dateFromDayKey(initialSelectedDay ?? todayKey())));
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
   const wideLayout = windowWidth >= 1040;
   const calendarVisible = !useScrolledPast(360);
+
+  useEffect(() => {
+    if (!initialSelectedDay) return;
+    setSelectedDay(initialSelectedDay);
+    setVisibleMonth(monthKeyFromDate(dateFromDayKey(initialSelectedDay)));
+  }, [initialSelectedDay]);
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -1270,12 +1358,14 @@ function HistoryView({
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: wideLayout && calendarVisible ? "minmax(0, 1fr) 332px" : "1fr",
-        gap: wideLayout ? 28 : 20,
+        ...(wideLayout ? calendarGridStyle(calendarVisible) : {
+          display: "grid",
+          gridTemplateColumns: "1fr",
+          gap: 20,
+          maxWidth: 1220,
+          margin: "0 auto",
+        }),
         alignItems: "start",
-        maxWidth: 1220,
-        margin: "0 auto",
         minHeight: 520,
       }}
     >
@@ -1336,28 +1426,35 @@ function HistoryView({
         )}
       </div>
 
-      {wideLayout && calendarVisible && (
+      {wideLayout && (
         <div
-          style={{
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 10,
-            boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-            display: "flex",
-            justifyContent: "center",
-            padding: "18px 16px",
-          }}
+          aria-hidden={!calendarVisible}
+          style={calendarRailStyle(calendarVisible)}
         >
-          <MonthCalendar
-            captures={captures}
-            selectedDay={selectedDay}
-            visibleMonth={visibleMonth}
-            onVisibleMonthChange={setVisibleMonth}
-            onSelectDay={selectDay}
-            colors={colors}
-            theme={theme}
-            accentColor={accentColor}
-          />
+          <div
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 10,
+              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+              display: "flex",
+              justifyContent: "center",
+              padding: "18px 16px",
+              width: CALENDAR_COLUMN_WIDTH,
+              boxSizing: "border-box",
+            }}
+          >
+            <MonthCalendar
+              captures={captures}
+              selectedDay={selectedDay}
+              visibleMonth={visibleMonth}
+              onVisibleMonthChange={setVisibleMonth}
+              onSelectDay={selectDay}
+              colors={colors}
+              theme={theme}
+              accentColor={accentColor}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -1986,12 +2083,7 @@ function WordsView({
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: calendarVisible ? "minmax(0, 1fr) 332px" : "1fr",
-          gap: 28,
-          alignItems: "start",
-          maxWidth: 1220,
-          margin: "0 auto",
+          ...calendarGridStyle(calendarVisible),
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -2005,11 +2097,11 @@ function WordsView({
           )}
           {cards}
         </div>
-        {calendarVisible && (
-          <div>
+        <div aria-hidden={!calendarVisible} style={calendarRailStyle(calendarVisible)}>
+          <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
             {sourcePanel}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -2922,12 +3014,16 @@ export default function App() {
   const [view, setView] = useState<View>(() => viewFromHash());
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
+  const [historyInitialDay, setHistoryInitialDay] = useState(todayKey());
+  const [todayCalendarMonth, setTodayCalendarMonth] = useState(currentMonthKey());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
   const [theme, setThemeState] = useState<ThemeName>(() => storedThemeFallback("light"));
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
+  const windowWidth = useWindowWidth();
+  const calendarScrolledPast = useScrolledPast(360);
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
@@ -2988,6 +3084,12 @@ export default function App() {
     }
   }
 
+  function openHistoryDay(day: string) {
+    setHistoryInitialDay(day);
+    setTodayCalendarMonth(monthKeyFromDate(dateFromDayKey(day)));
+    navigateView("history");
+  }
+
   function setTheme(t: ThemeName) {
     setThemeState(t);
     chrome.storage.local.set({ theme: t });
@@ -3025,11 +3127,41 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    setTodayCalendarMonth(currentMonthKey());
+  }, [currentDayKey]);
+
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = view === "history" || view === "words" ? 1280 : 1100;
+  const contentMaxWidth = view === "settings" ? 1100 : 1280;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
+  const todayCalendarMounted = view === "saves" && windowWidth >= 1040;
+  const todayCalendarVisible = todayCalendarMounted && !calendarScrolledPast;
+  const todayCalendarPanel = (
+    <div
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 10,
+        boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+        display: "flex",
+        justifyContent: "center",
+        padding: "18px 16px",
+      }}
+    >
+      <MonthCalendar
+        captures={captures}
+        selectedDay={currentDayKey}
+        visibleMonth={todayCalendarMonth}
+        onVisibleMonthChange={setTodayCalendarMonth}
+        onSelectDay={openHistoryDay}
+        colors={colors}
+        theme={theme}
+        accentColor={accentColor}
+      />
+    </div>
+  );
 
   useEffect(() => {
     document.documentElement.style.background = colors.bg;
@@ -3222,6 +3354,8 @@ export default function App() {
                 </button>
               ) : null
             }
+            sidePanel={todayCalendarMounted ? todayCalendarPanel : undefined}
+            sidePanelVisible={todayCalendarVisible}
             colors={colors}
             cardFontSize={cardFontSize}
           />
@@ -3231,6 +3365,7 @@ export default function App() {
             captures={captures}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
+            initialSelectedDay={historyInitialDay}
             colors={colors}
             theme={theme}
             accentColor={accentColor}

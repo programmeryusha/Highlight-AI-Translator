@@ -16,6 +16,9 @@
     "http://localhost:8000/*",
     "https://web-production-223b1.up.railway.app/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https: blob:;"
+  },
   "background": {
     "service_worker": "src/background/service-worker.ts",
     "type": "module"

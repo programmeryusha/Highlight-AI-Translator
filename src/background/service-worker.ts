@@ -64,6 +64,13 @@ function findExactRecentDuplicate(captures: Capture[], text: string, url: string
 }
 
 function captureSyncSignature(capture: Capture): string {
+  const imageData = capture.imageData ?? "";
+  const imageKind = imageData.startsWith("data:")
+    ? "data"
+    : imageData
+      ? "remote"
+      : "none";
+
   return JSON.stringify({
     text: capture.text,
     context: capture.context,
@@ -71,7 +78,8 @@ function captureSyncSignature(capture: Capture): string {
     title: capture.title,
     explanation: capture.explanation ?? "",
     savedAt: capture.savedAt,
-    hasImage: Boolean(capture.imageData),
+    imageKind,
+    imageSize: imageKind === "data" ? imageData.length : 0,
   });
 }
 
@@ -562,6 +570,34 @@ function remoteToCapture(remote: RemoteCapture): Capture {
   };
 }
 
+async function imageUrlToDataUrl(url: string): Promise<string | null> {
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const responseType = res.headers.get("content-type")?.split(";")[0] || "";
+    const contentType = responseType.startsWith("image/") ? responseType : "image/png";
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return `data:${contentType};base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+}
+
+async function restoreRemoteImage(capture: Capture): Promise<Capture> {
+  const imageData = capture.imageData;
+  if (!imageData || imageData.startsWith("data:")) return capture;
+
+  const restored = await imageUrlToDataUrl(imageData);
+  return restored ? { ...capture, imageData: restored } : capture;
+}
+
 function captureToRemotePayload(capture: Capture, token: string) {
   return {
     token,
@@ -663,7 +699,8 @@ async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
   const res = await fetch(`${BACKEND_URL}/captures?token=${encodeURIComponent(token)}`);
   if (!res.ok) await throwResponseError("Sync error", res);
   const remote: RemoteCapture[] = await res.json();
-  return remote.map(remoteToCapture);
+  const captures = remote.map(remoteToCapture);
+  return Promise.all(captures.map(restoreRemoteImage));
 }
 
 async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options: SyncOptions = {}): Promise<{ synced: number }> {

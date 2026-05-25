@@ -115,6 +115,39 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   });
 }
 
+function pageTransitionColor() {
+  const bodyBg = getComputedStyle(document.body).backgroundColor;
+  if (bodyBg && bodyBg !== "rgba(0, 0, 0, 0)") return bodyBg;
+  const htmlBg = getComputedStyle(document.documentElement).backgroundColor;
+  return htmlBg && htmlBg !== "rgba(0, 0, 0, 0)" ? htmlBg : "#fff";
+}
+
+function navigateWithSoftFade(url: string) {
+  const existing = document.getElementById("contextlens-page-transition");
+  existing?.remove();
+
+  const cover = document.createElement("div");
+  cover.id = "contextlens-page-transition";
+  cover.setAttribute("aria-hidden", "true");
+  cover.style.cssText = `
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    pointer-events: none;
+    background: ${pageTransitionColor()};
+    opacity: 0;
+    transition: opacity 140ms cubic-bezier(0.2, 0, 0, 1);
+  `;
+  document.body.appendChild(cover);
+
+  requestAnimationFrame(() => {
+    cover.style.opacity = "1";
+  });
+  window.setTimeout(() => {
+    window.location.assign(url);
+  }, 150);
+}
+
 function renderMarkdown(text: string): React.ReactNode {
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
@@ -173,7 +206,7 @@ export default function ChatApp() {
   const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
-  const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("dark"));
+  const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("light"));
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const loadingAnswerRef = useRef<HTMLDivElement>(null);
@@ -363,6 +396,10 @@ export default function ChatApp() {
       <div style={{ padding: "32px 48px 0" }}>
         <a
           href={chrome.runtime.getURL("src/dashboard/dashboard.html")}
+          onClick={(event) => {
+            event.preventDefault();
+            navigateWithSoftFade(chrome.runtime.getURL("src/dashboard/dashboard.html"));
+          }}
           style={{ fontSize: 13, color: colors.muted, textDecoration: "none", display: "inline-block", marginBottom: 24 }}
         >
           ← Back
