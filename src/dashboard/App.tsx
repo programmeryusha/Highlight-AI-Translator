@@ -1400,14 +1400,6 @@ function HistoryView({
     });
   }
 
-  function selectedDaySubtitle() {
-    return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    });
-  }
-
   function emptyDayMessage() {
     if (selectedDay === todayKey()) return "Nothing saved today.";
     return `Nothing saved on ${selectedDayLabel()}.`;
@@ -1446,17 +1438,6 @@ function HistoryView({
         minHeight: 520,
       }}
     >
-      <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>
-            {selectedDayLabel()}
-          </h2>
-          <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
-            {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
-          </p>
-        </div>
-      </div>
-
       {!wideLayout && (
         <div style={{ margin: "0 0 20px" }}>
           {calendarPanel}
@@ -2158,13 +2139,7 @@ function WordsView({
   return (
     <div style={{ maxWidth: DASHBOARD_INNER_MAX_WIDTH, margin: "0 auto" }}>
       <div style={{ marginBottom: 20 }}>
-        <div>
-          <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>Flashcards</h2>
-          <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
-            {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start", marginTop: 14 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start" }}>
           {words.length > 0 && (
             <button
               type="button"
