@@ -860,13 +860,23 @@ function TrashIcon() {
   );
 }
 
-function SelectSaveButton({ selected, onToggle, colors }: { selected: boolean; onToggle: (event: React.MouseEvent<HTMLButtonElement>) => void; colors: DashboardColors }) {
+function SelectSaveButton({
+  selected,
+  onToggle,
+  colors,
+  itemLabel = "save",
+}: {
+  selected: boolean;
+  onToggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  colors: DashboardColors;
+  itemLabel?: string;
+}) {
   const [hovered, setHovered] = useState(false);
 
   return (
     <button
       type="button"
-      aria-label={selected ? "Deselect save" : "Select save"}
+      aria-label={selected ? `Deselect ${itemLabel}` : `Select ${itemLabel}`}
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1702,6 +1712,10 @@ function uniqueCaptureIds(captures: Capture[]) {
   return Array.from(new Set(captures.map((capture) => capture.id)));
 }
 
+function uniqueFlashcardCaptureIds(words: WordEntry[]) {
+  return Array.from(new Set(words.flatMap((word) => word.captureIds)));
+}
+
 function normalizeFlashcardSets(value: unknown): FlashcardSet[] {
   if (!Array.isArray(value)) return [];
   const normalized = value.flatMap((item) => {
@@ -1825,6 +1839,9 @@ function WordsView({
   const calendarVisible = !useScrolledPast(360);
   const [expandAll, setExpandAll] = useState(false);
   const [expandedWordIds, setExpandedWordIds] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const [createSetScope, setCreateSetScope] = useState<"current" | "selected">("current");
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
@@ -1843,19 +1860,27 @@ function WordsView({
       : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
   const words = buildFlashcardList(sourceCaptures);
   const wordIdsKey = words.map((word) => word.id).join("\0");
+  const selectedWords = words.filter((word) => selectedWordIds.has(word.id));
+  const selectedCount = selectedWords.length;
   const sourceLabel = source.kind === "range"
     ? FLASHCARD_RANGES.find((range) => range.value === source.range)?.label ?? "Date range"
     : source.kind === "days"
       ? `${selectedDays.size} picked ${selectedDays.size === 1 ? "day" : "days"}`
       : activeSet?.name ?? "Saved set";
+  const createSetCaptureIds = createSetScope === "selected" ? uniqueFlashcardCaptureIds(selectedWords) : uniqueCaptureIds(sourceCaptures);
+  const createSetCardCount = createSetScope === "selected" ? selectedCount : words.length;
+  const createSetLabel = createSetScope === "selected"
+    ? `${selectedCount} selected ${selectedCount === 1 ? "card" : "cards"}`
+    : sourceLabel;
   const canCreateSet = Boolean(
     newSetName.trim()
-      && sourceCaptures.length > 0,
+      && createSetCaptureIds.length > 0,
   );
 
   useEffect(() => {
     const visibleIds = new Set(words.map((word) => word.id));
     setExpandedWordIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+    setSelectedWordIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
   }, [wordIdsKey]);
 
   function toggleWordExpanded(id: string) {
@@ -1863,6 +1888,41 @@ function WordsView({
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectionMode() {
+    const nextMode = !selectionMode;
+    setSelectionMode(nextMode);
+    if (!nextMode) {
+      setSelectedWordIds(new Set());
+    }
+  }
+
+  function cancelSelection() {
+    setSelectionMode(false);
+    setSelectedWordIds(new Set());
+  }
+
+  function toggleSelectedWord(id: string, event: React.MouseEvent<HTMLButtonElement>) {
+    const index = words.findIndex((word) => word.id === id);
+    setSelectedWordIds((current) => {
+      const next = new Set(current);
+      if (event.shiftKey && index !== -1 && current.size > 0) {
+        const selectedIndexes = words.flatMap((word, wordIndex) => current.has(word.id) ? [wordIndex] : []);
+        const anchorIndex = selectedIndexes[selectedIndexes.length - 1] ?? index;
+        const [start, end] = [Math.min(index, anchorIndex), Math.max(index, anchorIndex)];
+        const shouldSelectRange = !next.has(id);
+        words.slice(start, end + 1).forEach((word) => {
+          if (shouldSelectRange) next.add(word.id);
+          else next.delete(word.id);
+        });
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   }
@@ -1882,14 +1942,15 @@ function WordsView({
     setSource({ kind: "days" });
   }
 
-  function openCreateSet() {
+  function openCreateSet(scope: "current" | "selected" = "current") {
     setShowSets(false);
+    setCreateSetScope(scope);
     setShowCreateSet(true);
   }
 
   function createSet() {
     const name = newSetName.trim();
-    const captureIds = uniqueCaptureIds(sourceCaptures);
+    const captureIds = createSetCaptureIds;
     if (!name || captureIds.length === 0) return;
     const now = new Date().toISOString();
     const nextSet: FlashcardSet = {
@@ -1902,6 +1963,9 @@ function WordsView({
     storeSets([nextSet, ...sets]);
     setNewSetName("");
     setShowCreateSet(false);
+    if (createSetScope === "selected") {
+      cancelSelection();
+    }
   }
 
   function deleteSet(id: string) {
@@ -2039,42 +2103,52 @@ function WordsView({
         const canExpandCard = promptIsLong || explanationIsLong;
         const promptPreview = wordExpanded ? word.word : previewText(word.word, FLASHCARD_PROMPT_LIMIT);
         const explanationPreview = word.explanation ? (wordExpanded ? word.explanation : previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT)) : "";
+        const selected = selectedWordIds.has(word.id);
         return (
           <div
             key={word.id}
             style={{
-              ...savedCardStyle(colors),
+              ...savedCardStyle(colors, selected),
               marginBottom: 14,
             }}
           >
-            {word.imageData && (
-              <ScreenshotPreview imageData={word.imageData} colors={colors} />
-            )}
-            {promptPreview && (
-              <div style={{ margin: word.imageData ? "14px 0 0" : 0, width: "100%" }}>
-                <p style={questionLabelStyle(colors)}>Your question</p>
-                <QuestionText
-                  text={promptPreview}
-                  color={colors.text}
-                  fontSize={questionFontSize(typography)}
-                  fontWeight={800}
-                />
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              {selectionMode && (
+                <div style={{ display: "flex", alignItems: "center", paddingTop: 5, flexShrink: 0 }}>
+                  <SelectSaveButton selected={selected} onToggle={(event) => toggleSelectedWord(word.id, event)} colors={colors} itemLabel="flashcard" />
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {word.imageData && (
+                  <ScreenshotPreview imageData={word.imageData} colors={colors} />
+                )}
+                {promptPreview && (
+                  <div style={{ margin: word.imageData ? "14px 0 0" : 0, width: "100%" }}>
+                    <p style={questionLabelStyle(colors)}>Your question</p>
+                    <QuestionText
+                      text={promptPreview}
+                      color={colors.text}
+                      fontSize={questionFontSize(typography)}
+                      fontWeight={800}
+                    />
+                  </div>
+                )}
+                {explanationPreview && (
+                  <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, overflowWrap: "break-word", maxWidth: "100%" }}>
+                    {renderExplanation(explanationPreview, colors)}
+                  </div>
+                )}
+                {canExpandCard && !expandAll && (
+                  <button
+                    type="button"
+                    onClick={() => toggleWordExpanded(word.id)}
+                    style={cardSeeAllButtonStyle(colors)}
+                  >
+                    {expandedWordIds.has(word.id) ? "Show less" : "See all"}
+                  </button>
+                )}
               </div>
-            )}
-            {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, overflowWrap: "break-word", maxWidth: "100%" }}>
-                {renderExplanation(explanationPreview, colors)}
-              </div>
-            )}
-            {canExpandCard && !expandAll && (
-              <button
-                type="button"
-                onClick={() => toggleWordExpanded(word.id)}
-                style={cardSeeAllButtonStyle(colors)}
-              >
-                {expandedWordIds.has(word.id) ? "Show less" : "See all"}
-              </button>
-            )}
+            </div>
           </div>
         );
       })}
@@ -2092,41 +2166,82 @@ function WordsView({
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start", marginTop: 14 }}>
           {words.length > 0 && (
-            <button type="button" onClick={() => setExpandAll((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
-              {expandAll ? "Collapse" : "Expand all"}
+            <button
+              type="button"
+              onClick={toggleSelectionMode}
+              style={{
+                ...subtleButtonStyle(colors, 13),
+                background: selectionMode ? colors.accent : colors.surfaceAlt,
+                color: selectionMode ? colors.selectedText : colors.text,
+                borderColor: selectionMode ? colors.accent : colors.border,
+              }}
+            >
+              {selectionMode ? "Done" : "Select"}
             </button>
           )}
-          <button type="button" onClick={openCreateSet} style={{ ...subtleButtonStyle(colors, 13) }}>
-            Create set
-          </button>
-          <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ ...subtleButtonStyle(colors, 13) }}>
-            Sets
-          </button>
-          <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
-            Export
-          </button>
-          <button
-            type="button"
-            disabled={words.length === 0}
-            onClick={() => setStudyWords(words)}
-            style={{
-              ...subtleButtonStyle(colors, 13),
-              background: words.length ? colors.accent : colors.border,
-              borderColor: words.length ? colors.accent : colors.border,
-              color: words.length ? colors.selectedText : colors.muted,
-              opacity: 1,
-              cursor: words.length ? "pointer" : "default",
-            }}
-          >
-            Study
-          </button>
+          {selectionMode ? (
+            <>
+              <span style={{ color: colors.muted, fontSize: 13, fontWeight: 800, padding: "0 2px" }}>
+                {selectedCount} selected
+              </span>
+              <button
+                type="button"
+                disabled={selectedCount === 0}
+                onClick={() => openCreateSet("selected")}
+                style={{
+                  ...subtleButtonStyle(colors, 13),
+                  color: selectedCount ? colors.text : colors.muted,
+                  cursor: selectedCount ? "pointer" : "default",
+                  opacity: selectedCount ? 1 : 0.65,
+                }}
+              >
+                Create set
+              </button>
+              {exportButtons(selectedWords, "selected-flashcards", "selected-flashcards")}
+              <button type="button" onClick={cancelSelection} style={{ ...subtleButtonStyle(colors, 13) }}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {words.length > 0 && (
+                <button type="button" onClick={() => setExpandAll((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  {expandAll ? "Collapse" : "Expand all"}
+                </button>
+              )}
+              <button type="button" onClick={() => openCreateSet("current")} style={{ ...subtleButtonStyle(colors, 13) }}>
+                Create set
+              </button>
+              <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ ...subtleButtonStyle(colors, 13) }}>
+                Sets
+              </button>
+              <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
+                Export
+              </button>
+              <button
+                type="button"
+                disabled={words.length === 0}
+                onClick={() => setStudyWords(words)}
+                style={{
+                  ...subtleButtonStyle(colors, 13),
+                  background: words.length ? colors.accent : colors.border,
+                  borderColor: words.length ? colors.accent : colors.border,
+                  color: words.length ? colors.selectedText : colors.muted,
+                  opacity: 1,
+                  cursor: words.length ? "pointer" : "default",
+                }}
+              >
+                Study
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {showCreateSet && (
         <FlashcardPopup title="Create set" onClose={() => setShowCreateSet(false)} colors={colors}>
           <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
-            Save {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
+            Save {createSetCardCount} {createSetCardCount === 1 ? "card" : "cards"} · {createSetLabel}.
           </p>
           <input
             autoFocus
@@ -2182,7 +2297,7 @@ function WordsView({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          {showExport && (
+          {showExport && !selectionMode && (
             <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
                 Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
