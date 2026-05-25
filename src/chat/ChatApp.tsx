@@ -104,6 +104,16 @@ function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${rgbTriplet(hex)}, ${alpha})`;
 }
 
+let lastImageRefreshAt = 0;
+const IMAGE_REFRESH_COOLDOWN_MS = 30_000;
+
+function refreshRemoteImageUrls() {
+  const now = Date.now();
+  if (now - lastImageRefreshAt < IMAGE_REFRESH_COOLDOWN_MS) return;
+  lastImageRefreshAt = now;
+  void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" }).catch(() => {});
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -435,7 +445,10 @@ export default function ChatApp() {
               <img
                 src={capture.imageData}
                 alt="Saved screenshot"
-                onError={() => setImageFailed(true)}
+                onError={() => {
+                  setImageFailed(true);
+                  if (capture.imageData && !capture.imageData.startsWith("data:")) refreshRemoteImageUrls();
+                }}
                 style={{
                   display: "block",
                   width: "100%",
