@@ -8,9 +8,11 @@ type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
 type CardFontSize = "default" | "large" | "extra_large";
+type CardTypography = (typeof CARD_TYPOGRAPHY)[CardFontSize];
 const LONG_TEXT_LIMIT = 260;
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
+const QUESTION_FONT_BUMP = 10;
 const THEME_STORAGE_KEY = "contextlens_theme";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
@@ -134,6 +136,21 @@ function subtleButtonStyle(colors: DashboardColors, fontSize = 13): React.CSSPro
     justifyContent: "center",
     width: "fit-content",
   };
+}
+
+function questionLabelStyle(colors: DashboardColors): React.CSSProperties {
+  return {
+    fontSize: 14,
+    color: colors.muted,
+    fontWeight: 800,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    margin: "0 0 6px",
+  };
+}
+
+function questionFontSize(typography: CardTypography): number {
+  return typography.source + QUESTION_FONT_BUMP;
 }
 
 function relativeLuminance(hex: string): number {
@@ -348,7 +365,7 @@ function QuestionText({
           border: "none",
           padding: 0,
           cursor: "pointer",
-          font: "inherit",
+          appearance: "none",
           fontSize: effectiveFontSize,
           fontFamily: effectiveFontFamily,
           fontWeight,
@@ -817,10 +834,81 @@ function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: 
   );
 }
 
-function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
+function ScreenshotPreview({
+  imageData,
+  colors,
+  alt = "Saved screenshot",
+  maxHeight = 280,
+  margin = 0,
+  onClick,
+}: {
+  imageData: string;
+  colors: DashboardColors;
+  alt?: string;
+  maxHeight?: number;
+  margin?: React.CSSProperties["margin"];
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+}) {
   const [hovered, setHovered] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => { setImageFailed(false); }, [capture.imageData]);
+  const interactive = Boolean(onClick);
+
+  useEffect(() => { setImageFailed(false); }, [imageData]);
+
+  return (
+    <figure
+      style={{
+        width: "min(620px, 100%)",
+        margin,
+        border: `1px solid ${hovered && interactive ? colors.accent : colors.border}`,
+        borderRadius: 8,
+        background: colors.surfaceAlt,
+        padding: 8,
+        boxSizing: "border-box",
+        overflow: "hidden",
+        cursor: interactive ? "pointer" : "default",
+        transition: "border-color 0.15s",
+      }}
+      onClick={onClick}
+      onMouseEnter={() => interactive && setHovered(true)}
+      onMouseLeave={() => interactive && setHovered(false)}
+    >
+      {imageFailed ? (
+        <div
+          style={{
+            minHeight: 124,
+            display: "grid",
+            placeItems: "center",
+            color: colors.muted,
+            fontSize: 13,
+            fontWeight: 700,
+            border: `1px dashed ${colors.border}`,
+            background: colors.surface,
+          }}
+        >
+          Screenshot preview unavailable
+        </div>
+      ) : (
+        <img
+          src={imageData}
+          alt={alt}
+          onError={() => setImageFailed(true)}
+          style={{
+            display: "block",
+            width: "100%",
+            maxHeight,
+            objectFit: "contain",
+            borderRadius: 0,
+            background: colors.surface,
+          }}
+        />
+      )}
+    </figure>
+  );
+}
+
+function CapturePreview({ capture, colors, typography }: { capture: Capture; colors: DashboardColors; typography: typeof CARD_TYPOGRAPHY[CardFontSize] }) {
+  const [hovered, setHovered] = useState(false);
   const rtl = hasRtlText(capture.text);
   const sourceStyle: React.CSSProperties = {
     background: "none",
@@ -849,55 +937,12 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
 
   if (capture.imageData) {
     return (
-      <figure
-        style={{
-          width: "min(620px, 100%)",
-          margin: "0 0 18px",
-          border: `1px solid ${hovered ? colors.accent : colors.border}`,
-          borderRadius: 8,
-          background: colors.surfaceAlt,
-          padding: 8,
-          boxSizing: "border-box",
-          overflow: "hidden",
-          cursor: "pointer",
-          transition: "border-color 0.15s",
-        }}
+      <ScreenshotPreview
+        imageData={capture.imageData}
+        colors={colors}
+        margin="0 0 18px"
         onClick={(event) => openCaptureFromClick(event, capture.id)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        {imageFailed ? (
-          <div
-            style={{
-              minHeight: 124,
-              display: "grid",
-              placeItems: "center",
-              color: colors.muted,
-              fontSize: 13,
-              fontWeight: 700,
-              borderRadius: 5,
-              border: `1px dashed ${colors.border}`,
-              background: colors.surface,
-            }}
-          >
-            Screenshot preview unavailable
-          </div>
-        ) : (
-          <img
-            src={capture.imageData}
-            alt="Saved screenshot"
-            onError={() => setImageFailed(true)}
-            style={{
-              display: "block",
-              width: "100%",
-              maxHeight: 280,
-              objectFit: "contain",
-              borderRadius: 5,
-              background: colors.surface,
-            }}
-          />
-        )}
-      </figure>
+      />
     );
   }
 
@@ -1109,13 +1154,13 @@ function SavesView({
 
                     {c.context && (
                       <div style={{ margin: "14px 0 0", maxWidth: "74ch" }}>
-                        <p style={{ fontSize: 14, color: colors.muted, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", margin: "0 0 6px" }}>
+                        <p style={questionLabelStyle(colors)}>
                           Your question
                         </p>
                         <QuestionText
                           text={c.context}
                           color={colors.text}
-                          fontSize={typography.source + 10}
+                          fontSize={questionFontSize(typography)}
                           fontWeight={800}
                           onClick={(event) => openCaptureFromClick(event, c.id)}
                         />
@@ -1352,11 +1397,12 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
 }
 
-function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors }) {
+function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors; cardFontSize: CardFontSize }) {
   const [deck, setDeck] = useState(words);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [ratings, setRatings] = useState<Record<string, "known" | "learning">>({});
+  const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     setDeck(words);
@@ -1463,21 +1509,24 @@ function FlashcardView({ words, onClose, colors }: { words: WordEntry[]; onClose
       >
         {!flipped ? (
           <>
-            <p style={{ fontSize: 28, fontWeight: 700, color: colors.text, margin: 0 }}>{card.word}</p>
+            <p style={questionLabelStyle(colors)}>Your question</p>
+            <QuestionText
+              text={card.word || "Screenshot"}
+              color={colors.text}
+              fontSize={questionFontSize(typography)}
+              fontWeight={800}
+              lineHeight={1.45}
+            />
             <p style={{ fontSize: 13, color: colors.muted, marginTop: 16 }}>Click or press Space to reveal</p>
           </>
         ) : (
           <>
             <p style={{ fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 850, margin: "0 0 10px" }}>Answer</p>
-            <div style={{ fontSize: 17, color: colors.text, lineHeight: 1.75, margin: 0, maxWidth: "72ch" }}>
-              {renderMarkdown(card.explanation || "No explanation yet — save a highlight with this question to get one.")}
+            <div style={{ fontSize: typography.answer, color: colors.text, lineHeight: 1.78, margin: 0, maxWidth: "72ch" }}>
+              {renderExplanation(card.explanation || "No explanation yet — save a highlight with this question to get one.", colors)}
             </div>
             {card.imageData ? (
-              <img
-                src={card.imageData}
-                alt="Saved screenshot"
-                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, marginTop: 16, background: colors.subtle }}
-              />
+              <ScreenshotPreview imageData={card.imageData} colors={colors} margin="16px 0 0" />
             ) : card.exampleText ? (
               <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, lineHeight: 1.55, borderLeft: `3px solid ${colors.border}`, paddingLeft: 10 }}>
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
@@ -1773,7 +1822,7 @@ function WordsView({
     );
   }
 
-  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} />;
+  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} cardFontSize={cardFontSize} />;
 
   const sourcePanel = source.kind === "set" && activeSet ? (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, background: colors.surface, display: "grid", gap: 12 }}>
@@ -1817,32 +1866,22 @@ function WordsView({
             }}
           >
             {word.imageData && (
-              <img
-                src={word.imageData}
-                alt="Saved screenshot"
-                style={{ display: "block", width: "100%", maxHeight: 220, objectFit: "contain", borderRadius: 6, background: colors.surfaceAlt, marginBottom: promptPreview || explanationPreview ? 12 : 0 }}
-              />
+              <ScreenshotPreview imageData={word.imageData} colors={colors} />
             )}
             {promptPreview && (
-              <p
-                style={{
-                  color: colors.text,
-                  fontSize: typography.context,
-                  fontWeight: 600,
-                  lineHeight: 1.6,
-                  margin: 0,
-                  maxHeight: expandAll ? undefined : "8.1em",
-                  overflow: expandAll ? "visible" : "hidden",
-                  overflowWrap: "break-word",
-                  textAlign: "left",
-                }}
-              >
-                {inlineParts(promptPreview)}
-              </p>
+              <div style={{ margin: word.imageData ? "14px 0 0" : 0, maxWidth: "74ch" }}>
+                <p style={questionLabelStyle(colors)}>Your question</p>
+                <QuestionText
+                  text={promptPreview}
+                  color={colors.text}
+                  fontSize={questionFontSize(typography)}
+                  fontWeight={800}
+                />
+              </div>
             )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.softText, margin: promptPreview ? "12px 0 0" : 0, lineHeight: 1.78, maxHeight: expandAll ? undefined : "7em", overflow: expandAll ? "visible" : "hidden", overflowWrap: "break-word" }}>
-                {renderMarkdown(explanationPreview)}
+              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, maxHeight: expandAll ? undefined : "7em", overflow: expandAll ? "visible" : "hidden", overflowWrap: "break-word", maxWidth: "74ch" }}>
+                {renderExplanation(explanationPreview, colors)}
               </div>
             )}
           </div>
@@ -2874,7 +2913,7 @@ export default function App() {
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
-  const [theme, setThemeState] = useState<ThemeName>(() => storedThemeFallback("dark"));
+  const [theme, setThemeState] = useState<ThemeName>(() => storedThemeFallback("light"));
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);

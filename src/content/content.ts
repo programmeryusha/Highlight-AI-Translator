@@ -467,6 +467,44 @@ function trapScroll(element: HTMLElement) {
   }, { passive: false });
 }
 
+type ConversationScrollState = {
+  top: number;
+  atBottom: boolean;
+  pendingAnswerTop: boolean;
+};
+
+function createConversationScrollState(): ConversationScrollState {
+  return { top: 0, atBottom: false, pendingAnswerTop: false };
+}
+
+function conversationMaxScrollTop(element: HTMLElement) {
+  return Math.max(0, element.scrollHeight - element.clientHeight);
+}
+
+function rememberConversationScroll(state: ConversationScrollState, element: HTMLElement | null) {
+  if (!element) return;
+  const maxTop = conversationMaxScrollTop(element);
+  state.top = Math.max(0, Math.min(element.scrollTop, maxTop));
+  state.atBottom = maxTop > 0 && maxTop - element.scrollTop <= 16;
+}
+
+function trackConversationScroll(state: ConversationScrollState, element: HTMLElement) {
+  element.addEventListener("scroll", () => rememberConversationScroll(state, element), { passive: true });
+}
+
+function restoreConversationScroll(state: ConversationScrollState, element: HTMLElement, answerTarget: HTMLElement | null) {
+  const maxTop = conversationMaxScrollTop(element);
+  if (state.pendingAnswerTop && answerTarget) {
+    element.scrollTop = Math.max(0, Math.min(answerTarget.offsetTop - 12, maxTop));
+    state.pendingAnswerTop = false;
+  } else if (state.atBottom) {
+    element.scrollTop = maxTop;
+  } else {
+    element.scrollTop = Math.max(0, Math.min(state.top, maxTop));
+  }
+  rememberConversationScroll(state, element);
+}
+
 function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
   textarea.style.height = "auto";
   const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
@@ -1000,6 +1038,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   let hardWordsOpen = false;
   let analogyText = "";
   let analogyLoading = false;
+  const widgetConversationScroll = createConversationScrollState();
 
   function styleExpandedWidget() {
     if (!widget) return;
@@ -1202,6 +1241,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   function renderConversation(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
     if (!widget) return;
+    rememberConversationScroll(widgetConversationScroll, widget.querySelector<HTMLElement>('[data-cl-conversation-list="widget"]'));
     styleExpandedWidget();
     const colors = uiColors();
 
@@ -1258,14 +1298,16 @@ function showContextInput(x: number, y: number, selectedText: string) {
     ensureBaseStyles();
     const list = document.createElement("div");
     list.className = "cl-scroll";
+    list.setAttribute("data-cl-conversation-list", "widget");
     list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
     trapScroll(list);
+    trackConversationScroll(widgetConversationScroll, list);
 
     const initialHardWords = messages.length === 1 && messages[0].role === "assistant"
       ? hardWordEntries(messages[0].content)
       : [];
     const focusedHardWords = hardWordsOpen && initialHardWords.length > 0;
-    let latestUserBlock: HTMLElement | null = null;
+    let latestAssistantBlock: HTMLElement | null = null;
 
     if (focusedHardWords) {
       const label = document.createElement("div");
@@ -1286,7 +1328,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const messageBlock = document.createElement("div");
         if (message.role === "user") {
           messageBlock.setAttribute("style", `border-left:2px solid ${colorWithAlpha(accentColor, 0.45)};padding-left:10px;margin:10px 0 12px;`);
-          latestUserBlock = messageBlock;
+        } else {
+          latestAssistantBlock = messageBlock;
         }
 
         const label = document.createElement("div");
@@ -1316,14 +1359,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
     }
 
     if (loading) {
+      const loadingBlock = document.createElement("div");
       const label = document.createElement("div");
       label.textContent = "AI";
       label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
       const body = document.createElement("div");
       body.textContent = loadingText;
       body.setAttribute("style", `color:${widgetDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
-      list.appendChild(label);
-      list.appendChild(body);
+      loadingBlock.appendChild(label);
+      loadingBlock.appendChild(body);
+      if (!latestAssistantBlock) latestAssistantBlock = loadingBlock;
+      list.appendChild(loadingBlock);
     }
 
     const followupInput = document.createElement("textarea");
@@ -1394,6 +1440,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (!question || loading) return;
       hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+      widgetConversationScroll.pendingAnswerTop = true;
       renderConversation(captureId, nextMessages, true, "Thinking…");
       let streamed = "";
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1547,6 +1594,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyText = "";
         analogyLoading = false;
         ensureDeepDiveStyles();
+        widgetConversationScroll.pendingAnswerTop = true;
         renderConversation(captureId, messages, true, "Thinking through a deeper answer…");
         widget?.classList.add("cl-deep-dive-glow");
         const timeout = new Promise<never>((_, reject) =>
@@ -1602,9 +1650,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     requestAnimationFrame(() => {
       settleExpandedWidgetPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
       addResizeHandles();
-      if (!loading && latestUserBlock && list.isConnected) {
-        list.scrollTop = Math.max(0, latestUserBlock.offsetTop - 12);
-      }
+      restoreConversationScroll(widgetConversationScroll, list, latestAssistantBlock);
     });
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
@@ -1864,6 +1910,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
   let activePanelImageData = "";
   let activePanelContext = "";
   let userPlacedContextPanel = false;
+  const contextPanelConversationScroll = createConversationScrollState();
 
   cropOverlay.addEventListener("wheel", (event) => {
     if (event.target instanceof Element && event.target.closest(".cl-scroll")) return;
@@ -2049,6 +2096,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
 
       function renderConversationPanel(captureId: string, messages: ChatMessage[], loading = false, loadingText = "Thinking…") {
         if (!contextPanel) return;
+        rememberConversationScroll(contextPanelConversationScroll, contextPanel.querySelector<HTMLElement>('[data-cl-conversation-list="screenshot"]'));
         styleAnswerPanel();
         const colors = uiColors();
 
@@ -2113,16 +2161,18 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         });
 
         ensureBaseStyles();
-        const list = document.createElement("div");
+      const list = document.createElement("div");
       list.className = "cl-scroll";
+      list.setAttribute("data-cl-conversation-list", "screenshot");
       list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
       trapScroll(list);
+      trackConversationScroll(contextPanelConversationScroll, list);
 
       const initialPanelHardWords = messages.length === 1 && messages[0].role === "assistant"
         ? hardWordEntries(messages[0].content)
         : [];
       const focusedPanelHardWords = panelHardWordsOpen && initialPanelHardWords.length > 0;
-      let latestPanelUserBlock: HTMLElement | null = null;
+      let latestPanelAssistantBlock: HTMLElement | null = null;
 
       if (focusedPanelHardWords) {
         const label = document.createElement("div");
@@ -2143,7 +2193,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           const messageBlock = document.createElement("div");
           if (message.role === "user") {
             messageBlock.setAttribute("style", `border-left:2px solid ${colorWithAlpha(accentColor, 0.45)};padding-left:10px;margin:10px 0 12px;`);
-            latestPanelUserBlock = messageBlock;
+          } else {
+            latestPanelAssistantBlock = messageBlock;
           }
 
           const label = document.createElement("div");
@@ -2173,14 +2224,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }
 
       if (loading) {
+        const loadingBlock = document.createElement("div");
         const label = document.createElement("div");
         label.textContent = "AI";
         label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
         const body = document.createElement("div");
         body.textContent = loadingText;
         body.setAttribute("style", `color:${panelDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
-        list.appendChild(label);
-        list.appendChild(body);
+        loadingBlock.appendChild(label);
+        loadingBlock.appendChild(body);
+        if (!latestPanelAssistantBlock) latestPanelAssistantBlock = loadingBlock;
+        list.appendChild(loadingBlock);
       }
 
       const input = document.createElement("textarea");
@@ -2251,6 +2305,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         if (!question || loading) return;
         panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+        contextPanelConversationScroll.pendingAnswerTop = true;
         renderConversationPanel(captureId, nextMessages, true, "Thinking…");
         let streamed = "";
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -2404,6 +2459,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           panelAnalogyText = "";
           panelAnalogyLoading = false;
           ensureDeepDiveStyles();
+          contextPanelConversationScroll.pendingAnswerTop = true;
           renderConversationPanel(captureId, messages, true, "Thinking through a deeper answer…");
           contextPanel?.classList.add("cl-deep-dive-glow");
           const timeout = new Promise<never>((_, reject) =>
@@ -2457,9 +2513,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       contextPanel.replaceChildren(dragHandle, ...panelChildren);
       requestAnimationFrame(() => {
         settleAnswerPanelPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
-        if (!loading && latestPanelUserBlock && list.isConnected) {
-          list.scrollTop = Math.max(0, latestPanelUserBlock.offsetTop - 12);
-        }
+        restoreConversationScroll(contextPanelConversationScroll, list, latestPanelAssistantBlock);
       });
       setTimeout(() => input.focus({ preventScroll: true }), 50);
       closeContextPanelOnOutsideClick();
@@ -2565,6 +2619,9 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         gap: 12px;
         padding: 8px 12px 6px;
         border-bottom: 1px solid ${colors.faintBorder};
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
       `);
 
       const preview = document.createElement("div");
@@ -2576,14 +2633,13 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         white-space: nowrap;
         font-size: 13px;
         color: ${colors.accent};
-        cursor: grab;
-        user-select: none;
-        touch-action: none;
       `);
       preview.title = "Drag overlay";
 
-      preview.addEventListener("mousedown", (e) => {
+      header.title = "Drag overlay";
+      header.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
+        if (e.target instanceof Element && e.target.closest("button")) return;
         e.preventDefault();
         e.stopPropagation();
         userPlacedContextPanel = true;
@@ -2597,7 +2653,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             };
         const startLeft = drag.position.left;
         const startTop = drag.position.top;
-        preview.style.cursor = "grabbing";
+        header.style.cursor = "grabbing";
 
         const onMove = (ev: MouseEvent) => {
           const dragHeight = Math.min(contextPanel?.getBoundingClientRect().height || panelH, expandedPanelMaxHeight());
@@ -2610,7 +2666,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           }
         };
         const onUp = () => {
-          preview.style.cursor = "grab";
+          header.style.cursor = "grab";
           document.removeEventListener("mousemove", onMove, true);
           document.removeEventListener("mouseup", onUp, true);
         };

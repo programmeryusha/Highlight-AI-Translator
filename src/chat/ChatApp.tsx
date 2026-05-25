@@ -175,8 +175,9 @@ export default function ChatApp() {
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
   const [theme, setTheme] = useState<ThemeName>(() => storedThemeFallback("dark"));
   const [sourceExpanded, setSourceExpanded] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollOnNextUpdate = useRef(false);
+  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const loadingAnswerRef = useRef<HTMLDivElement>(null);
+  const scrollToAnswerOnNextUpdate = useRef(false);
 
   useEffect(() => {
     chrome.storage.local.get(["accent_color", "theme"], (result) => {
@@ -227,12 +228,24 @@ export default function ChatApp() {
     return () => { cancelled = true; };
   }, [captureId]);
 
-  // Only auto-scroll when explicitly triggered by user action, never on initial load
+  // Only auto-scroll when explicitly triggered by a follow-up/deep-dive action.
   useEffect(() => {
-    if (scrollOnNextUpdate.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      scrollOnNextUpdate.current = false;
+    if (!scrollToAnswerOnNextUpdate.current) return;
+    let lastAssistantIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "assistant") {
+        lastAssistantIndex = i;
+        break;
+      }
     }
+    const target = loading || deepDiveLoading
+      ? loadingAnswerRef.current
+      : lastAssistantIndex >= 0
+        ? messageRefs.current.get(lastAssistantIndex)
+        : null;
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollToAnswerOnNextUpdate.current = false;
   }, [messages, loading, deepDiveLoading]);
 
   useEffect(() => {
@@ -255,7 +268,7 @@ export default function ChatApp() {
 
   async function handleDeepDive() {
     if (!capture || deepDiveActive || deepDiveLoading) return;
-    scrollOnNextUpdate.current = true;
+    scrollToAnswerOnNextUpdate.current = true;
     setDeepDiveLoading(true);
     try {
       const data = await sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
@@ -281,7 +294,7 @@ export default function ChatApp() {
     const text = input.trim();
     if (!text || loading || deepDiveLoading || !capture) return;
     setInput("");
-    scrollOnNextUpdate.current = true;
+    scrollToAnswerOnNextUpdate.current = true;
 
     const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(updated);
@@ -435,7 +448,14 @@ export default function ChatApp() {
       {/* Messages */}
       <div style={{ padding: "24px 48px 96px", flex: 1 }}>
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 20 }}>
+          <div
+            key={i}
+            ref={(node) => {
+              if (node) messageRefs.current.set(i, node);
+              else messageRefs.current.delete(i);
+            }}
+            style={{ marginBottom: 20 }}
+          >
             <p style={{ fontSize: 12, color: colors.muted, marginBottom: 4, fontWeight: 500 }}>
               {m.role === "assistant" ? "AI" : "You"}
             </p>
@@ -456,20 +476,19 @@ export default function ChatApp() {
           </div>
         )}
         {deepDiveLoading && (
-          <div style={{ marginBottom: 20 }}>
+          <div ref={loadingAnswerRef} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: accentColor, marginBottom: 4, fontWeight: 500 }}>AI</p>
             <p style={{ fontSize: 15, color: accentColor, fontStyle: "italic" }}>Thinking through a deeper answer…</p>
           </div>
         )}
         {loading && (
-          <div style={{ marginBottom: 20 }}>
+          <div ref={loadingAnswerRef} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: deepDiveActive ? accentColor : colors.muted, marginBottom: 4, fontWeight: 500 }}>AI</p>
             <p style={{ fontSize: 15, color: deepDiveActive ? accentColor : colors.muted, fontStyle: deepDiveActive ? "italic" : undefined }}>
               {deepDiveActive ? "Thinking through a deeper answer…" : "…"}
             </p>
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Input */}
