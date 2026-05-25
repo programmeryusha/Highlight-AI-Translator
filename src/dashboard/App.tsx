@@ -3087,13 +3087,18 @@ function MonthCalendar({
                 height: 34,
                 borderRadius: 8,
                 border: borderFor(count, isSelected),
-                background: isFuture ? colors.surfaceAlt : colorFor(count),
-                color: textFor(count, isFuture),
+                background: isFuture ? colors.surfaceAlt : isSelected ? colors.accent : colorFor(count),
+                color: isSelected ? colors.selectedText : textFor(count, isFuture),
                 fontSize: 12,
-                fontWeight: isSelected ? 700 : 600,
+                fontWeight: isSelected ? 900 : 600,
                 cursor: isFuture ? "default" : "pointer",
                 padding: 0,
-                boxShadow: isSelected ? `0 0 0 2px ${colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.14)}` : "none",
+                position: "relative",
+                zIndex: isSelected ? 1 : 0,
+                boxShadow: isSelected
+                  ? `0 0 0 3px ${colorWithAlpha(accentColor, theme === "dark" ? 0.34 : 0.22)}, inset 0 0 0 1px ${colorWithAlpha("#ffffff", 0.38)}`
+                  : "none",
+                transition: "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease",
               }}
             >
               {date.getDate()}
@@ -3177,13 +3182,18 @@ function FlashcardDayCalendar({
                 height: 34,
                 borderRadius: 8,
                 border: borderFor(count, selected),
-                background: future ? colors.surfaceAlt : colorFor(count),
-                boxShadow: selected ? `0 0 0 2px ${colorWithAlpha(accentColor, theme === "dark" ? 0.22 : 0.14)}` : "none",
-                color: future ? colors.muted : count > 0 ? (theme === "dark" ? "#f0ede6" : "#1a1916") : colors.muted,
+                background: future ? colors.surfaceAlt : selected ? colors.accent : colorFor(count),
+                boxShadow: selected
+                  ? `0 0 0 3px ${colorWithAlpha(accentColor, theme === "dark" ? 0.34 : 0.22)}, inset 0 0 0 1px ${colorWithAlpha("#ffffff", 0.38)}`
+                  : "none",
+                color: selected ? colors.selectedText : future ? colors.muted : count > 0 ? (theme === "dark" ? "#f0ede6" : "#1a1916") : colors.muted,
                 cursor: future ? "default" : "pointer",
                 fontSize: 12,
-                fontWeight: selected ? 700 : 600,
+                fontWeight: selected ? 900 : 600,
                 padding: 0,
+                position: "relative",
+                zIndex: selected ? 1 : 0,
+                transition: "background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease",
               }}
             >
               {date.getDate()}
