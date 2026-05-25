@@ -186,6 +186,23 @@ function cardSeeAllButtonStyle(colors: DashboardColors): React.CSSProperties {
   };
 }
 
+function toolbarSummaryStyle(colors: DashboardColors): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    width: "fit-content",
+    border: `1px solid ${colorWithAlpha(colors.accent, 0.34)}`,
+    borderRadius: 999,
+    background: colors.accentSoft,
+    color: colors.text,
+    padding: "6px 10px",
+    fontSize: 13,
+    fontWeight: 800,
+    lineHeight: 1,
+  };
+}
+
 function calendarGridStyle(visible: boolean): React.CSSProperties {
   return {
     display: "grid",
@@ -1090,6 +1107,7 @@ function SavesView({
   onDeleteCaptures,
   onRetryCapture,
   headerAction,
+  toolbarSummary,
   sidePanel,
   sidePanelVisible = false,
   colors,
@@ -1099,6 +1117,7 @@ function SavesView({
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
   headerAction?: React.ReactNode;
+  toolbarSummary?: React.ReactNode;
   sidePanel?: React.ReactNode;
   sidePanelVisible?: boolean;
   colors: DashboardColors;
@@ -1356,6 +1375,7 @@ function SavesView({
               {expandAll ? "Collapse" : "Expand all"}
             </button>
           )}
+          {toolbarSummary}
         </div>
         {headerAction}
       </div>
@@ -1462,6 +1482,13 @@ function HistoryView({
           captures={selectedCaptures}
           onDeleteCaptures={onDeleteCaptures}
           onRetryCapture={onRetryCapture}
+          toolbarSummary={
+            <span style={toolbarSummaryStyle(colors)}>
+              1 day selected
+              <span style={{ color: colors.muted }}>·</span>
+              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"}
+            </span>
+          }
           sidePanel={wideLayout ? calendarPanel : undefined}
           sidePanelVisible={wideLayout && calendarVisible}
           colors={colors}
@@ -1996,11 +2023,25 @@ function WordsView({
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
   const [draggedSetId, setDraggedSetId] = useState<string | null>(null);
+  const [hoveredSetId, setHoveredSetId] = useState<string | null>(null);
+  const [hoveredSetActionId, setHoveredSetActionId] = useState<string | null>(null);
+  const [hoveredSetMenuAction, setHoveredSetMenuAction] = useState<string | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     chrome.storage.local.get("flashcard_sets", (result) => setSets(normalizeFlashcardSets(result.flashcard_sets)));
   }, []);
+
+  useEffect(() => {
+    if (!openSetMenuId) return;
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-set-actions-root]")) return;
+      setOpenSetMenuId(null);
+    };
+    document.addEventListener("mousedown", closeMenu);
+    return () => document.removeEventListener("mousedown", closeMenu);
+  }, [openSetMenuId]);
 
   const setById = new Map(sets.map((set) => [set.id, set]));
   const setRows = flashcardSetRows(sets);
@@ -2031,6 +2072,9 @@ function WordsView({
     : sourceLabel;
   const hasDaySelection = source.kind !== "days" || selectedDays.size > 0;
   const canExportCurrent = words.length > 0 && (source.kind !== "days" || selectedDays.size > 0);
+  const daySelectionSummary = source.kind === "days" && selectedDays.size > 0
+    ? `${selectedDays.size} ${selectedDays.size === 1 ? "day" : "days"} selected`
+    : "";
   const canCreateSet = Boolean(
     newSetName.trim()
       && createSetCaptureIds.length > 0,
@@ -2129,9 +2173,10 @@ function WordsView({
     storeSets([nextSet, ...sets]);
     setNewSetName("");
     setShowCreateSet(false);
-    if (createSetScope === "selected") {
-      cancelSelection();
-    }
+    setShowExport(false);
+    setSource({ kind: "days" });
+    setSelectedDays(new Set());
+    cancelSelection();
   }
 
   function deleteSet(id: string) {
@@ -2247,6 +2292,21 @@ function WordsView({
     };
   }
 
+  function setMenuButtonStyle(actionKey: string, danger = false): React.CSSProperties {
+    return {
+      background: hoveredSetMenuAction === actionKey ? colors.subtle : "transparent",
+      color: danger ? colors.danger : colors.text,
+      border: "none",
+      textAlign: "left",
+      padding: "8px 9px",
+      borderRadius: 6,
+      cursor: "pointer",
+      fontSize: 13,
+      fontWeight: 750,
+      transition: "background 120ms ease, color 120ms ease",
+    };
+  }
+
   function renderSetDeckTable(emptyMessage = "No saved sets yet.") {
     if (sets.length === 0) {
       return (
@@ -2275,12 +2335,18 @@ function WordsView({
             <div
               key={set.id}
               draggable
-              onDragStart={() => { setDraggedSetId(set.id); setOpenSetMenuId(null); }}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                setDraggedSetId(set.id);
+                setOpenSetMenuId(null);
+              }}
               onDragOver={(event) => {
                 if (draggedSetId && draggedSetId !== set.id) event.preventDefault();
               }}
               onDrop={(event) => handleSetDrop(set.id, event)}
               onDragEnd={() => setDraggedSetId(null)}
+              onMouseEnter={() => setHoveredSetId(set.id)}
+              onMouseLeave={() => setHoveredSetId((current) => current === set.id ? null : current)}
               style={{
                 display: "grid",
                 gridTemplateColumns: "minmax(0, 1fr) 88px 88px 88px 64px",
@@ -2288,10 +2354,12 @@ function WordsView({
                 alignItems: "center",
                 padding: "8px 10px 8px 12px",
                 borderBottom: `1px solid ${colors.border}`,
-                background: selected ? colors.accentSoft : colors.surface,
-                opacity: draggedSetId === set.id ? 0.55 : 1,
+                background: selected ? colors.accentSoft : hoveredSetId === set.id ? colors.subtle : colors.surface,
+                opacity: draggedSetId === set.id ? 0.72 : 1,
                 outline: draggedSetId && draggedSetId !== set.id ? `1px dashed ${colors.accent}` : "none",
                 outlineOffset: -3,
+                cursor: "grab",
+                transition: "background 140ms ease, opacity 180ms ease, outline-color 140ms ease",
               }}
             >
               <button type="button" onClick={() => setSource({ kind: "set", setId: set.id })} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
@@ -2303,25 +2371,57 @@ function WordsView({
               <span style={{ textAlign: "center", color: "#60a5fa", fontSize: 13, fontWeight: 850 }}>{deckCounts.newCount}</span>
               <span style={{ textAlign: "center", color: "#f87171", fontSize: 13, fontWeight: 850 }}>{deckCounts.learnCount}</span>
               <span style={{ textAlign: "center", color: "#4ade80", fontSize: 13, fontWeight: 850 }}>{deckCounts.dueCount}</span>
-              <div style={{ position: "relative", justifySelf: "center" }}>
+              <div data-set-actions-root style={{ position: "relative", justifySelf: "center" }}>
                 <button
                   type="button"
                   onClick={() => setOpenSetMenuId((current) => current === set.id ? null : set.id)}
+                  onMouseEnter={() => setHoveredSetActionId(set.id)}
+                  onMouseLeave={() => setHoveredSetActionId((current) => current === set.id ? null : current)}
                   title={`Set actions for ${set.name}`}
                   aria-label={`Set actions for ${set.name}`}
-                  style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 32, height: 32, cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 900 }}
+                  style={{
+                    background: hoveredSetActionId === set.id || openSetMenuId === set.id ? colors.subtle : colors.surface,
+                    color: hoveredSetActionId === set.id || openSetMenuId === set.id ? colors.text : colors.muted,
+                    border: `1px solid ${hoveredSetActionId === set.id || openSetMenuId === set.id ? colors.accent : colors.border}`,
+                    borderRadius: 6,
+                    width: 32,
+                    height: 32,
+                    cursor: "pointer",
+                    padding: 0,
+                    fontSize: 15,
+                    fontWeight: 900,
+                    transition: "background 120ms ease, border-color 120ms ease, color 120ms ease",
+                  }}
                 >
                   ⚙
                 </button>
                 {openSetMenuId === set.id && (
                   <div style={{ position: "absolute", right: 0, top: 38, zIndex: 20, minWidth: 150, background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 6, boxShadow: "0 12px 30px rgba(15,15,15,0.18)", display: "grid", gap: 4 }}>
-                    <button type="button" onClick={() => { runExport("anki", exportWords, `set-menu-${set.id}:anki`, set.name); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.text, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: exportWords.length ? "pointer" : "default", fontSize: 13, fontWeight: 750, opacity: exportWords.length ? 1 : 0.55 }}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHoveredSetMenuAction(`${set.id}:anki`)}
+                      onMouseLeave={() => setHoveredSetMenuAction(null)}
+                      onClick={() => { runExport("anki", exportWords, `set-menu-${set.id}:anki`, set.name); setOpenSetMenuId(null); }}
+                      style={{ ...setMenuButtonStyle(`${set.id}:anki`), opacity: exportWords.length ? 1 : 0.55, cursor: exportWords.length ? "pointer" : "default" }}
+                    >
                       Export Anki
                     </button>
-                    <button type="button" onClick={() => { runExport("quizlet", exportWords, `set-menu-${set.id}:quizlet`, set.name); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.text, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: exportWords.length ? "pointer" : "default", fontSize: 13, fontWeight: 750, opacity: exportWords.length ? 1 : 0.55 }}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHoveredSetMenuAction(`${set.id}:quizlet`)}
+                      onMouseLeave={() => setHoveredSetMenuAction(null)}
+                      onClick={() => { runExport("quizlet", exportWords, `set-menu-${set.id}:quizlet`, set.name); setOpenSetMenuId(null); }}
+                      style={{ ...setMenuButtonStyle(`${set.id}:quizlet`), opacity: exportWords.length ? 1 : 0.55, cursor: exportWords.length ? "pointer" : "default" }}
+                    >
                       Export Quizlet
                     </button>
-                    <button type="button" onClick={() => { deleteSet(set.id); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.danger, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 750 }}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHoveredSetMenuAction(`${set.id}:delete`)}
+                      onMouseLeave={() => setHoveredSetMenuAction(null)}
+                      onClick={() => { deleteSet(set.id); setOpenSetMenuId(null); }}
+                      style={setMenuButtonStyle(`${set.id}:delete`, true)}
+                    >
                       Delete
                     </button>
                   </div>
@@ -2485,6 +2585,13 @@ function WordsView({
                 <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
                   Export
                 </button>
+              )}
+              {daySelectionSummary && (
+                <span style={toolbarSummaryStyle(colors)}>
+                  {daySelectionSummary}
+                  <span style={{ color: colors.muted }}>·</span>
+                  {words.length} {words.length === 1 ? "card" : "cards"}
+                </span>
               )}
             </>
           )}
