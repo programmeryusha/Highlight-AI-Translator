@@ -1824,6 +1824,7 @@ function WordsView({
   const calendarVisible = !useScrolledPast(360);
   const [expandAll, setExpandAll] = useState(false);
   const [expandedWordIds, setExpandedWordIds] = useState<Set<string>>(new Set());
+  const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1913,23 +1914,52 @@ function WordsView({
     if (source.kind === "set" && source.setId === id) setSource({ kind: "days" });
   }
 
-  function exportButtons(exportWords: WordEntry[], label: string) {
+  function pressExportButton(key: string) {
+    setActiveExportButton(key);
+    window.setTimeout(() => {
+      setActiveExportButton((current) => current === key ? null : current);
+    }, 650);
+  }
+
+  function exportButtonStyle(disabled: boolean, active: boolean, compact = false): React.CSSProperties {
+    return {
+      background: disabled ? colors.border : active ? colors.accent : colors.surfaceAlt,
+      color: disabled ? colors.muted : active ? colors.selectedText : colors.text,
+      border: `1px solid ${disabled ? colors.border : active ? colors.accent : colors.border}`,
+      borderRadius: compact ? 6 : 7,
+      padding: compact ? "6px 8px" : "7px 11px",
+      fontSize: 12,
+      fontWeight: compact ? 850 : 800,
+      cursor: disabled ? "default" : "pointer",
+      transition: "background 140ms ease, border-color 140ms ease, color 140ms ease",
+    };
+  }
+
+  function runExport(format: "anki" | "quizlet", exportWords: WordEntry[], key: string, name?: string) {
+    if (exportWords.length === 0) return;
+    pressExportButton(key);
+    exportFlashcards(format, exportWords, name);
+  }
+
+  function exportButtons(exportWords: WordEntry[], keyPrefix: string, name?: string) {
+    const disabled = exportWords.length === 0;
+    const ankiKey = `${keyPrefix}:anki`;
+    const quizletKey = `${keyPrefix}:quizlet`;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: colors.muted, fontWeight: 700 }}>{label}</span>
         <button
           type="button"
-          disabled={exportWords.length === 0}
-          onClick={() => exportFlashcards("anki", exportWords)}
-          style={{ background: exportWords.length ? colors.accent : colors.border, color: exportWords.length ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 800, cursor: exportWords.length ? "pointer" : "default" }}
+          disabled={disabled}
+          onClick={() => runExport("anki", exportWords, ankiKey, name)}
+          style={exportButtonStyle(disabled, activeExportButton === ankiKey)}
         >
           Anki
         </button>
         <button
           type="button"
-          disabled={exportWords.length === 0}
-          onClick={() => exportFlashcards("quizlet", exportWords)}
-          style={{ background: colors.surface, color: exportWords.length ? colors.text : colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 800, cursor: exportWords.length ? "pointer" : "default" }}
+          disabled={disabled}
+          onClick={() => runExport("quizlet", exportWords, quizletKey, name)}
+          style={exportButtonStyle(disabled, activeExportButton === quizletKey)}
         >
           Quizlet
         </button>
@@ -1947,23 +1977,25 @@ function WordsView({
 
   function compactSetExportButtons(set: FlashcardSet, exportWords: WordEntry[]) {
     const disabled = exportWords.length === 0;
+    const ankiKey = `compact-set-${set.id}:anki`;
+    const quizletKey = `compact-set-${set.id}:quizlet`;
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
         <button
           type="button"
           disabled={disabled}
-          onClick={() => exportFlashcards("anki", exportWords, set.name)}
+          onClick={() => runExport("anki", exportWords, ankiKey, set.name)}
           title={`Export ${set.name} to Anki`}
-          style={{ background: disabled ? colors.border : colors.accent, color: disabled ? colors.muted : colors.selectedText, border: "none", borderRadius: 6, padding: "6px 8px", fontSize: 12, fontWeight: 850, cursor: disabled ? "default" : "pointer" }}
+          style={exportButtonStyle(disabled, activeExportButton === ankiKey, true)}
         >
           Anki
         </button>
         <button
           type="button"
           disabled={disabled}
-          onClick={() => exportFlashcards("quizlet", exportWords, set.name)}
+          onClick={() => runExport("quizlet", exportWords, quizletKey, set.name)}
           title={`Export ${set.name} to Quizlet`}
-          style={{ background: colors.surface, color: disabled ? colors.muted : colors.text, border: `1px solid ${colors.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontWeight: 850, cursor: disabled ? "default" : "pointer" }}
+          style={exportButtonStyle(disabled, activeExportButton === quizletKey, true)}
         >
           Quizlet
         </button>
@@ -1981,7 +2013,7 @@ function WordsView({
         <p style={{ fontSize: 12, color: colors.muted, margin: "3px 0 0" }}>{words.length} {words.length === 1 ? "card" : "cards"}</p>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {exportButtons(words, "Current set")}
+        {exportButtons(words, `set-${activeSet.id}`, activeSet.name)}
         <button type="button" onClick={() => setSource({ kind: "days" })} style={{ background: colors.surfaceAlt, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
           Pick days
         </button>
@@ -2154,7 +2186,7 @@ function WordsView({
               <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
                 Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
               </p>
-              {exportButtons(words, "Current selection")}
+              {exportButtons(words, "current-selection")}
             </div>
           )}
           {cards}
