@@ -3572,6 +3572,7 @@ export default function App() {
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
+  const [hoveredNavView, setHoveredNavView] = useState<View | null>(null);
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
@@ -3819,21 +3820,30 @@ export default function App() {
                 )}
               </div>
             )}
-            <nav style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <nav style={{ display: "flex", gap: 6, alignItems: "center" }}>
               {(["saves", "history", "words", "settings"] as View[]).map((v) => (
                 <button
                   key={v}
                   onClick={() => navigateView(v)}
+                  onMouseEnter={() => setHoveredNavView(v)}
+                  onMouseLeave={() => setHoveredNavView((current) => current === v ? null : current)}
                   style={{
-                    background: "none",
+                    minHeight: 40,
+                    minWidth: v === "words" ? 92 : 64,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: hoveredNavView === v && view !== v ? colors.subtle : "transparent",
                     border: "none",
                     borderBottom: view === v ? `2px solid ${colors.text}` : "2px solid transparent",
+                    borderRadius: 8,
                     color: view === v ? colors.text : colors.muted,
                     fontWeight: view === v ? 600 : 400,
                     fontSize: 14,
                     cursor: "pointer",
-                    padding: "4px 0",
+                    padding: "0 10px",
                     textTransform: "capitalize",
+                    transition: "background 120ms ease, color 120ms ease, border-color 120ms ease",
                   }}
                 >
                   {v === "saves" ? "Today" : v === "words" ? "Flashcards" : v}
@@ -3847,6 +3857,7 @@ export default function App() {
                 style={{
                   width: 32,
                   height: 32,
+                  marginLeft: 10,
                   borderRadius: 999,
                   border: `1px solid ${colors.border}`,
                   background: colors.surface,
