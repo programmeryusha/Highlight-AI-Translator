@@ -1347,6 +1347,15 @@ function SavesView({
               </button>
             </>
           )}
+          {!selectionMode && (
+            <button
+              type="button"
+              onClick={() => setExpandAll((v) => !v)}
+              style={{ ...subtleButtonStyle(colors, 13) }}
+            >
+              {expandAll ? "Collapse" : "Expand all"}
+            </button>
+          )}
         </div>
         {headerAction}
       </div>
@@ -2248,12 +2257,12 @@ function WordsView({
       );
     }
     return (
-      <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden", background: colors.surfaceAlt, width: "100%" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 64px 64px 64px 34px", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${colors.border}`, color: colors.text, fontSize: 13, fontWeight: 850 }}>
+      <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "visible", background: colors.surfaceAlt, width: "100%" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 88px 88px 88px 64px", alignItems: "center", gap: 14, padding: "10px 12px", borderBottom: `1px solid ${colors.border}`, color: colors.text, fontSize: 13, fontWeight: 850 }}>
           <span>Set</span>
-          <span style={{ textAlign: "right" }}>New</span>
-          <span style={{ textAlign: "right" }}>Learn</span>
-          <span style={{ textAlign: "right" }}>Due</span>
+          <span style={{ textAlign: "center" }}>New</span>
+          <span style={{ textAlign: "center" }}>Learn</span>
+          <span style={{ textAlign: "center" }}>Due</span>
           <span />
         </div>
         {setRows.map(({ set, depth }) => {
@@ -2274,8 +2283,8 @@ function WordsView({
               onDragEnd={() => setDraggedSetId(null)}
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) 64px 64px 64px 34px",
-                gap: 8,
+                gridTemplateColumns: "minmax(0, 1fr) 88px 88px 88px 64px",
+                gap: 14,
                 alignItems: "center",
                 padding: "8px 10px 8px 12px",
                 borderBottom: `1px solid ${colors.border}`,
@@ -2291,21 +2300,21 @@ function WordsView({
                   {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
                 </span>
               </button>
-              <span style={{ textAlign: "right", color: "#60a5fa", fontSize: 13, fontWeight: 850 }}>{deckCounts.newCount}</span>
-              <span style={{ textAlign: "right", color: "#f87171", fontSize: 13, fontWeight: 850 }}>{deckCounts.learnCount}</span>
-              <span style={{ textAlign: "right", color: "#4ade80", fontSize: 13, fontWeight: 850 }}>{deckCounts.dueCount}</span>
-              <div style={{ position: "relative", justifySelf: "end" }}>
+              <span style={{ textAlign: "center", color: "#60a5fa", fontSize: 13, fontWeight: 850 }}>{deckCounts.newCount}</span>
+              <span style={{ textAlign: "center", color: "#f87171", fontSize: 13, fontWeight: 850 }}>{deckCounts.learnCount}</span>
+              <span style={{ textAlign: "center", color: "#4ade80", fontSize: 13, fontWeight: 850 }}>{deckCounts.dueCount}</span>
+              <div style={{ position: "relative", justifySelf: "center" }}>
                 <button
                   type="button"
                   onClick={() => setOpenSetMenuId((current) => current === set.id ? null : set.id)}
                   title={`Set actions for ${set.name}`}
                   aria-label={`Set actions for ${set.name}`}
-                  style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 900 }}
+                  style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 32, height: 32, cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 900 }}
                 >
                   ⚙
                 </button>
                 {openSetMenuId === set.id && (
-                  <div style={{ position: "absolute", right: 0, top: 34, zIndex: 2, minWidth: 150, background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 6, boxShadow: "0 12px 30px rgba(15,15,15,0.18)", display: "grid", gap: 4 }}>
+                  <div style={{ position: "absolute", right: 0, top: 38, zIndex: 20, minWidth: 150, background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 6, boxShadow: "0 12px 30px rgba(15,15,15,0.18)", display: "grid", gap: 4 }}>
                     <button type="button" onClick={() => { runExport("anki", exportWords, `set-menu-${set.id}:anki`, set.name); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.text, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: exportWords.length ? "pointer" : "default", fontSize: 13, fontWeight: 750, opacity: exportWords.length ? 1 : 0.55 }}>
                       Export Anki
                     </button>
