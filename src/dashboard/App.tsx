@@ -3586,7 +3586,7 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text }}>
       <div style={{ borderBottom: `1px solid ${colors.border}`, background: colors.bg }}>
-        <div style={{ maxWidth: DASHBOARD_INNER_MAX_WIDTH, margin: "0 auto", padding: "8px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 72 }}>
+        <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: "4px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 60 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => navigateView("saves")}
