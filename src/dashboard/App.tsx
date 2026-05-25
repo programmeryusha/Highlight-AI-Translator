@@ -1811,7 +1811,7 @@ function WordsView({
   const [studyWords, setStudyWords] = useState<WordEntry[] | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [source, setSource] = useState<FlashcardSource>({ kind: "days" });
-  const [selectedDays, setSelectedDays] = useState<Set<string>>(() => new Set([todayKey()]));
+  const [selectedDays, setSelectedDays] = useState<Set<string>>(() => new Set());
   const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [newSetName, setNewSetName] = useState("");
