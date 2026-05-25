@@ -34,7 +34,7 @@ export interface FlashcardSet {
 
 export interface StorageSchema {
   captures: Capture[];
-  card_font_size?: "default" | "large" | "extra_large";
+  card_font_size?: "small" | "default" | "large" | "extra_large";
   flashcard_sets?: FlashcardSet[];
   deep_dive_capture_ids?: string[];
   contextlens_user?: ContextLensUser;

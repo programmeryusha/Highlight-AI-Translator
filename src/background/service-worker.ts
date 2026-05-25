@@ -661,17 +661,26 @@ async function storeAccount(email: string, token: string): Promise<ContextLensUs
 
 async function signInOrSignUp(email: string, password: string): Promise<ContextLensUser> {
   try {
+    return await authRequest(["/auth/login-or-signup"], "Sign in error", email, password);
+  } catch (combinedError) {
+    if (!/not found/i.test(errorMessage(combinedError))) {
+      throw combinedError;
+    }
+  }
+
+  try {
     return await signIn(email, password);
   } catch (signInError) {
+    const signInMessage = errorMessage(signInError);
+    if (!/invalid email or password/i.test(signInMessage)) throw signInError;
     try {
       return await signUp(email, password);
     } catch (signUpError) {
       const signupMessage = errorMessage(signUpError);
-      if (/cannot be used|deleted|blocked/i.test(signupMessage)) throw signUpError;
       if (/already registered|already exists/i.test(signupMessage)) {
         throw new Error("Wrong password. Try again or reset it.");
       }
-      throw signInError;
+      throw signUpError;
     }
   }
 }

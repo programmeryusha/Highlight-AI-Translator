@@ -7,7 +7,7 @@ type AppMode = "language_learning" | "student";
 type SaveTriggers = { bubble: boolean; contextMenu: boolean };
 type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediate: boolean };
 type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
-type CardFontSize = "default" | "large" | "extra_large";
+type CardFontSize = "small" | "default" | "large" | "extra_large";
 type CardTypography = (typeof CARD_TYPOGRAPHY)[CardFontSize];
 type FsrsRating = "again" | "hard" | "good" | "easy";
 type FsrsState = "new" | "learning" | "reviewing" | "relearning";
@@ -22,11 +22,13 @@ const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[]
   { value: "pastMonth", label: "Past month", days: 30 },
 ];
 const CARD_FONT_OPTIONS: { value: CardFontSize; label: string; note: string }[] = [
+  { value: "small", label: "Small", note: "Tighter dashboard cards." },
   { value: "default", label: "Default", note: "Comfortable reading size." },
   { value: "large", label: "Large", note: "Bigger save text and answers." },
   { value: "extra_large", label: "Extra large", note: "Maximum readability." },
 ];
 const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; answer: number; status: number; link: number }> = {
+  small: { source: 18, context: 16, answer: 17, status: 14, link: 13 },
   default: { source: 21, context: 18, answer: 19, status: 16, link: 14 },
   large: { source: 24, context: 21, answer: 21, status: 18, link: 15 },
   extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
@@ -85,7 +87,7 @@ function rememberTheme(theme: ThemeName) {
 }
 
 function isCardFontSize(value: unknown): value is CardFontSize {
-  return value === "default" || value === "large" || value === "extra_large";
+  return value === "small" || value === "default" || value === "large" || value === "extra_large";
 }
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
@@ -652,15 +654,24 @@ function useWindowWidth(): number {
   return width;
 }
 
-function useScrolledPast(threshold = 360): boolean {
+function useScrolledPast(threshold = 360, hysteresis = 120): boolean {
   const [past, setPast] = useState(() => window.scrollY > threshold);
 
   useEffect(() => {
-    const update = () => setPast(window.scrollY > threshold);
+    const hideAt = threshold + hysteresis / 2;
+    const showAt = threshold - hysteresis / 2;
+    const update = () => {
+      const y = window.scrollY;
+      setPast((current) => {
+        if (!current && y > hideAt) return true;
+        if (current && y < showAt) return false;
+        return current;
+      });
+    };
     update();
     window.addEventListener("scroll", update, { passive: true });
     return () => window.removeEventListener("scroll", update);
-  }, [threshold]);
+  }, [threshold, hysteresis]);
 
   return past;
 }
@@ -1984,6 +1995,8 @@ function WordsView({
   const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
   const [createSetScope, setCreateSetScope] = useState<"current" | "selected">("current");
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
+  const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
+  const [draggedSetId, setDraggedSetId] = useState<string | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -2002,7 +2015,6 @@ function WordsView({
         ? captures.filter((capture) => captureIsDue(capture))
         : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
   const words = buildFlashcardList(sourceCaptures);
-  const dueWords = buildFlashcardList(captures.filter((capture) => captureIsDue(capture)));
   const wordIdsKey = words.map((word) => word.id).join("\0");
   const selectedWords = words.filter((word) => selectedWordIds.has(word.id));
   const selectedCount = selectedWords.length;
@@ -2018,6 +2030,8 @@ function WordsView({
   const createSetLabel = createSetScope === "selected"
     ? `${selectedCount} selected ${selectedCount === 1 ? "card" : "cards"}`
     : sourceLabel;
+  const hasDaySelection = source.kind !== "days" || selectedDays.size > 0;
+  const canExportCurrent = words.length > 0 && (source.kind !== "days" || selectedDays.size > 0);
   const canCreateSet = Boolean(
     newSetName.trim()
       && createSetCaptureIds.length > 0,
@@ -2094,6 +2108,17 @@ function WordsView({
     setShowCreateSet(true);
   }
 
+  function handleSetsButton() {
+    setShowCreateSet(false);
+    setShowExport(false);
+    if (source.kind === "set") {
+      setSource({ kind: "days" });
+      setShowSets(false);
+      return;
+    }
+    setShowSets(true);
+  }
+
   function createSet() {
     const name = newSetName.trim();
     const captureIds = createSetCaptureIds;
@@ -2123,6 +2148,38 @@ function WordsView({
         return independentSet;
       }));
     if (source.kind === "set" && source.setId === id) setSource({ kind: "days" });
+  }
+
+  function mergeSetIntoTarget(sourceSetId: string, targetSetId: string) {
+    if (sourceSetId === targetSetId) return;
+    const sourceSet = setById.get(sourceSetId);
+    const targetSet = setById.get(targetSetId);
+    if (!sourceSet || !targetSet) return;
+    if (!window.confirm(`Merge "${sourceSet.name}" into "${targetSet.name}"?`)) return;
+    const now = new Date().toISOString();
+    const mergedCaptureIds = Array.from(new Set([...targetSet.captureIds, ...sourceSet.captureIds]));
+    storeSets(sets
+      .filter((set) => set.id !== sourceSetId)
+      .map((set) => {
+        if (set.id === targetSetId) {
+          return { ...set, captureIds: mergedCaptureIds, updatedAt: now };
+        }
+        if (set.parentSetId === sourceSetId) {
+          return { ...set, parentSetId: targetSetId, updatedAt: now };
+        }
+        return set;
+      }));
+    if (source.kind === "set" && source.setId === sourceSetId) {
+      setSource({ kind: "set", setId: targetSetId });
+    }
+  }
+
+  function handleSetDrop(targetSetId: string, event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const sourceSetId = draggedSetId;
+    setDraggedSetId(null);
+    if (!sourceSetId || sourceSetId === targetSetId) return;
+    mergeSetIntoTarget(sourceSetId, targetSetId);
   }
 
   function pressExportButton(key: string) {
@@ -2186,30 +2243,93 @@ function WordsView({
     );
   }
 
-  function compactSetExportButtons(set: FlashcardSet, exportWords: WordEntry[]) {
-    const disabled = exportWords.length === 0;
-    const ankiKey = `compact-set-${set.id}:anki`;
-    const quizletKey = `compact-set-${set.id}:quizlet`;
+  function setDeckCounts(exportWords: WordEntry[]) {
+    const now = Date.now();
+    return {
+      newCount: exportWords.filter((word) => word.fsrsReviewCount <= 0 || word.fsrsState === "new").length,
+      learnCount: exportWords.filter((word) => word.fsrsState === "learning" || word.fsrsState === "relearning").length,
+      dueCount: exportWords.filter((word) => word.fsrsState === "reviewing" && new Date(word.fsrsDueAt).getTime() <= now).length,
+    };
+  }
+
+  function renderSetDeckTable(emptyMessage = "No saved sets yet.") {
+    if (sets.length === 0) {
+      return <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>{emptyMessage}</p>;
+    }
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => runExport("anki", exportWords, ankiKey, set.name)}
-          title={`Export ${set.name} to Anki`}
-          style={exportButtonStyle(disabled, activeExportButton === ankiKey, true)}
-        >
-          Anki
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => runExport("quizlet", exportWords, quizletKey, set.name)}
-          title={`Export ${set.name} to Quizlet`}
-          style={exportButtonStyle(disabled, activeExportButton === quizletKey, true)}
-        >
-          Quizlet
-        </button>
+      <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden", background: colors.surfaceAlt, width: "100%" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 64px 64px 64px 34px", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${colors.border}`, color: colors.text, fontSize: 13, fontWeight: 850 }}>
+          <span>Deck</span>
+          <span style={{ textAlign: "right" }}>New</span>
+          <span style={{ textAlign: "right" }}>Learn</span>
+          <span style={{ textAlign: "right" }}>Due</span>
+          <span />
+        </div>
+        {setRows.map(({ set, depth }) => {
+          const selected = source.kind === "set" && source.setId === set.id;
+          const parent = set.parentSetId ? setById.get(set.parentSetId) : undefined;
+          const exportWords = setFlashcards(set);
+          const count = exportWords.length;
+          const deckCounts = setDeckCounts(exportWords);
+          return (
+            <div
+              key={set.id}
+              draggable
+              onDragStart={() => { setDraggedSetId(set.id); setOpenSetMenuId(null); }}
+              onDragOver={(event) => {
+                if (draggedSetId && draggedSetId !== set.id) event.preventDefault();
+              }}
+              onDrop={(event) => handleSetDrop(set.id, event)}
+              onDragEnd={() => setDraggedSetId(null)}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) 64px 64px 64px 34px",
+                gap: 8,
+                alignItems: "center",
+                padding: "8px 10px 8px 12px",
+                borderBottom: `1px solid ${colors.border}`,
+                background: selected ? colors.accentSoft : colors.surface,
+                opacity: draggedSetId === set.id ? 0.55 : 1,
+                outline: draggedSetId && draggedSetId !== set.id ? `1px dashed ${colors.accent}` : "none",
+                outlineOffset: -3,
+              }}
+            >
+              <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
+                <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: depth * 18 }}>{depth > 0 ? "- " : ""}{set.name}</span>
+                <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2, paddingLeft: depth * 18 }}>
+                  {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
+                </span>
+              </button>
+              <span style={{ textAlign: "right", color: "#60a5fa", fontSize: 13, fontWeight: 850 }}>{deckCounts.newCount}</span>
+              <span style={{ textAlign: "right", color: "#f87171", fontSize: 13, fontWeight: 850 }}>{deckCounts.learnCount}</span>
+              <span style={{ textAlign: "right", color: "#4ade80", fontSize: 13, fontWeight: 850 }}>{deckCounts.dueCount}</span>
+              <div style={{ position: "relative", justifySelf: "end" }}>
+                <button
+                  type="button"
+                  onClick={() => setOpenSetMenuId((current) => current === set.id ? null : set.id)}
+                  title={`Set actions for ${set.name}`}
+                  aria-label={`Set actions for ${set.name}`}
+                  style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 900 }}
+                >
+                  ⚙
+                </button>
+                {openSetMenuId === set.id && (
+                  <div style={{ position: "absolute", right: 0, top: 34, zIndex: 2, minWidth: 150, background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 6, boxShadow: "0 12px 30px rgba(15,15,15,0.18)", display: "grid", gap: 4 }}>
+                    <button type="button" onClick={() => { runExport("anki", exportWords, `set-menu-${set.id}:anki`, set.name); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.text, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: exportWords.length ? "pointer" : "default", fontSize: 13, fontWeight: 750, opacity: exportWords.length ? 1 : 0.55 }}>
+                      Export Anki
+                    </button>
+                    <button type="button" onClick={() => { runExport("quizlet", exportWords, `set-menu-${set.id}:quizlet`, set.name); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.text, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: exportWords.length ? "pointer" : "default", fontSize: 13, fontWeight: 750, opacity: exportWords.length ? 1 : 0.55 }}>
+                      Export Quizlet
+                    </button>
+                    <button type="button" onClick={() => { deleteSet(set.id); setOpenSetMenuId(null); }} style={{ background: "transparent", color: colors.danger, border: "none", textAlign: "left", padding: "8px 9px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 750 }}>
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -2226,7 +2346,7 @@ function WordsView({
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {exportButtons(words, `set-${activeSet.id}`, activeSet.name)}
         <button type="button" onClick={() => setSource({ kind: "days" })} style={{ background: colors.surfaceAlt, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-          Pick days
+          Pick days from calendar to create custom set
         </button>
       </div>
     </div>
@@ -2236,19 +2356,15 @@ function WordsView({
     </div>
   );
 
+  const showInlineSets = source.kind === "days" && selectedDays.size === 0;
   const cards = words.length === 0 ? (
     <div style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0, display: "grid", justifyItems: "start", gap: 10 }}>
-      <p style={{ margin: 0 }}>
-        No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : source.kind === "due" ? "Nothing is due right now." : "Pick days from the selector."}
-      </p>
-      {dueWords.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setStudyWords(dueWords)}
-          style={{ ...subtleButtonStyle(colors, 13), background: colors.accent, borderColor: colors.accent, color: colors.selectedText }}
-        >
-          Study due cards
-        </button>
+      {showInlineSets ? (
+        renderSetDeckTable("No saved sets yet. Pick days from calendar to create custom set.")
+      ) : (
+        <p style={{ margin: 0 }}>
+          No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : source.kind === "due" ? "Nothing is due right now." : "Pick days from calendar to create custom set."}
+        </p>
       )}
     </div>
   ) : (
@@ -2360,30 +2476,37 @@ function WordsView({
                   {expandAll ? "Collapse" : "Expand all"}
                 </button>
               )}
-              <button type="button" onClick={() => openCreateSet("current")} style={{ ...subtleButtonStyle(colors, 13) }}>
-                Create set
-              </button>
-              <button type="button" onClick={() => { setShowCreateSet(false); setShowSets(true); }} style={{ ...subtleButtonStyle(colors, 13) }}>
-                Sets
-              </button>
-              <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
-                Export
-              </button>
-              <button
-                type="button"
-                disabled={words.length === 0}
-                onClick={() => setStudyWords(words)}
-                style={{
-                  ...subtleButtonStyle(colors, 13),
-                  background: words.length ? colors.accent : colors.border,
-                  borderColor: words.length ? colors.accent : colors.border,
-                  color: words.length ? colors.selectedText : colors.muted,
-                  opacity: 1,
-                  cursor: words.length ? "pointer" : "default",
-                }}
-              >
-                Study
-              </button>
+              {words.length > 0 && (
+                <button type="button" onClick={() => openCreateSet("current")} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  Create set
+                </button>
+              )}
+              {hasDaySelection && (
+                <button type="button" onClick={handleSetsButton} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  Sets
+                </button>
+              )}
+              {canExportCurrent && (
+                <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  Export
+                </button>
+              )}
+              {words.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setStudyWords(words)}
+                  style={{
+                    ...subtleButtonStyle(colors, 13),
+                    background: colors.accent,
+                    borderColor: colors.accent,
+                    color: colors.selectedText,
+                    opacity: 1,
+                    cursor: "pointer",
+                  }}
+                >
+                  Study
+                </button>
+              )}
             </>
           )}
         </div>
@@ -2415,30 +2538,7 @@ function WordsView({
 
       {showSets && (
         <FlashcardPopup title="Sets" onClose={() => setShowSets(false)} colors={colors} width={680}>
-          {sets.length === 0 ? (
-            <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>No saved sets yet.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {setRows.map(({ set, depth }) => {
-                const selected = source.kind === "set" && source.setId === set.id;
-                const count = set.captureIds.filter((id) => captureById.has(id)).length;
-                const parent = set.parentSetId ? setById.get(set.parentSetId) : undefined;
-                const exportWords = setFlashcards(set);
-                return (
-                  <div key={set.id} style={{ marginLeft: depth * 18, display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 8, alignItems: "center", border: `1px solid ${selected ? colors.accent : colors.border}`, background: selected ? colors.accentSoft : colors.surfaceAlt, borderRadius: 8, padding: "9px 10px" }}>
-                    <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
-                      <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{set.name}</span>
-                      <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2 }}>
-                        {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
-                      </span>
-                    </button>
-                    {compactSetExportButtons(set, exportWords)}
-                    <button type="button" onClick={() => deleteSet(set.id)} title="Delete set" style={{ background: colors.surface, color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, width: 28, height: 28, cursor: "pointer", padding: 0, fontWeight: 900 }}>x</button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {renderSetDeckTable()}
         </FlashcardPopup>
       )}
 
@@ -2448,7 +2548,7 @@ function WordsView({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          {showExport && !selectionMode && (
+          {showExport && !selectionMode && canExportCurrent && (
             <div style={{ border: `1px solid ${colors.border}`, background: colors.surface, borderRadius: 8, padding: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <p style={{ fontSize: 13, color: colors.text, margin: 0 }}>
                 Export {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}.
@@ -2487,6 +2587,7 @@ function SettingsView({
   accentColor,
   onAccentColorChange,
   theme,
+  onThemeToggle,
   colors,
 }: {
   account: ContextLensUser | null;
@@ -2498,6 +2599,7 @@ function SettingsView({
   accentColor: string;
   onAccentColorChange: (color: string) => void;
   theme: ThemeName;
+  onThemeToggle: () => void;
   colors: DashboardColors;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
@@ -2935,6 +3037,115 @@ function SettingsView({
         )}
       </div>
 
+      {/* Appearance */}
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Appearance</p>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16, marginBottom: 40 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Dashboard theme</span>
+          <button
+            type="button"
+            onClick={onThemeToggle}
+            aria-label={theme === "dark" ? "Switch dashboard to light" : "Switch dashboard to dark"}
+            title={theme === "dark" ? "Dashboard: dark" : "Dashboard: light"}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              border: `1px solid ${colors.border}`,
+              background: colors.surface,
+              color: colors.text,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 15,
+              cursor: "pointer",
+            }}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+          <span style={{ fontSize: 12, color: colors.muted }}>{theme === "dark" ? "Dark" : "Light"}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Overlay theme</span>
+          <button
+            type="button"
+            onClick={toggleOverlayTheme}
+            aria-label={overlayTheme === "dark" ? "Switch overlay to light" : "Switch overlay to dark"}
+            title={overlayTheme === "dark" ? "Overlay: dark" : "Overlay: light"}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              border: `1px solid ${colors.border}`,
+              background: colors.surface,
+              color: colors.text,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 15,
+              cursor: "pointer",
+            }}
+          >
+            {overlayTheme === "dark" ? "☀" : "☾"}
+          </button>
+          <span style={{ fontSize: 12, color: colors.muted }}>{overlayTheme === "dark" ? "Dark" : "Light"}</span>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 12, color: colors.text, fontSize: 14, flexWrap: "wrap" }}>
+          <input
+            type="color"
+            value={accentColor}
+            onChange={(event) => onAccentColorChange(normalizeHexColor(event.target.value))}
+            style={{
+              width: 32,
+              height: 32,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              padding: 2,
+              background: colors.surface,
+              cursor: "pointer",
+            }}
+            aria-label="Accent color"
+          />
+          <span style={{ fontWeight: 600 }}>Accent color</span>
+          <input
+            value={accentDraft}
+            onChange={(event) => handleAccentDraft(event.target.value)}
+            onBlur={() => setAccentDraft(accentColor)}
+            spellCheck={false}
+            style={{
+              width: 96,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              padding: "7px 9px",
+              color: colors.text,
+              background: colors.surface,
+              fontSize: 13,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              outline: "none",
+            }}
+          />
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {["#38bdf8", "#6466f1", "#0f766e", "#b45309", "#be123c", "#37352f"].filter(s => theme !== "dark" || !tooDarkForDarkMode(s)).map((swatch) => (
+            <button
+              key={swatch}
+              type="button"
+              aria-label={`Use ${swatch}`}
+              onClick={() => onAccentColorChange(swatch)}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 999,
+                border: accentColor === swatch ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
+                background: swatch,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
       {/* Save triggers */}
       <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
@@ -2971,9 +3182,9 @@ function SettingsView({
 
       <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Card text size</p>
       <label style={{ display: "block", marginBottom: 40 }}>
-        <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Today and History cards</p>
+        <p style={{ fontSize: 14, color: colors.text, margin: "0 0 4px" }}>Dashboard cards</p>
         <p style={{ fontSize: 12, color: colors.muted, margin: "0 0 8px", lineHeight: 1.5 }}>
-          Increase the saved text and answer size in Today and History.
+          Adjust saved text and answer size across Today, History, and Flashcards.
         </p>
         <select
           value={cardFontSize}
@@ -3061,89 +3272,6 @@ function SettingsView({
         ))}
       </div>
 
-      {/* Theme */}
-      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Appearance</p>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Overlay theme</span>
-        <button
-          type="button"
-          onClick={toggleOverlayTheme}
-          aria-label={overlayTheme === "dark" ? "Switch overlay to light" : "Switch overlay to dark"}
-          title={overlayTheme === "dark" ? "Overlay: dark" : "Overlay: light"}
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 999,
-            border: `1px solid ${colors.border}`,
-            background: colors.surface,
-            color: colors.text,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 15,
-            cursor: "pointer",
-          }}
-        >
-          {overlayTheme === "dark" ? "☀" : "☾"}
-        </button>
-        <span style={{ fontSize: 12, color: colors.muted }}>{overlayTheme === "dark" ? "Dark" : "Light"}</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 12, color: colors.text, fontSize: 14 }}>
-          <input
-            type="color"
-            value={accentColor}
-            onChange={(event) => onAccentColorChange(normalizeHexColor(event.target.value))}
-            style={{
-              width: 32,
-              height: 32,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              padding: 2,
-              background: colors.surface,
-              cursor: "pointer",
-            }}
-            aria-label="Accent color"
-          />
-          <span style={{ fontWeight: 600 }}>Accent color</span>
-          <input
-            value={accentDraft}
-            onChange={(event) => handleAccentDraft(event.target.value)}
-            onBlur={() => setAccentDraft(accentColor)}
-            spellCheck={false}
-            style={{
-              width: 96,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              padding: "7px 9px",
-              color: colors.text,
-              background: colors.surface,
-              fontSize: 13,
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-              outline: "none",
-            }}
-          />
-        </label>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {["#38bdf8", "#6466f1", "#0f766e", "#b45309", "#be123c", "#37352f"].filter(s => theme !== "dark" || !tooDarkForDarkMode(s)).map((swatch) => (
-            <button
-              key={swatch}
-              type="button"
-              aria-label={`Use ${swatch}`}
-              onClick={() => onAccentColorChange(swatch)}
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 999,
-                border: accentColor === swatch ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
-                background: swatch,
-                cursor: "pointer",
-                padding: 0,
-              }}
-            />
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -3330,14 +3458,14 @@ function FlashcardDayCalendar({
   }
 
   return (
-    <div style={{ width: 300, maxWidth: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 13 }}>
+    <div style={{ width: 300 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <button type="button" onClick={() => onVisibleMonthChange(previousMonth)} aria-label="Previous flashcard month" style={{ width: 28, height: 28, borderRadius: 999, border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text, cursor: "pointer", fontSize: 16 }}>‹</button>
-        <p style={{ fontSize: 14, color: colors.text, margin: 0, fontWeight: 800 }}>{monthLabelFromKey(visibleMonth)}</p>
+        <p style={{ fontSize: 15, color: colors.text, margin: 0, fontWeight: 700 }}>{monthLabelFromKey(visibleMonth)}</p>
         <button type="button" onClick={() => canGoNext && onVisibleMonthChange(nextMonth)} disabled={!canGoNext} aria-label="Next flashcard month" style={{ width: 28, height: 28, borderRadius: 999, border: `1px solid ${colors.border}`, background: canGoNext ? colors.surface : colors.surfaceAlt, color: canGoNext ? colors.text : colors.muted, cursor: canGoNext ? "pointer" : "default", fontSize: 16 }}>›</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, marginBottom: 8 }}>
-        {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={`${label}-${index}`} style={{ fontSize: 11, color: colors.muted, fontWeight: 800, textAlign: "center" }}>{label}</span>)}
+        {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={`${label}-${index}`} style={{ fontSize: 11, color: colors.muted, fontWeight: 700, textAlign: "center" }}>{label}</span>)}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 34px)", gap: 7, width: "fit-content" }}>
         {days.map((key, index) => {
@@ -3490,7 +3618,7 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = view === "settings" ? 1100 : 1280;
+  const contentMaxWidth = 1280;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
 
@@ -3739,6 +3867,7 @@ export default function App() {
             accentColor={accentColor}
             onAccentColorChange={setAccentColor}
             theme={theme}
+            onThemeToggle={toggleTheme}
             colors={colors}
           />
         )}
