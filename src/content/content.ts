@@ -866,7 +866,7 @@ function showSaveBubble(target: RectLike, bounds: RectLike, selectedText: string
   const btnFont    = mobile ? "14.5px" : "15.5px";
 
   widget = document.createElement("div");
-  widget.textContent = "Save";
+  widget.textContent = "Ask";
   widget.setAttribute(
     "style",
     `
@@ -1773,7 +1773,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     widgetOutsideHandler = (event: MouseEvent) => {
       const target = event.target as Node;
       if (!widget || widget.contains(target)) return;
-      doSave(true);
+      removeWidget();
     };
     document.addEventListener("mousedown", widgetOutsideHandler, true);
   }, 50);

@@ -1126,7 +1126,7 @@ function SavesView({
           Nothing saved yet.
         </p>
         <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.65, margin: "0 0 18px" }}>
-          Highlight text on any page, click Save, and ContextLens will keep the source, your question, and the explanation together as a card.
+          Highlight text on any page, click Ask, and ContextLens will keep the source, your question, and the explanation together as a card.
         </p>
         <div style={{ border: `1px solid ${colors.border}`, borderLeft: `3px solid ${colors.accent}`, borderRadius: 8, background: colors.surface, padding: "15px 16px", maxWidth: 460 }}>
           <p style={{ color: colors.softText, fontSize: 15, lineHeight: 1.55, margin: "0 0 10px" }}>
@@ -1346,15 +1346,6 @@ function SavesView({
                 Cancel
               </button>
             </>
-          )}
-          {!selectionMode && (
-            <button
-              type="button"
-              onClick={() => setExpandAll((v) => !v)}
-              style={{ ...subtleButtonStyle(colors, 13) }}
-            >
-              {expandAll ? "Collapse" : "Expand all"}
-            </button>
           )}
         </div>
         {headerAction}
@@ -1987,7 +1978,6 @@ function WordsView({
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [newSetName, setNewSetName] = useState("");
   const [showCreateSet, setShowCreateSet] = useState(false);
-  const [showSets, setShowSets] = useState(false);
   const calendarVisible = !useScrolledPast(360);
   const [expandAll, setExpandAll] = useState(false);
   const [expandedWordIds, setExpandedWordIds] = useState<Set<string>>(new Set());
@@ -2103,7 +2093,6 @@ function WordsView({
   }
 
   function openCreateSet(scope: "current" | "selected" = "current") {
-    setShowSets(false);
     setCreateSetScope(scope);
     setShowCreateSet(true);
   }
@@ -2111,12 +2100,9 @@ function WordsView({
   function handleSetsButton() {
     setShowCreateSet(false);
     setShowExport(false);
-    if (source.kind === "set") {
-      setSource({ kind: "days" });
-      setShowSets(false);
-      return;
-    }
-    setShowSets(true);
+    setSource({ kind: "days" });
+    setSelectedDays(new Set());
+    cancelSelection();
   }
 
   function createSet() {
@@ -2254,12 +2240,17 @@ function WordsView({
 
   function renderSetDeckTable(emptyMessage = "No saved sets yet.") {
     if (sets.length === 0) {
-      return <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>{emptyMessage}</p>;
+      return (
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, padding: 16, maxWidth: 560 }}>
+          <p style={{ color: colors.text, fontSize: 15, fontWeight: 850, margin: "0 0 6px" }}>Create a custom set</p>
+          <p style={{ color: colors.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>{emptyMessage}</p>
+        </div>
+      );
     }
     return (
       <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: "hidden", background: colors.surfaceAlt, width: "100%" }}>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 64px 64px 64px 34px", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${colors.border}`, color: colors.text, fontSize: 13, fontWeight: 850 }}>
-          <span>Deck</span>
+          <span>Set</span>
           <span style={{ textAlign: "right" }}>New</span>
           <span style={{ textAlign: "right" }}>Learn</span>
           <span style={{ textAlign: "right" }}>Due</span>
@@ -2294,7 +2285,7 @@ function WordsView({
                 outlineOffset: -3,
               }}
             >
-              <button type="button" onClick={() => { setSource({ kind: "set", setId: set.id }); setShowSets(false); }} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
+              <button type="button" onClick={() => setSource({ kind: "set", setId: set.id })} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
                 <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: depth * 18 }}>{depth > 0 ? "- " : ""}{set.name}</span>
                 <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2, paddingLeft: depth * 18 }}>
                   {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
@@ -2360,7 +2351,7 @@ function WordsView({
   const cards = words.length === 0 ? (
     <div style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0, display: "grid", justifyItems: "start", gap: 10 }}>
       {showInlineSets ? (
-        renderSetDeckTable("No saved sets yet. Pick days from calendar to create custom set.")
+        renderSetDeckTable("Pick one or more dates on the calendar. When cards appear, use Create set to save them together.")
       ) : (
         <p style={{ margin: 0 }}>
           No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : source.kind === "due" ? "Nothing is due right now." : "Pick days from calendar to create custom set."}
@@ -2432,20 +2423,6 @@ function WordsView({
     <div style={{ maxWidth: DASHBOARD_INNER_MAX_WIDTH, margin: "0 auto" }}>
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start" }}>
-          {words.length > 0 && (
-            <button
-              type="button"
-              onClick={toggleSelectionMode}
-              style={{
-                ...subtleButtonStyle(colors, 13),
-                background: selectionMode ? colors.accent : colors.surfaceAlt,
-                color: selectionMode ? colors.selectedText : colors.text,
-                borderColor: selectionMode ? colors.accent : colors.border,
-              }}
-            >
-              {selectionMode ? "Done" : "Select"}
-            </button>
-          )}
           {selectionMode ? (
             <>
               <span style={{ color: colors.muted, fontSize: 13, fontWeight: 800, padding: "0 2px" }}>
@@ -2472,13 +2449,22 @@ function WordsView({
           ) : (
             <>
               {words.length > 0 && (
-                <button type="button" onClick={() => setExpandAll((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
-                  {expandAll ? "Collapse" : "Expand all"}
+                <button type="button" onClick={() => openCreateSet("current")} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  Create set
                 </button>
               )}
               {words.length > 0 && (
-                <button type="button" onClick={() => openCreateSet("current")} style={{ ...subtleButtonStyle(colors, 13) }}>
-                  Create set
+                <button
+                  type="button"
+                  onClick={toggleSelectionMode}
+                  style={{
+                    ...subtleButtonStyle(colors, 13),
+                    background: colors.surfaceAlt,
+                    color: colors.text,
+                    borderColor: colors.border,
+                  }}
+                >
+                  Select
                 </button>
               )}
               {hasDaySelection && (
@@ -2489,22 +2475,6 @@ function WordsView({
               {canExportCurrent && (
                 <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
                   Export
-                </button>
-              )}
-              {words.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setStudyWords(words)}
-                  style={{
-                    ...subtleButtonStyle(colors, 13),
-                    background: colors.accent,
-                    borderColor: colors.accent,
-                    color: colors.selectedText,
-                    opacity: 1,
-                    cursor: "pointer",
-                  }}
-                >
-                  Study
                 </button>
               )}
             </>
@@ -2533,12 +2503,6 @@ function WordsView({
               Save set
             </button>
           </div>
-        </FlashcardPopup>
-      )}
-
-      {showSets && (
-        <FlashcardPopup title="Sets" onClose={() => setShowSets(false)} colors={colors} width={680}>
-          {renderSetDeckTable()}
         </FlashcardPopup>
       )}
 
@@ -3123,7 +3087,7 @@ function SettingsView({
       <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Save trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
         {([
-          { field: "bubble" as const, label: "Show Save button on highlight", desc: "A small button appears over your selection — click it to save." },
+          { field: "bubble" as const, label: "Show Ask button on highlight", desc: "A small button appears over your selection — click it to ask." },
           { field: "contextMenu" as const, label: "Add to right-click menu", desc: "\"Save to ContextLens\" appears in the right-click context menu." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
@@ -3217,7 +3181,7 @@ function SettingsView({
       </div>
 
       {/* Learning mode */}
-      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Default mode</p>
+      <p style={{ fontSize: 13, color: colors.muted, marginTop: 40, marginBottom: 12 }}>Current mode</p>
       <div style={{ display: "flex", gap: 10, marginBottom: 40 }}>
         {([
           { value: "language_learning", label: "Language", desc: "Clear explanations for text, words, and concepts." },
