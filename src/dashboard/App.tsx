@@ -1522,6 +1522,7 @@ interface WordEntry {
   explanation: string;
   exampleText: string;
   imageData?: string;
+  latestSavedAt: string;
   captureIds: string[];
 }
 
@@ -1539,16 +1540,27 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     if (!word && !c.imageData) continue;
     const key = word ? normalizeQuestion(word) : c.id;
     if (!map.has(key)) {
-      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.imageData ? "" : c.text, imageData: c.imageData, captureIds: [] });
+      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.imageData ? "" : c.text, imageData: c.imageData, latestSavedAt: c.savedAt, captureIds: [] });
     }
     const entry = map.get(key)!;
     entry.count++;
     entry.captureIds.push(c.id);
+    if (new Date(c.savedAt).getTime() > new Date(entry.latestSavedAt).getTime()) {
+      entry.latestSavedAt = c.savedAt;
+      entry.exampleText = c.imageData ? "" : c.text;
+      entry.word = word || entry.word;
+      entry.explanation = c.explanation ?? entry.explanation;
+      entry.imageData = c.imageData ?? entry.imageData;
+    }
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
     if (!entry.imageData && c.imageData) entry.imageData = c.imageData;
   }
   return Array.from(map.values())
-    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+    .sort((a, b) => (
+      new Date(b.latestSavedAt).getTime() - new Date(a.latestSavedAt).getTime()
+      || b.count - a.count
+      || a.word.localeCompare(b.word)
+    ));
 }
 
 function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors; cardFontSize: CardFontSize }) {
