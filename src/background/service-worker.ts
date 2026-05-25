@@ -557,6 +557,10 @@ async function getAccount(): Promise<ContextLensUser | null> {
 }
 
 function remoteToCapture(remote: RemoteCapture): Capture {
+  const imageData = remote.image_data?.startsWith("/")
+    ? `${BACKEND_URL}${remote.image_data}`
+    : remote.image_data ?? undefined;
+
   return {
     id: remote.id,
     text: remote.text,
@@ -566,7 +570,7 @@ function remoteToCapture(remote: RemoteCapture): Capture {
     savedAt: remote.saved_at,
     explanation: remote.explanation,
     status: "done",
-    imageData: remote.image_data ?? undefined,
+    imageData,
   };
 }
 
@@ -693,6 +697,14 @@ async function saveCaptureRemote(capture: Capture): Promise<void> {
   });
   if (!res.ok) await throwResponseError("Sync error", res);
   await markCapturesSynced([capture]);
+}
+
+async function saveCaptureRemoteBestEffort(capture: Capture): Promise<void> {
+  try {
+    await saveCaptureRemote(capture);
+  } catch (syncError) {
+    console.warn("ContextLens remote save skipped", syncError);
+  }
 }
 
 async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
@@ -865,9 +877,7 @@ async function saveMergedHighlight(existingId: string, incoming: Capture): Promi
   await chrome.storage.local.set({ captures });
 
   if (merged.status === "done" && merged.explanation) {
-    void saveCaptureRemote(merged).catch((syncError) => {
-      console.warn("ContextLens remote save skipped", syncError);
-    });
+    void saveCaptureRemoteBestEffort(merged);
     await seedChat(existing.id, merged.explanation);
     return { captureId: existing.id, explanation: merged.explanation };
   }
@@ -965,9 +975,7 @@ async function explainAndSaveScreenshot(imageData: string, context: string, repl
     const explanation = await fetchExplanation("", context, base64);
     const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (capture) {
-      void saveCaptureRemote(capture).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
+      await saveCaptureRemoteBestEffort(capture);
     }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
@@ -992,9 +1000,7 @@ async function explainAndSaveScreenshotStream(
     const explanation = await fetchExplanationStream("", context, base64, [], onChunk);
     const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (capture) {
-      void saveCaptureRemote(capture).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
+      await saveCaptureRemoteBestEffort(capture);
     }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
@@ -1079,9 +1085,8 @@ async function retryCapture(captureId: string): Promise<{ captureId: string; exp
     const explanation = await fetchExplanation(capture.imageData ? "" : capture.text, capture.context, imageBase64);
     const updated = await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
-      void saveCaptureRemote(updated).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
+      if (updated.imageData) await saveCaptureRemoteBestEffort(updated);
+      else void saveCaptureRemoteBestEffort(updated);
     }
     await seedChat(captureId, explanation);
     return { captureId, explanation };
@@ -1200,9 +1205,7 @@ async function explainPendingHighlight(capture: Capture): Promise<{ captureId: s
     const explanation = await fetchExplanation(capture.text, capture.context);
     const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
-      void saveCaptureRemote(updated).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
+      void saveCaptureRemoteBestEffort(updated);
     }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
@@ -1278,9 +1281,7 @@ async function saveHighlightStream(
     const explanation = await fetchExplanationStream(capture.text, capture.context, undefined, [], onChunk);
     const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
-      void saveCaptureRemote(updated).catch((syncError) => {
-        console.warn("ContextLens remote save skipped", syncError);
-      });
+      void saveCaptureRemoteBestEffort(updated);
     }
     await seedChat(id, explanation);
     return { captureId: id, explanation };
