@@ -1355,7 +1355,6 @@ function HistoryView({
   captures,
   onDeleteCaptures,
   onRetryCapture,
-  initialSelectedDay,
   colors,
   theme,
   accentColor,
@@ -1364,24 +1363,17 @@ function HistoryView({
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
-  initialSelectedDay?: string;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
   cardFontSize: CardFontSize;
 }) {
   const windowWidth = useWindowWidth();
-  const [selectedDay, setSelectedDay] = useState(initialSelectedDay ?? todayKey());
-  const [visibleMonth, setVisibleMonth] = useState(() => monthKeyFromDate(dateFromDayKey(initialSelectedDay ?? todayKey())));
+  const [selectedDay, setSelectedDay] = useState(todayKey());
+  const [visibleMonth, setVisibleMonth] = useState(() => currentMonthKey());
   const selectedCaptures = captures.filter((capture) => dayKey(capture.savedAt) === selectedDay);
   const wideLayout = windowWidth >= 1040;
   const calendarVisible = !useScrolledPast(360);
-
-  useEffect(() => {
-    if (!initialSelectedDay) return;
-    setSelectedDay(initialSelectedDay);
-    setVisibleMonth(monthKeyFromDate(dateFromDayKey(initialSelectedDay)));
-  }, [initialSelectedDay]);
 
   function selectDay(key: string) {
     setSelectedDay(key);
@@ -1410,107 +1402,81 @@ function HistoryView({
     return `Nothing saved on ${selectedDayLabel()}.`;
   }
 
+  const calendarPanel = (
+    <div
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 10,
+        boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
+        display: "flex",
+        justifyContent: "center",
+        padding: "18px 16px",
+      }}
+    >
+      <MonthCalendar
+        captures={captures}
+        selectedDay={selectedDay}
+        visibleMonth={visibleMonth}
+        onVisibleMonthChange={setVisibleMonth}
+        onSelectDay={selectDay}
+        colors={colors}
+        theme={theme}
+        accentColor={accentColor}
+      />
+    </div>
+  );
+
   return (
     <div
       style={{
-        ...(wideLayout ? calendarGridStyle(calendarVisible) : {
-          display: "grid",
-          gridTemplateColumns: "1fr",
-          gap: 20,
-          maxWidth: 1220,
-          margin: "0 auto",
-        }),
-        alignItems: "start",
+        maxWidth: 1220,
+        margin: "0 auto",
         minHeight: 520,
       }}
     >
-      <div
-        style={{
-          minWidth: 0,
-        }}
-      >
-        <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>
-              {selectedDayLabel()}
-            </h2>
-            <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
-              {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
-            </p>
-          </div>
+      <div style={{ marginBottom: 18, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>
+            {selectedDayLabel()}
+          </h2>
+          <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
+            {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"} · {selectedDaySubtitle()}
+          </p>
         </div>
+      </div>
 
-        {!wideLayout && (
-          <div
-            style={{
-              background: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 10,
-              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-              display: "flex",
-              justifyContent: "center",
-              margin: "0 0 20px",
-              padding: "18px 16px",
-            }}
-          >
-            <MonthCalendar
-              captures={captures}
-              selectedDay={selectedDay}
-              visibleMonth={visibleMonth}
-              onVisibleMonthChange={setVisibleMonth}
-              onSelectDay={selectDay}
-              colors={colors}
-              theme={theme}
-              accentColor={accentColor}
-            />
-          </div>
-        )}
+      {!wideLayout && (
+        <div style={{ margin: "0 0 20px" }}>
+          {calendarPanel}
+        </div>
+      )}
 
-        {selectedCaptures.length > 0 ? (
-          <SavesView
-            captures={selectedCaptures}
-            onDeleteCaptures={onDeleteCaptures}
-            onRetryCapture={onRetryCapture}
-            colors={colors}
-            cardFontSize={cardFontSize}
-          />
-        ) : (
+      {selectedCaptures.length > 0 ? (
+        <SavesView
+          captures={selectedCaptures}
+          onDeleteCaptures={onDeleteCaptures}
+          onRetryCapture={onRetryCapture}
+          sidePanel={wideLayout ? calendarPanel : undefined}
+          sidePanelVisible={wideLayout && calendarVisible}
+          colors={colors}
+          cardFontSize={cardFontSize}
+        />
+      ) : wideLayout ? (
+        <div style={calendarGridStyle(calendarVisible)}>
           <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8 }}>
             {emptyDayMessage()}
           </p>
-        )}
-      </div>
-
-      {wideLayout && (
-        <div
-          aria-hidden={!calendarVisible}
-          style={calendarRailStyle(calendarVisible)}
-        >
-          <div
-            style={{
-              background: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 10,
-              boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-              display: "flex",
-              justifyContent: "center",
-              padding: "18px 16px",
-              width: CALENDAR_COLUMN_WIDTH,
-              boxSizing: "border-box",
-            }}
-          >
-            <MonthCalendar
-              captures={captures}
-              selectedDay={selectedDay}
-              visibleMonth={visibleMonth}
-              onVisibleMonthChange={setVisibleMonth}
-              onSelectDay={selectDay}
-              colors={colors}
-              theme={theme}
-              accentColor={accentColor}
-            />
+          <div aria-hidden={!calendarVisible} style={calendarRailStyle(calendarVisible)}>
+            <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
+              {calendarPanel}
+            </div>
           </div>
         </div>
+      ) : (
+        <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8 }}>
+          {emptyDayMessage()}
+        </p>
       )}
     </div>
   );
@@ -3110,16 +3076,12 @@ export default function App() {
   const [view, setView] = useState<View>(() => viewFromHash());
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
-  const [historyInitialDay, setHistoryInitialDay] = useState(todayKey());
-  const [todayCalendarMonth, setTodayCalendarMonth] = useState(currentMonthKey());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
   const [theme, setThemeState] = useState<ThemeName>(() => storedThemeFallback("light"));
   const [accentColor, setAccentColorState] = useState(DEFAULT_ACCENT_COLOR);
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
-  const windowWidth = useWindowWidth();
-  const calendarScrolledPast = useScrolledPast(360);
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
@@ -3180,12 +3142,6 @@ export default function App() {
     }
   }
 
-  function openHistoryDay(day: string) {
-    setHistoryInitialDay(day);
-    setTodayCalendarMonth(monthKeyFromDate(dateFromDayKey(day)));
-    navigateView("history");
-  }
-
   function setTheme(t: ThemeName) {
     setThemeState(t);
     chrome.storage.local.set({ theme: t });
@@ -3223,41 +3179,11 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    setTodayCalendarMonth(currentMonthKey());
-  }, [currentDayKey]);
-
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
   const contentMaxWidth = view === "settings" ? 1100 : 1280;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
-  const todayCalendarMounted = view === "saves" && windowWidth >= 1040;
-  const todayCalendarVisible = todayCalendarMounted && !calendarScrolledPast;
-  const todayCalendarPanel = (
-    <div
-      style={{
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: 10,
-        boxShadow: "0 2px 12px rgba(15,15,15,0.05)",
-        display: "flex",
-        justifyContent: "center",
-        padding: "18px 16px",
-      }}
-    >
-      <MonthCalendar
-        captures={captures}
-        selectedDay={currentDayKey}
-        visibleMonth={todayCalendarMonth}
-        onVisibleMonthChange={setTodayCalendarMonth}
-        onSelectDay={openHistoryDay}
-        colors={colors}
-        theme={theme}
-        accentColor={accentColor}
-      />
-    </div>
-  );
 
   useEffect(() => {
     document.documentElement.style.background = colors.bg;
@@ -3450,8 +3376,6 @@ export default function App() {
                 </button>
               ) : null
             }
-            sidePanel={todayCalendarMounted ? todayCalendarPanel : undefined}
-            sidePanelVisible={todayCalendarVisible}
             colors={colors}
             cardFontSize={cardFontSize}
           />
@@ -3461,7 +3385,6 @@ export default function App() {
             captures={captures}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
-            initialSelectedDay={historyInitialDay}
             colors={colors}
             theme={theme}
             accentColor={accentColor}
