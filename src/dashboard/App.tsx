@@ -421,8 +421,8 @@ function QuestionText({
         style={{
           ...baseStyle,
           display: "block",
-          width: "fit-content",
-          maxWidth: "74ch",
+          width: "100%",
+          maxWidth: "100%",
           background: "none",
           border: "none",
           padding: 0,
@@ -445,7 +445,7 @@ function QuestionText({
   return (
     <p
       dir={direction}
-      style={{ ...baseStyle, width: "fit-content", maxWidth: "74ch" }}
+      style={{ ...baseStyle, width: "100%", maxWidth: "100%" }}
     >
       {inlineParts(text)}
     </p>
@@ -1020,7 +1020,8 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     fontWeight: 600,
     lineHeight: 1.6,
     margin: 0,
-    maxWidth: "74ch",
+    width: "100%",
+    maxWidth: "100%",
     padding: "2px 0",
     direction: rtl ? "rtl" : "ltr",
     textAlign: rtl ? "right" : "left",
@@ -1211,7 +1212,7 @@ function SavesView({
                       <CapturePreview capture={c} colors={colors} typography={typography} />
 
                       {c.context && (
-                        <div style={{ margin: "14px 0 0", maxWidth: "74ch" }}>
+                        <div style={{ margin: "14px 0 0", width: "100%" }}>
                           <p style={questionLabelStyle(colors)}>
                             Your question
                           </p>
@@ -1246,7 +1247,7 @@ function SavesView({
                               color: colors.text,
                               margin: "16px 0 0",
                               lineHeight: 1.78,
-                              maxWidth: "74ch",
+                              maxWidth: "100%",
                               overflowWrap: "break-word",
                             }}
                           >
@@ -2051,7 +2052,7 @@ function WordsView({
               <ScreenshotPreview imageData={word.imageData} colors={colors} />
             )}
             {promptPreview && (
-              <div style={{ margin: word.imageData ? "14px 0 0" : 0, maxWidth: "74ch" }}>
+              <div style={{ margin: word.imageData ? "14px 0 0" : 0, width: "100%" }}>
                 <p style={questionLabelStyle(colors)}>Your question</p>
                 <QuestionText
                   text={promptPreview}
@@ -2062,7 +2063,7 @@ function WordsView({
               </div>
             )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, overflowWrap: "break-word", maxWidth: "74ch" }}>
+              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, overflowWrap: "break-word", maxWidth: "100%" }}>
                 {renderExplanation(explanationPreview, colors)}
               </div>
             )}
