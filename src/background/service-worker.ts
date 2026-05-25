@@ -19,6 +19,13 @@ interface RemoteCapture {
   image_data?: string | null;
   explanation: string | null;
   saved_at: string;
+  fsrs_stability?: number;
+  fsrs_difficulty?: number;
+  fsrs_lapses?: number;
+  fsrs_state?: "new" | "learning" | "reviewing" | "relearning";
+  fsrs_due_at?: string;
+  fsrs_last_reviewed_at?: string | null;
+  fsrs_review_count?: number;
 }
 
 interface CaptureFallback {
@@ -78,6 +85,13 @@ function captureSyncSignature(capture: Capture): string {
     title: capture.title,
     explanation: capture.explanation ?? "",
     savedAt: capture.savedAt,
+    fsrsStability: capture.fsrsStability ?? 0,
+    fsrsDifficulty: capture.fsrsDifficulty ?? 5,
+    fsrsLapses: capture.fsrsLapses ?? 0,
+    fsrsState: capture.fsrsState ?? "new",
+    fsrsDueAt: capture.fsrsDueAt ?? capture.savedAt,
+    fsrsLastReviewedAt: capture.fsrsLastReviewedAt ?? null,
+    fsrsReviewCount: capture.fsrsReviewCount ?? 0,
     imageKind,
     imageSize: imageKind === "data" ? imageData.length : 0,
   });
@@ -359,6 +373,12 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "REVIEW_FLASHCARDS") {
+    reviewFlashcardsRemote(message.ids, message.rating)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
   if (message.type === "FORGOT_PASSWORD") {
     forgotPassword(message.email)
       .then(sendResponse)
@@ -571,6 +591,13 @@ function remoteToCapture(remote: RemoteCapture): Capture {
     explanation: remote.explanation,
     status: "done",
     imageData,
+    fsrsStability: remote.fsrs_stability ?? 0,
+    fsrsDifficulty: remote.fsrs_difficulty ?? 5,
+    fsrsLapses: remote.fsrs_lapses ?? 0,
+    fsrsState: remote.fsrs_state ?? "new",
+    fsrsDueAt: remote.fsrs_due_at ?? remote.saved_at,
+    fsrsLastReviewedAt: remote.fsrs_last_reviewed_at ?? null,
+    fsrsReviewCount: remote.fsrs_review_count ?? 0,
   };
 }
 
@@ -603,7 +630,7 @@ async function restoreRemoteImage(capture: Capture): Promise<Capture> {
 }
 
 function captureToRemotePayload(capture: Capture, token: string) {
-  return {
+  const payload: Record<string, unknown> = {
     token,
     id: capture.id,
     text: capture.text,
@@ -614,6 +641,14 @@ function captureToRemotePayload(capture: Capture, token: string) {
     explanation: capture.explanation,
     saved_at: capture.savedAt,
   };
+  if (capture.fsrsStability !== undefined) payload.fsrs_stability = capture.fsrsStability;
+  if (capture.fsrsDifficulty !== undefined) payload.fsrs_difficulty = capture.fsrsDifficulty;
+  if (capture.fsrsLapses !== undefined) payload.fsrs_lapses = capture.fsrsLapses;
+  if (capture.fsrsState !== undefined) payload.fsrs_state = capture.fsrsState;
+  if (capture.fsrsDueAt !== undefined) payload.fsrs_due_at = capture.fsrsDueAt;
+  if (capture.fsrsLastReviewedAt !== undefined) payload.fsrs_last_reviewed_at = capture.fsrsLastReviewedAt;
+  if (capture.fsrsReviewCount !== undefined) payload.fsrs_review_count = capture.fsrsReviewCount;
+  return payload;
 }
 
 async function signUp(email: string, password: string): Promise<ContextLensUser> {
@@ -785,6 +820,22 @@ async function deleteRemoteCaptures(ids: string[]): Promise<{ deleted: number }>
   ids.forEach((id) => delete signatures[id]);
   await chrome.storage.local.set({ [REMOTE_CAPTURE_SIGNATURES_KEY]: signatures });
   return await res.json();
+}
+
+async function reviewFlashcardsRemote(ids: string[], rating: "again" | "hard" | "good" | "easy"): Promise<{ captures: Capture[] }> {
+  const account = await getAccount();
+  if (!account || ids.length === 0) return { captures: [] };
+
+  const res = await fetch(`${BACKEND_URL}/captures/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: account.token, ids, rating }),
+  });
+  if (!res.ok) await throwResponseError("Review sync error", res);
+  const remote: RemoteCapture[] = await res.json();
+  const captures = await Promise.all(remote.map(remoteToCapture).map(restoreRemoteImage));
+  await markCapturesSynced(captures);
+  return { captures };
 }
 
 async function addCapture(capture: Capture) {

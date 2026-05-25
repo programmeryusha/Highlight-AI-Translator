@@ -9,6 +9,13 @@ export interface Capture {
   status: "pending" | "done" | "error";
   errorMessage?: string;
   imageData?: string; // base64 data URL for screenshot captures
+  fsrsStability?: number;
+  fsrsDifficulty?: number;
+  fsrsLapses?: number;
+  fsrsState?: "new" | "learning" | "reviewing" | "relearning";
+  fsrsDueAt?: string;
+  fsrsLastReviewedAt?: string | null;
+  fsrsReviewCount?: number;
 }
 
 export interface ChatMessage {
@@ -55,6 +62,7 @@ export type Message =
   | { type: "DEEP_DIVE"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
+  | { type: "REVIEW_FLASHCARDS"; ids: string[]; rating: "again" | "hard" | "good" | "easy" }
   | { type: "OPEN_DASHBOARD" }
   | { type: "ANALOGY"; text: string }
   | { type: "FORGOT_PASSWORD"; email: string }

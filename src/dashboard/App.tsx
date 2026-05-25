@@ -9,6 +9,8 @@ type ScreenshotTriggers = { floatingButton: boolean; shortcut: boolean; immediat
 type FlashcardRange = "pastDay" | "past3" | "pastWeek" | "pastMonth";
 type CardFontSize = "default" | "large" | "extra_large";
 type CardTypography = (typeof CARD_TYPOGRAPHY)[CardFontSize];
+type FsrsRating = "again" | "hard" | "good" | "easy";
+type FsrsState = "new" | "learning" | "reviewing" | "relearning";
 const LONG_TEXT_LIMIT = 260;
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
@@ -1483,6 +1485,110 @@ interface WordEntry {
   imageData?: string;
   latestSavedAt: string;
   captureIds: string[];
+  fsrsStability: number;
+  fsrsDifficulty: number;
+  fsrsLapses: number;
+  fsrsState: FsrsState;
+  fsrsDueAt: string;
+  fsrsReviewCount: number;
+}
+
+const FSRS_DECAY = -0.5;
+const FSRS_FACTOR = Math.pow(0.9, 1 / FSRS_DECAY) - 1;
+const FSRS_INITIAL_STABILITY: Record<FsrsRating, number> = { again: 0.02, hard: 0.5, good: 1, easy: 4 };
+const FSRS_INITIAL_DIFFICULTY: Record<FsrsRating, number> = { again: 7.5, hard: 6.2, good: 5, easy: 3.8 };
+const FSRS_DIFFICULTY_DELTA: Record<FsrsRating, number> = { again: 1.2, hard: 0.45, good: -0.05, easy: -0.65 };
+const FSRS_STABILITY_FACTOR: Record<Exclude<FsrsRating, "again">, number> = { hard: 1.25, good: 2.15, easy: 3.5 };
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeFsrsState(value: unknown): FsrsState {
+  return value === "learning" || value === "reviewing" || value === "relearning" ? value : "new";
+}
+
+function fsrsDueAt(capture: Capture): string {
+  return capture.fsrsDueAt ?? capture.savedAt;
+}
+
+function captureIsDue(capture: Capture, now = Date.now()): boolean {
+  if (capture.status !== "done") return false;
+  return new Date(fsrsDueAt(capture)).getTime() <= now;
+}
+
+function fsrsRetrievability(elapsedDays: number, stability: number) {
+  return Math.pow(1 + FSRS_FACTOR * Math.max(0, elapsedDays) / Math.max(0.01, stability), FSRS_DECAY);
+}
+
+function nextFsrsDifficulty(difficulty: number, rating: FsrsRating) {
+  const shifted = difficulty + FSRS_DIFFICULTY_DELTA[rating];
+  const reverted = 5 + (shifted - 5) * 0.96;
+  return Math.round(clampNumber(reverted, 1, 10) * 100) / 100;
+}
+
+function nextFsrsStability(stability: number, difficulty: number, retrievability: number, rating: Exclude<FsrsRating, "again">) {
+  const difficultyFactor = clampNumber(1.25 - (difficulty - 1) / 12, 0.35, 1.25);
+  const retrievabilityFactor = 1 + Math.max(0, 1 - retrievability) * 1.8;
+  const next = stability * FSRS_STABILITY_FACTOR[rating] * difficultyFactor * retrievabilityFactor;
+  return Math.round(clampNumber(next, 0.02, 36500) * 100) / 100;
+}
+
+function applyFsrsReview(capture: Capture, rating: FsrsRating, now = new Date()): Capture {
+  const reviewCount = capture.fsrsReviewCount ?? 0;
+  const lapses = capture.fsrsLapses ?? 0;
+  const state = normalizeFsrsState(capture.fsrsState);
+  if (reviewCount <= 0 || state === "new") {
+    const stability = FSRS_INITIAL_STABILITY[rating];
+    const difficulty = FSRS_INITIAL_DIFFICULTY[rating];
+    const dueAt = rating === "again"
+      ? new Date(now.getTime() + 5 * 60_000)
+      : rating === "hard"
+        ? new Date(now.getTime() + 10 * 60_000)
+        : new Date(now.getTime() + stability * 86400_000);
+    return {
+      ...capture,
+      fsrsStability: stability,
+      fsrsDifficulty: difficulty,
+      fsrsLapses: lapses + (rating === "again" ? 1 : 0),
+      fsrsState: rating === "again" || rating === "hard" ? "learning" : "reviewing",
+      fsrsDueAt: dueAt.toISOString(),
+      fsrsLastReviewedAt: now.toISOString(),
+      fsrsReviewCount: reviewCount + 1,
+    };
+  }
+
+  const stability = Math.max(0.02, capture.fsrsStability ?? 0.02);
+  const lastReviewedAt = new Date(capture.fsrsLastReviewedAt ?? capture.savedAt);
+  const elapsedDays = (now.getTime() - lastReviewedAt.getTime()) / 86400_000;
+  const retrievability = fsrsRetrievability(elapsedDays, stability);
+  const difficulty = nextFsrsDifficulty(capture.fsrsDifficulty ?? 5, rating);
+
+  if (rating === "again") {
+    const nextStability = Math.round(clampNumber(stability * (0.35 + (1 - retrievability) * 0.2), 0.02, stability) * 100) / 100;
+    return {
+      ...capture,
+      fsrsStability: nextStability,
+      fsrsDifficulty: difficulty,
+      fsrsLapses: lapses + 1,
+      fsrsState: "relearning",
+      fsrsDueAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+      fsrsLastReviewedAt: now.toISOString(),
+      fsrsReviewCount: reviewCount + 1,
+    };
+  }
+
+  const nextStability = nextFsrsStability(stability, difficulty, retrievability, rating);
+  return {
+    ...capture,
+    fsrsStability: nextStability,
+    fsrsDifficulty: difficulty,
+    fsrsLapses: lapses,
+    fsrsState: "reviewing",
+    fsrsDueAt: new Date(now.getTime() + nextStability * 86400_000).toISOString(),
+    fsrsLastReviewedAt: now.toISOString(),
+    fsrsReviewCount: reviewCount + 1,
+  };
 }
 
 function flashcardPrompt(capture: Capture) {
@@ -1499,11 +1605,34 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     if (!word && !c.imageData) continue;
     const key = word ? normalizeQuestion(word) : c.id;
     if (!map.has(key)) {
-      map.set(key, { id: key, count: 0, word, explanation: c.explanation ?? "", exampleText: c.imageData ? "" : c.text, imageData: c.imageData, latestSavedAt: c.savedAt, captureIds: [] });
+      map.set(key, {
+        id: key,
+        count: 0,
+        word,
+        explanation: c.explanation ?? "",
+        exampleText: c.imageData ? "" : c.text,
+        imageData: c.imageData,
+        latestSavedAt: c.savedAt,
+        captureIds: [],
+        fsrsStability: c.fsrsStability ?? 0,
+        fsrsDifficulty: c.fsrsDifficulty ?? 5,
+        fsrsLapses: 0,
+        fsrsState: normalizeFsrsState(c.fsrsState),
+        fsrsDueAt: fsrsDueAt(c),
+        fsrsReviewCount: 0,
+      });
     }
     const entry = map.get(key)!;
     entry.count++;
     entry.captureIds.push(c.id);
+    entry.fsrsLapses += c.fsrsLapses ?? 0;
+    entry.fsrsReviewCount += c.fsrsReviewCount ?? 0;
+    if (new Date(fsrsDueAt(c)).getTime() < new Date(entry.fsrsDueAt).getTime()) {
+      entry.fsrsStability = c.fsrsStability ?? 0;
+      entry.fsrsDifficulty = c.fsrsDifficulty ?? 5;
+      entry.fsrsState = normalizeFsrsState(c.fsrsState);
+      entry.fsrsDueAt = fsrsDueAt(c);
+    }
     if (new Date(c.savedAt).getTime() > new Date(entry.latestSavedAt).getTime()) {
       entry.latestSavedAt = c.savedAt;
       entry.exampleText = c.imageData ? "" : c.text;
@@ -1522,11 +1651,23 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     ));
 }
 
-function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEntry[]; onClose: () => void; colors: DashboardColors; cardFontSize: CardFontSize }) {
+function FlashcardView({
+  words,
+  onClose,
+  onReview,
+  colors,
+  cardFontSize,
+}: {
+  words: WordEntry[];
+  onClose: () => void;
+  onReview: (word: WordEntry, rating: FsrsRating) => void;
+  colors: DashboardColors;
+  cardFontSize: CardFontSize;
+}) {
   const [deck, setDeck] = useState(words);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [ratings, setRatings] = useState<Record<string, "known" | "learning">>({});
+  const [ratings, setRatings] = useState<Record<string, FsrsRating>>({});
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1550,10 +1691,16 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
         prev();
       } else if (event.key === "1" && flipped) {
         event.preventDefault();
-        rate("learning");
+        rate("again");
       } else if (event.key === "2" && flipped) {
         event.preventDefault();
-        rate("known");
+        rate("hard");
+      } else if (event.key === "3" && flipped) {
+        event.preventDefault();
+        rate("good");
+      } else if (event.key === "4" && flipped) {
+        event.preventDefault();
+        rate("easy");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1562,8 +1709,8 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
 
   if (deck.length === 0) return null;
   const card = deck[Math.min(index, deck.length - 1)];
-  const knownCount = Object.values(ratings).filter((rating) => rating === "known").length;
-  const learningCount = Object.values(ratings).filter((rating) => rating === "learning").length;
+  const reviewedCount = Object.keys(ratings).length;
+  const againCount = Object.values(ratings).filter((rating) => rating === "again").length;
   const progress = Math.round(((index + (flipped ? 0.5 : 0)) / deck.length) * 100);
 
   function next() {
@@ -1576,10 +1723,11 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
     setIndex((current) => (current - 1 + deck.length) % deck.length);
   }
 
-  function rate(rating: "known" | "learning") {
+  function rate(rating: FsrsRating) {
     const currentCard = deck[index];
+    onReview(currentCard, rating);
     setRatings((current) => ({ ...current, [currentCard.id]: rating }));
-    if (rating === "learning" && deck.length > 1) {
+    if (rating === "again" && deck.length > 1) {
       setDeck((currentDeck) => {
         const nextDeck = [...currentDeck];
         const [item] = nextDeck.splice(index, 1);
@@ -1608,8 +1756,8 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
           <div style={{ height: "100%", width: `${Math.max(4, progress)}%`, background: colors.accent, transition: "width 160ms ease" }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: colors.muted }}>Space flips · arrows navigate · 1 learning · 2 known</span>
-          <span style={{ fontSize: 12, color: colors.muted }}>{knownCount} known · {learningCount} still learning</span>
+          <span style={{ fontSize: 12, color: colors.muted }}>Space flips · arrows navigate · 1 Again · 2 Hard · 3 Good · 4 Easy</span>
+          <span style={{ fontSize: 12, color: colors.muted }}>{reviewedCount} reviewed · {againCount} again</span>
         </div>
       </div>
 
@@ -1657,17 +1805,26 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
                 "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
               </p>
             ) : null}
+            <p style={{ fontSize: 12, color: colors.muted, margin: "16px 0 0", lineHeight: 1.5 }}>
+              {card.fsrsState} · S {card.fsrsStability.toFixed(2)}d · D {card.fsrsDifficulty.toFixed(1)} · Lapses {card.fsrsLapses}
+            </p>
           </>
         )}
       </div>
 
       {flipped && (
         <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => rate("learning")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
-            Still learning
+          <button type="button" onClick={() => rate("again")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
+            Again
           </button>
-          <button type="button" onClick={() => rate("known")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
-            Known
+          <button type="button" onClick={() => rate("hard")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
+            Hard
+          </button>
+          <button type="button" onClick={() => rate("good")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
+            Good
+          </button>
+          <button type="button" onClick={() => rate("easy")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
+            Easy
           </button>
         </div>
       )}
@@ -1687,6 +1844,7 @@ function FlashcardView({ words, onClose, colors, cardFontSize }: { words: WordEn
 type FlashcardSource =
   | { kind: "range"; range: FlashcardRange }
   | { kind: "days" }
+  | { kind: "due" }
   | { kind: "set"; setId: string };
 
 function uniqueCaptureIds(captures: Capture[]) {
@@ -1797,12 +1955,14 @@ function FlashcardPopup({
 
 function WordsView({
   captures,
+  onReviewFlashcard,
   colors,
   theme,
   accentColor,
   cardFontSize,
 }: {
   captures: Capture[];
+  onReviewFlashcard: (word: WordEntry, rating: FsrsRating) => void;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
@@ -1838,8 +1998,11 @@ function WordsView({
     ? capturesForFlashcardRange(captures, source.range)
     : source.kind === "days"
       ? capturesForDays(captures, selectedDays)
-      : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
+      : source.kind === "due"
+        ? captures.filter((capture) => captureIsDue(capture))
+        : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
   const words = buildFlashcardList(sourceCaptures);
+  const dueWords = buildFlashcardList(captures.filter((capture) => captureIsDue(capture)));
   const wordIdsKey = words.map((word) => word.id).join("\0");
   const selectedWords = words.filter((word) => selectedWordIds.has(word.id));
   const selectedCount = selectedWords.length;
@@ -1847,7 +2010,9 @@ function WordsView({
     ? FLASHCARD_RANGES.find((range) => range.value === source.range)?.label ?? "Date range"
     : source.kind === "days"
       ? `${selectedDays.size} picked ${selectedDays.size === 1 ? "day" : "days"}`
-      : activeSet?.name ?? "Saved set";
+      : source.kind === "due"
+        ? "due cards"
+        : activeSet?.name ?? "Saved set";
   const createSetCaptureIds = createSetScope === "selected" ? uniqueFlashcardCaptureIds(selectedWords) : uniqueCaptureIds(sourceCaptures);
   const createSetCardCount = createSetScope === "selected" ? selectedCount : words.length;
   const createSetLabel = createSetScope === "selected"
@@ -2049,7 +2214,7 @@ function WordsView({
     );
   }
 
-  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} colors={colors} cardFontSize={cardFontSize} />;
+  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} onReview={onReviewFlashcard} colors={colors} cardFontSize={cardFontSize} />;
 
   const sourcePanel = source.kind === "set" && activeSet ? (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, background: colors.surface, display: "grid", gap: 12 }}>
@@ -2072,9 +2237,20 @@ function WordsView({
   );
 
   const cards = words.length === 0 ? (
-    <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-      No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : "Pick days from the selector."}
-    </p>
+    <div style={{ color: colors.muted, fontSize: 15, lineHeight: 1.6, margin: 0, display: "grid", justifyItems: "start", gap: 10 }}>
+      <p style={{ margin: 0 }}>
+        No cards · {sourceLabel}. {source.kind === "set" ? "Choose another set." : source.kind === "due" ? "Nothing is due right now." : "Pick days from the selector."}
+      </p>
+      {dueWords.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setStudyWords(dueWords)}
+          style={{ ...subtleButtonStyle(colors, 13), background: colors.accent, borderColor: colors.accent, color: colors.selectedText }}
+        >
+          Study due cards
+        </button>
+      )}
+    </div>
   ) : (
     <div>
       {words.map((word) => {
@@ -3371,6 +3547,33 @@ export default function App() {
     });
   }
 
+  function reviewFlashcard(word: WordEntry, rating: FsrsRating) {
+    const ids = new Set(word.captureIds);
+    const now = new Date();
+    setCaptures((current) => {
+      const next = current.map((capture) => (
+        ids.has(capture.id) ? applyFsrsReview(capture, rating, now) : capture
+      ));
+      chrome.storage.local.set({ captures: next });
+      return next;
+    });
+
+    void sendRuntimeMessage<{ captures: Capture[] }>({ type: "REVIEW_FLASHCARDS", ids: word.captureIds, rating })
+      .then((response) => {
+        const reviewed = response.captures ?? [];
+        if (reviewed.length === 0) return;
+        const reviewedById = new Map(reviewed.map((capture) => [capture.id, capture]));
+        setCaptures((current) => {
+          const next = current.map((capture) => reviewedById.get(capture.id) ?? capture);
+          chrome.storage.local.set({ captures: next });
+          return next;
+        });
+      })
+      .catch((error) => {
+        console.warn("ContextLens flashcard review sync skipped", error);
+      });
+  }
+
   function clearTodayCaptures() {
     if (todayCaptures.length === 0) return;
     if (todayCaptures.length > 5) {
@@ -3524,7 +3727,7 @@ export default function App() {
             cardFontSize={cardFontSize}
           />
         )}
-        {view === "words" && <WordsView captures={captures} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
+        {view === "words" && <WordsView captures={captures} onReviewFlashcard={reviewFlashcard} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
         {view === "settings" && (
           <SettingsView
             account={account}
