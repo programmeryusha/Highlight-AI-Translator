@@ -34,6 +34,7 @@ const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
+const SAVED_CARD_EXPLANATION_LIMIT = 760;
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
@@ -162,6 +163,21 @@ function savedCardStyle(colors: DashboardColors, selected = false): React.CSSPro
     padding: "22px 24px",
     maxWidth: "100%",
     boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
+  };
+}
+
+function cardSeeAllButtonStyle(colors: DashboardColors): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    borderBottom: `1px solid ${colorWithAlpha(colors.accent, 0.45)}`,
+    color: colors.accent,
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 800,
+    margin: "10px 0 0",
+    padding: "0 0 2px",
+    width: "fit-content",
   };
 }
 
@@ -1000,8 +1016,6 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     textUnderlineOffset: 4,
     whiteSpace: "pre-wrap",
     overflowWrap: "break-word",
-    maxHeight: "8.1em",
-    overflow: "hidden",
   };
 
   if (capture.imageData) {
@@ -1057,12 +1071,14 @@ function SavesView({
   const [lastRangeAnchorId, setLastRangeAnchorId] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
+  const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     const visibleIds = new Set(captures.map((capture) => capture.id));
     setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
     setLastRangeAnchorId((current) => current && visibleIds.has(current) ? current : null);
+    setExpandedCardIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
   }, [captures]);
 
   if (captures.length === 0) {
@@ -1140,6 +1156,15 @@ function SavesView({
     }, 1200);
   }
 
+  function toggleCardExpanded(id: string) {
+    setExpandedCardIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const cards = (
     <>
       {groups.map((group) => (
@@ -1152,74 +1177,90 @@ function SavesView({
             </div>
           )}
           <div style={{ display: "grid", gap: 14 }}>
-            {group.items.map((c) => (
-              <div
-                key={c.id}
-                style={savedCardStyle(colors, selectedIds.has(c.id))}
-              >
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  {selectionMode && (
-                    <div style={{ display: "flex", alignItems: "center", paddingTop: 5, flexShrink: 0 }}>
-                      <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={(event) => toggleSelected(c.id, event)} colors={colors} />
-                    </div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <CapturePreview capture={c} colors={colors} typography={typography} />
+            {group.items.map((c) => {
+              const explanation = c.explanation ?? "";
+              const explanationIsLong = explanation.trim().length > SAVED_CARD_EXPLANATION_LIMIT;
+              const cardExpanded = expandAll || expandedCardIds.has(c.id) || !explanationIsLong;
+              const explanationPreview = cardExpanded ? explanation : previewText(explanation, SAVED_CARD_EXPLANATION_LIMIT);
 
-                    {c.context && (
-                      <div style={{ margin: "14px 0 0", maxWidth: "74ch" }}>
-                        <p style={questionLabelStyle(colors)}>
-                          Your question
-                        </p>
-                        <QuestionText
-                          text={c.context}
-                          color={colors.text}
-                          fontSize={questionFontSize(typography)}
-                          fontWeight={800}
-                          onClick={(event) => openCaptureFromClick(event, c.id)}
-                        />
+              return (
+                <div
+                  key={c.id}
+                  style={savedCardStyle(colors, selectedIds.has(c.id))}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    {selectionMode && (
+                      <div style={{ display: "flex", alignItems: "center", paddingTop: 5, flexShrink: 0 }}>
+                        <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={(event) => toggleSelected(c.id, event)} colors={colors} />
                       </div>
                     )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <CapturePreview capture={c} colors={colors} typography={typography} />
 
-                    {c.status === "pending" && (
-                      <p style={{ fontSize: typography.status, color: colors.muted, margin: "12px 0 0", fontStyle: "italic" }}>
-                        thinking…
-                      </p>
-                    )}
-                    {c.status === "error" && (
-                      <SaveErrorNotice
-                        message={c.errorMessage}
+                      {c.context && (
+                        <div style={{ margin: "14px 0 0", maxWidth: "74ch" }}>
+                          <p style={questionLabelStyle(colors)}>
+                            Your question
+                          </p>
+                          <QuestionText
+                            text={c.context}
+                            color={colors.text}
+                            fontSize={questionFontSize(typography)}
+                            fontWeight={800}
+                            onClick={(event) => openCaptureFromClick(event, c.id)}
+                          />
+                        </div>
+                      )}
+
+                      {c.status === "pending" && (
+                        <p style={{ fontSize: typography.status, color: colors.muted, margin: "12px 0 0", fontStyle: "italic" }}>
+                          thinking…
+                        </p>
+                      )}
+                      {c.status === "error" && (
+                        <SaveErrorNotice
+                          message={c.errorMessage}
+                          colors={colors}
+                          onRetry={() => retryCapture(c.id)}
+                          retrying={retryingIds.has(c.id)}
+                        />
+                      )}
+                      {c.status === "done" && explanation && (
+                        <>
+                          <div
+                            style={{
+                              fontSize: typography.answer,
+                              color: colors.text,
+                              margin: "16px 0 0",
+                              lineHeight: 1.78,
+                              maxWidth: "74ch",
+                              overflowWrap: "break-word",
+                            }}
+                          >
+                            {renderExplanation(explanationPreview, colors)}
+                          </div>
+                          {explanationIsLong && !expandAll && (
+                            <button
+                              type="button"
+                              onClick={() => toggleCardExpanded(c.id)}
+                              style={cardSeeAllButtonStyle(colors)}
+                            >
+                              {expandedCardIds.has(c.id) ? "Show less" : "See all"}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {!selectionMode && (
+                      <SaveDeleteButton
+                        onDelete={() => onDeleteCaptures([c.id])}
                         colors={colors}
-                        onRetry={() => retryCapture(c.id)}
-                        retrying={retryingIds.has(c.id)}
                       />
                     )}
-                    {c.status === "done" && c.explanation && (
-                      <div
-                        style={{
-                          fontSize: typography.answer,
-                          color: colors.text,
-                          margin: "16px 0 0",
-                          lineHeight: 1.78,
-                          maxHeight: expandAll ? undefined : "18em",
-                          maxWidth: "74ch",
-                          overflow: expandAll ? "visible" : "hidden",
-                          overflowWrap: "break-word",
-                        }}
-                      >
-                        {renderExplanation(c.explanation, colors)}
-                      </div>
-                    )}
                   </div>
-                  {!selectionMode && (
-                    <SaveDeleteButton
-                      onDelete={() => onDeleteCaptures([c.id])}
-                      colors={colors}
-                    />
-                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ))}
@@ -1790,6 +1831,7 @@ function WordsView({
   const [showSets, setShowSets] = useState(false);
   const calendarVisible = !useScrolledPast(360);
   const [expandAll, setExpandAll] = useState(false);
+  const [expandedWordIds, setExpandedWordIds] = useState<Set<string>>(new Set());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1806,6 +1848,7 @@ function WordsView({
       ? capturesForDays(captures, selectedDays)
       : (activeSet?.captureIds.map((id) => captureById.get(id)).filter((capture): capture is Capture => Boolean(capture)) ?? []);
   const words = buildFlashcardList(sourceCaptures);
+  const wordIdsKey = words.map((word) => word.id).join("\0");
   const sourceLabel = source.kind === "range"
     ? FLASHCARD_RANGES.find((range) => range.value === source.range)?.label ?? "Date range"
     : source.kind === "days"
@@ -1815,6 +1858,20 @@ function WordsView({
     newSetName.trim()
       && sourceCaptures.length > 0,
   );
+
+  useEffect(() => {
+    const visibleIds = new Set(words.map((word) => word.id));
+    setExpandedWordIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+  }, [wordIdsKey]);
+
+  function toggleWordExpanded(id: string) {
+    setExpandedWordIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   function storeSets(next: FlashcardSet[]) {
     setSets(next);
@@ -1951,8 +2008,12 @@ function WordsView({
   ) : (
     <div>
       {words.map((word) => {
-        const promptPreview = expandAll ? word.word : previewText(word.word, FLASHCARD_PROMPT_LIMIT);
-        const explanationPreview = word.explanation ? (expandAll ? word.explanation : previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT)) : "";
+        const wordExpanded = expandAll || expandedWordIds.has(word.id);
+        const promptIsLong = word.word.trim().length > FLASHCARD_PROMPT_LIMIT;
+        const explanationIsLong = Boolean(word.explanation && word.explanation.trim().length > FLASHCARD_EXPLANATION_LIMIT);
+        const canExpandCard = promptIsLong || explanationIsLong;
+        const promptPreview = wordExpanded ? word.word : previewText(word.word, FLASHCARD_PROMPT_LIMIT);
+        const explanationPreview = word.explanation ? (wordExpanded ? word.explanation : previewText(word.explanation, FLASHCARD_EXPLANATION_LIMIT)) : "";
         return (
           <div
             key={word.id}
@@ -1976,9 +2037,18 @@ function WordsView({
               </div>
             )}
             {explanationPreview && (
-              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, maxHeight: expandAll ? undefined : "7em", overflow: expandAll ? "visible" : "hidden", overflowWrap: "break-word", maxWidth: "74ch" }}>
+              <div style={{ fontSize: typography.answer, color: colors.text, margin: promptPreview ? "16px 0 0" : word.imageData ? "14px 0 0" : 0, lineHeight: 1.78, overflowWrap: "break-word", maxWidth: "74ch" }}>
                 {renderExplanation(explanationPreview, colors)}
               </div>
+            )}
+            {canExpandCard && !expandAll && (
+              <button
+                type="button"
+                onClick={() => toggleWordExpanded(word.id)}
+                style={cardSeeAllButtonStyle(colors)}
+              >
+                {expandedWordIds.has(word.id) ? "Show less" : "See all"}
+              </button>
             )}
           </div>
         );
