@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-23-overlay-contrast-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-24-overlay-text-inset-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 type ThemeName = "light" | "dark";
 const contextLensGlobal = globalThis as typeof globalThis & {
@@ -1308,7 +1308,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const list = document.createElement("div");
     list.className = "cl-scroll";
     list.setAttribute("data-cl-conversation-list", "widget");
-    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
+    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;`);
     trapScroll(list);
     trackConversationScroll(widgetConversationScroll, list);
 
@@ -1357,10 +1357,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
           font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
           line-height: 1.83;
           margin-bottom: 8px;
+          max-width: 100%;
+          overflow-wrap: break-word;
           white-space: pre-wrap;
           direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
           text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
-          unicode-bidi: plaintext;
+          unicode-bidi: ${message.role === "user" ? "plaintext" : "normal"};
         `);
 
         messageBlock.appendChild(label);
@@ -2175,7 +2177,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       const list = document.createElement("div");
       list.className = "cl-scroll";
       list.setAttribute("data-cl-conversation-list", "screenshot");
-      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-right:8px;margin-bottom:12px;`);
+      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;`);
       trapScroll(list);
       trackConversationScroll(contextPanelConversationScroll, list);
 
@@ -2224,10 +2226,12 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
             line-height: 1.83;
             margin-bottom: 12px;
+            max-width: 100%;
+            overflow-wrap: break-word;
             white-space: pre-wrap;
             direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
             text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
-            unicode-bidi: plaintext;
+            unicode-bidi: ${message.role === "user" ? "plaintext" : "normal"};
           `);
 
           messageBlock.appendChild(label);
