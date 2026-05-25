@@ -2587,7 +2587,6 @@ function SettingsView({
   accentColor,
   onAccentColorChange,
   theme,
-  onThemeToggle,
   colors,
 }: {
   account: ContextLensUser | null;
@@ -2599,7 +2598,6 @@ function SettingsView({
   accentColor: string;
   onAccentColorChange: (color: string) => void;
   theme: ThemeName;
-  onThemeToggle: () => void;
   colors: DashboardColors;
 }) {
   const [triggers, setTriggers] = useState<SaveTriggers>({ bubble: true, contextMenu: true });
@@ -3040,31 +3038,6 @@ function SettingsView({
       {/* Appearance */}
       <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Appearance</p>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16, marginBottom: 40 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Dashboard theme</span>
-          <button
-            type="button"
-            onClick={onThemeToggle}
-            aria-label={theme === "dark" ? "Switch dashboard to light" : "Switch dashboard to dark"}
-            title={theme === "dark" ? "Dashboard: dark" : "Dashboard: light"}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 999,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.text,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 15,
-              cursor: "pointer",
-            }}
-          >
-            {theme === "dark" ? "☀" : "☾"}
-          </button>
-          <span style={{ fontSize: 12, color: colors.muted }}>{theme === "dark" ? "Dark" : "Light"}</span>
-        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, color: colors.text, fontWeight: 600 }}>Overlay theme</span>
           <button
@@ -3867,7 +3840,6 @@ export default function App() {
             accentColor={accentColor}
             onAccentColorChange={setAccentColor}
             theme={theme}
-            onThemeToggle={toggleTheme}
             colors={colors}
           />
         )}
