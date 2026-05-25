@@ -30,6 +30,7 @@ const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; a
   extra_large: { source: 28, context: 24, answer: 24, status: 20, link: 16 },
 };
 const CALENDAR_COLUMN_WIDTH = 332;
+const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_PROMPT_LIMIT = 260;
@@ -187,7 +188,7 @@ function calendarGridStyle(visible: boolean): React.CSSProperties {
     gridTemplateColumns: `minmax(0, 1fr) ${visible ? CALENDAR_COLUMN_WIDTH : 0}px`,
     gap: visible ? 28 : 0,
     alignItems: "start",
-    maxWidth: 1220,
+    maxWidth: DASHBOARD_INNER_MAX_WIDTH,
     margin: "0 auto",
     transition: `grid-template-columns ${CALENDAR_TRANSITION}, gap ${CALENDAR_TRANSITION}`,
   };
@@ -1430,7 +1431,7 @@ function HistoryView({
   return (
     <div
       style={{
-        maxWidth: 1220,
+        maxWidth: DASHBOARD_INNER_MAX_WIDTH,
         margin: "0 auto",
         minHeight: 520,
       }}
@@ -2081,7 +2082,7 @@ function WordsView({
   );
 
   return (
-    <div style={{ maxWidth: 1220, margin: "0 auto" }}>
+    <div style={{ maxWidth: DASHBOARD_INNER_MAX_WIDTH, margin: "0 auto" }}>
       <div style={{ marginBottom: 20 }}>
         <div>
           <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>Flashcards</h2>
@@ -3282,7 +3283,7 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text }}>
       <div style={{ borderBottom: `1px solid ${colors.border}`, background: colors.bg }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 72 }}>
+        <div style={{ maxWidth: DASHBOARD_INNER_MAX_WIDTH, margin: "0 auto", padding: "8px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 72 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => navigateView("saves")}
