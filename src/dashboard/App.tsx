@@ -12,7 +12,6 @@ type CardTypography = (typeof CARD_TYPOGRAPHY)[CardFontSize];
 const LONG_TEXT_LIMIT = 260;
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
-const QUESTION_FONT_BUMP = 10;
 const THEME_STORAGE_KEY = "contextlens_theme";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
@@ -150,7 +149,18 @@ function questionLabelStyle(colors: DashboardColors): React.CSSProperties {
 }
 
 function questionFontSize(typography: CardTypography): number {
-  return typography.source + QUESTION_FONT_BUMP;
+  return typography.answer;
+}
+
+function savedCardStyle(colors: DashboardColors, selected = false): React.CSSProperties {
+  return {
+    background: selected ? colors.accentSoft : colors.surface,
+    border: `1px solid ${selected ? colorWithAlpha(colors.accent, 0.45) : colors.border}`,
+    borderRadius: 10,
+    padding: "22px 24px",
+    maxWidth: "100%",
+    boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
+  };
 }
 
 function relativeLuminance(hex: string): number {
@@ -1134,14 +1144,7 @@ function SavesView({
             {group.items.map((c) => (
               <div
                 key={c.id}
-                style={{
-                  background: selectedIds.has(c.id) ? colors.accentSoft : colors.surface,
-                  border: `1px solid ${selectedIds.has(c.id) ? colorWithAlpha(colors.accent, 0.45) : colors.border}`,
-                  borderRadius: 10,
-                  padding: "22px 24px",
-                  maxWidth: "100%",
-                  boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
-                }}
+                style={savedCardStyle(colors, selectedIds.has(c.id))}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                   {selectionMode && (
@@ -1857,12 +1860,8 @@ function WordsView({
           <div
             key={word.id}
             style={{
-              background: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 10,
-              padding: "22px 24px",
+              ...savedCardStyle(colors),
               marginBottom: 14,
-              boxShadow: "0 2px 12px rgba(15,15,15,0.07)",
             }}
           >
             {word.imageData && (
@@ -1892,14 +1891,14 @@ function WordsView({
 
   return (
     <div style={{ maxWidth: 1220, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start", marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ marginBottom: 20 }}>
         <div>
           <h2 style={{ fontSize: 24, color: colors.text, margin: 0, fontWeight: 800 }}>Flashcards</h2>
           <p style={{ fontSize: 14, color: colors.muted, margin: "5px 0 0", lineHeight: 1.45 }}>
             {words.length} {words.length === 1 ? "card" : "cards"} · {sourceLabel}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-start", marginTop: 14 }}>
           {words.length > 0 && (
             <button type="button" onClick={() => setExpandAll((v) => !v)} style={{ ...subtleButtonStyle(colors, 13) }}>
               {expandAll ? "Collapse" : "Expand all"}
@@ -1914,7 +1913,19 @@ function WordsView({
           <button type="button" onClick={() => setShowExport((open) => !open)} style={{ ...subtleButtonStyle(colors, 13) }}>
             Export
           </button>
-          <button type="button" disabled={words.length === 0} onClick={() => setStudyWords(words)} style={{ ...subtleButtonStyle(colors, 13), opacity: words.length ? 1 : 0.5, cursor: words.length ? "pointer" : "default" }}>
+          <button
+            type="button"
+            disabled={words.length === 0}
+            onClick={() => setStudyWords(words)}
+            style={{
+              ...subtleButtonStyle(colors, 13),
+              background: words.length ? colors.accent : colors.border,
+              borderColor: words.length ? colors.accent : colors.border,
+              color: words.length ? colors.selectedText : colors.muted,
+              opacity: 1,
+              cursor: words.length ? "pointer" : "default",
+            }}
+          >
             Study
           </button>
         </div>
