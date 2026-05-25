@@ -192,13 +192,10 @@ function toolbarSummaryStyle(colors: DashboardColors): React.CSSProperties {
     alignItems: "center",
     gap: 6,
     width: "fit-content",
-    border: `1px solid ${colorWithAlpha(colors.accent, 0.34)}`,
-    borderRadius: 999,
-    background: colors.accentSoft,
-    color: colors.text,
-    padding: "6px 10px",
+    color: colors.muted,
+    padding: "0 2px",
     fontSize: 13,
-    fontWeight: 800,
+    fontWeight: 700,
     lineHeight: 1,
   };
 }
@@ -1433,6 +1430,13 @@ function HistoryView({
     });
   }
 
+  function selectedDayShortLabel() {
+    return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  }
+
   function emptyDayMessage() {
     if (selectedDay === todayKey()) return "Nothing saved today.";
     return `Nothing saved on ${selectedDayLabel()}.`;
@@ -1484,8 +1488,8 @@ function HistoryView({
           onRetryCapture={onRetryCapture}
           toolbarSummary={
             <span style={toolbarSummaryStyle(colors)}>
-              1 day selected
-              <span style={{ color: colors.muted }}>·</span>
+              {selectedDayShortLabel()}
+              <span>·</span>
               {selectedCaptures.length} {selectedCaptures.length === 1 ? "card" : "cards"}
             </span>
           }
@@ -2589,7 +2593,7 @@ function WordsView({
               {daySelectionSummary && (
                 <span style={toolbarSummaryStyle(colors)}>
                   {daySelectionSummary}
-                  <span style={{ color: colors.muted }}>·</span>
+                  <span>·</span>
                   {words.length} {words.length === 1 ? "card" : "cards"}
                 </span>
               )}
