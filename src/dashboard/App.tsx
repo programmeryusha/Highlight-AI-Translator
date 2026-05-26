@@ -1739,6 +1739,7 @@ function FlashcardView({
   const [showAnswer, setShowAnswer] = useState(false);
   const [completed, setCompleted] = useState(false);
   const quizRootRef = useRef<HTMLDivElement | null>(null);
+  const cardContentRef = useRef<HTMLDivElement | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1768,6 +1769,10 @@ function FlashcardView({
       image.src = word.imageData;
     });
   }, [deck]);
+
+  useEffect(() => {
+    cardContentRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [index, showAnswer, revealed]);
 
   useEffect(() => {
     const revealOrToggle = () => {
@@ -1808,6 +1813,7 @@ function FlashcardView({
   const frontText = (card.word || (!card.imageData ? card.exampleText : "")).trim();
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
+  const studyCardHeight = "min(660px, calc(100vh - 142px))";
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
     hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
@@ -1848,20 +1854,41 @@ function FlashcardView({
 
   return (
     <div ref={quizRootRef} style={{ maxWidth: 1660, margin: "0 auto", padding: "8px 24px 38px" }}>
-      <div style={{ maxWidth: 920, margin: "0 auto 16px" }}>
-        <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: colors.text, opacity: 0.82, transition: "width 180ms ease" }} />
+      <div style={{ display: "grid", gridTemplateColumns: "44px minmax(180px, 920px)", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 14px" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to flashcards"
+          title="Back to flashcards"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            border: `1px solid ${colors.border}`,
+            background: colors.surface,
+            color: colors.text,
+            boxShadow: "0 6px 18px rgba(15,15,15,0.07)",
+            cursor: "pointer",
+            fontSize: 20,
+            fontWeight: 850,
+          }}
+        >
+          ←
+        </button>
+        <div style={{ paddingTop: 16 }}>
+          <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: colors.text, opacity: 0.82, transition: "width 180ms ease" }} />
+          </div>
+          <p style={{ color: colors.text, fontSize: 16, fontWeight: 800, margin: "10px 0 0", textAlign: "center" }}>
+            {completed ? deck.length : index + 1} / {deck.length}
+          </p>
         </div>
-        <p style={{ color: colors.text, fontSize: 16, fontWeight: 800, margin: "10px 0 0", textAlign: "center" }}>
-          {completed ? deck.length : index + 1} / {deck.length}
-        </p>
       </div>
 
       {completed ? (
         <section
           style={{
             minHeight: 560,
-            position: "relative",
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
@@ -1872,29 +1899,6 @@ function FlashcardView({
             padding: "56px min(72px, 5vw)",
           }}
         >
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Back to flashcards"
-            title="Back to flashcards"
-            style={{
-              position: "absolute",
-              top: 18,
-              left: 18,
-              width: 40,
-              height: 40,
-              borderRadius: 10,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.text,
-              boxShadow: "0 6px 18px rgba(15,15,15,0.07)",
-              cursor: "pointer",
-              fontSize: 20,
-              fontWeight: 850,
-            }}
-          >
-            ←
-          </button>
           <div>
             <p style={{ color: colors.text, fontSize: "clamp(30px, 4vw, 54px)", fontWeight: 900, lineHeight: 1.15, margin: "0 0 14px" }}>
               Nice work.
@@ -1915,49 +1919,27 @@ function FlashcardView({
         <section
           onClick={revealOrToggle}
           style={{
-            minHeight: revealed ? 640 : 660,
-            position: "relative",
+            height: studyCardHeight,
+            minHeight: 540,
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
             boxShadow: "0 22px 68px rgba(15,15,15,0.10)",
             overflow: "hidden",
             cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onClose();
-            }}
-            aria-label="Back to flashcards"
-            title="Back to flashcards"
-            style={{
-              position: "absolute",
-              top: 18,
-              left: 18,
-              zIndex: 1,
-              width: 40,
-              height: 40,
-              borderRadius: 10,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.text,
-              boxShadow: "0 6px 18px rgba(15,15,15,0.07)",
-              cursor: "pointer",
-              fontSize: 20,
-              fontWeight: 850,
-            }}
-          >
-            ←
-          </button>
           <div
+            ref={cardContentRef}
             style={{
-              minHeight: revealed ? 500 : 660,
+              flex: "1 1 auto",
+              minHeight: 0,
+              overflowY: "auto",
               display: "grid",
               placeItems: "center",
-              padding: "44px min(64px, 5vw)",
+              padding: revealed ? "34px min(64px, 5vw)" : "44px min(64px, 5vw)",
               textAlign: "center",
               boxSizing: "border-box",
             }}
