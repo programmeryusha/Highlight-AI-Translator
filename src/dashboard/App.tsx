@@ -43,7 +43,8 @@ const SAVED_CARD_EXPLANATION_LIMIT = 760;
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
-  if (hash === "history" || hash === "words" || hash === "settings") return hash;
+  if (hash === "words" || hash.startsWith("words/")) return "words";
+  if (hash === "history" || hash === "settings") return hash;
   return "saves";
 }
 
@@ -2012,6 +2013,7 @@ function WordsView({
   const [createSetScope, setCreateSetScope] = useState<"current" | "selected">("current");
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
+  const [modifyingSetId, setModifyingSetId] = useState<string | null>(null);
   const [draggedSetId, setDraggedSetId] = useState<string | null>(null);
   const [hoveredSetId, setHoveredSetId] = useState<string | null>(null);
   const [hoveredSetActionId, setHoveredSetActionId] = useState<string | null>(null);
@@ -2039,9 +2041,25 @@ function WordsView({
     return () => document.removeEventListener("mousedown", closeMenu);
   }, [openSetMenuId]);
 
+  useEffect(() => {
+    if (!studyWords) return;
+    const closeOnNavigation = () => {
+      if (window.location.hash !== "#words/quiz") {
+        setStudyWords(null);
+      }
+    };
+    window.addEventListener("popstate", closeOnNavigation);
+    window.addEventListener("hashchange", closeOnNavigation);
+    return () => {
+      window.removeEventListener("popstate", closeOnNavigation);
+      window.removeEventListener("hashchange", closeOnNavigation);
+    };
+  }, [studyWords]);
+
   const setById = new Map(sets.map((set) => [set.id, set]));
   const setRows = flashcardSetRows(sets);
   const activeSet = source.kind === "set" ? setById.get(source.setId) : undefined;
+  const modifyingSet = modifyingSetId ? setById.get(modifyingSetId) : undefined;
   const captureById = new Map(captures.map((capture) => [capture.id, capture]));
   const sourceCaptures = source.kind === "range"
     ? capturesForFlashcardRange(captures, source.range)
@@ -2128,17 +2146,34 @@ function WordsView({
 
   function storeSets(next: FlashcardSet[], deletedIds: string[] = []) {
     const normalized = normalizeFlashcardSets(next);
+    const deletedIdSet = new Set(deletedIds);
+    const upsertSets = normalized.filter((set) => !deletedIdSet.has(set.id));
     setSets(normalized);
     chrome.storage.local.set({ flashcard_sets: normalized });
-    if (normalized.length > 0) {
-      void sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: normalized }).catch((error) => {
-        console.warn("ContextLens flashcard set sync skipped", error);
-      });
+    void (async () => {
+      if (deletedIds.length > 0) {
+        await sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_FLASHCARD_SETS", ids: deletedIds });
+      }
+      if (upsertSets.length > 0) {
+        await sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: upsertSets });
+      }
+    })().catch((error) => {
+      console.warn("ContextLens flashcard set sync skipped", error);
+    });
+  }
+
+  function startFlashcardQuiz(nextWords: WordEntry[]) {
+    if (nextWords.length === 0) return;
+    setStudyWords(nextWords);
+    if (window.location.hash !== "#words/quiz") {
+      window.history.pushState({ contextlensFlashcardQuiz: true }, "", `${window.location.pathname}${window.location.search}#words/quiz`);
     }
-    if (deletedIds.length > 0) {
-      void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_FLASHCARD_SETS", ids: deletedIds }).catch((error) => {
-        console.warn("ContextLens flashcard set delete sync skipped", error);
-      });
+  }
+
+  function closeFlashcardQuiz() {
+    setStudyWords(null);
+    if (window.location.hash === "#words/quiz") {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#words`);
     }
   }
 
@@ -2202,14 +2237,18 @@ function WordsView({
     const sourceSet = setById.get(sourceSetId);
     const targetSet = setById.get(targetSetId);
     if (!sourceSet || !targetSet) return;
-    if (!window.confirm(`Merge "${sourceSet.name}" into "${targetSet.name}"?`)) return;
+    const nextName = window.prompt(
+      `Merge "${sourceSet.name}" into "${targetSet.name}". The old "${sourceSet.name}" set will be deleted. Name the merged set:`,
+      targetSet.name,
+    );
+    if (nextName === null) return;
     const now = new Date().toISOString();
     const mergedCaptureIds = Array.from(new Set([...targetSet.captureIds, ...sourceSet.captureIds]));
     storeSets(sets
       .filter((set) => set.id !== sourceSetId)
       .map((set) => {
         if (set.id === targetSetId) {
-          return { ...set, captureIds: mergedCaptureIds, updatedAt: now };
+          return { ...set, name: nextName.trim() || targetSet.name, captureIds: mergedCaptureIds, updatedAt: now };
         }
         if (set.parentSetId === sourceSetId) {
           return { ...set, parentSetId: targetSetId, updatedAt: now };
@@ -2227,6 +2266,21 @@ function WordsView({
     setDraggedSetId(null);
     if (!sourceSetId || sourceSetId === targetSetId) return;
     mergeSetIntoTarget(sourceSetId, targetSetId);
+  }
+
+  function removeWordFromSet(setId: string, word: WordEntry) {
+    const removeIds = new Set(word.captureIds);
+    const now = new Date().toISOString();
+    const next = sets
+      .map((set) => (
+        set.id === setId
+          ? { ...set, captureIds: set.captureIds.filter((id) => !removeIds.has(id)), updatedAt: now }
+          : set
+      ))
+      .filter((set) => set.captureIds.length > 0);
+    const setDeleted = !next.some((set) => set.id === setId);
+    storeSets(next, setDeleted ? [setId] : []);
+    if (setDeleted) setModifyingSetId(null);
   }
 
   function pressExportButton(key: string) {
@@ -2338,10 +2392,20 @@ function WordsView({
           const exportWords = setFlashcards(set);
           const count = exportWords.length;
           const deckCounts = setDeckCounts(exportWords);
+          const openSetQuiz = () => startFlashcardQuiz(exportWords);
           return (
             <div
               key={set.id}
+              role="button"
+              tabIndex={0}
               draggable
+              onClick={openSetQuiz}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openSetQuiz();
+                }
+              }}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 setDraggedSetId(set.id);
@@ -2365,23 +2429,23 @@ function WordsView({
                 opacity: draggedSetId === set.id ? 0.72 : 1,
                 outline: draggedSetId && draggedSetId !== set.id ? `1px dashed ${colors.accent}` : "none",
                 outlineOffset: -3,
-                cursor: "grab",
+                cursor: "pointer",
                 transition: "background 140ms ease, opacity 180ms ease, outline-color 140ms ease",
               }}
             >
-              <button type="button" onClick={() => setSource({ kind: "set", setId: set.id })} style={{ flex: 1, minWidth: 0, background: "none", border: "none", color: colors.text, padding: 0, textAlign: "left", cursor: "pointer" }}>
+              <div style={{ flex: 1, minWidth: 0, color: colors.text, padding: 0, textAlign: "left" }}>
                 <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: depth * 18 }}>{depth > 0 ? "- " : ""}{set.name}</span>
                 <span style={{ display: "block", fontSize: 12, color: colors.muted, marginTop: 2, paddingLeft: depth * 18 }}>
                   {count} {count === 1 ? "card" : "cards"}{parent ? ` · within ${parent.name}` : ""}
                 </span>
-              </button>
+              </div>
               <span style={{ textAlign: "center", color: "#60a5fa", fontSize: 13, fontWeight: 850 }}>{deckCounts.newCount}</span>
               <span style={{ textAlign: "center", color: "#f87171", fontSize: 13, fontWeight: 850 }}>{deckCounts.learnCount}</span>
               <span style={{ textAlign: "center", color: "#4ade80", fontSize: 13, fontWeight: 850 }}>{deckCounts.dueCount}</span>
-              <div data-set-actions-root style={{ position: "relative", justifySelf: "center" }}>
+              <div data-set-actions-root onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} style={{ position: "relative", justifySelf: "center" }}>
                 <button
                   type="button"
-                  onClick={() => setOpenSetMenuId((current) => current === set.id ? null : set.id)}
+                  onClick={(event) => { event.stopPropagation(); setOpenSetMenuId((current) => current === set.id ? null : set.id); }}
                   onMouseEnter={() => setHoveredSetActionId(set.id)}
                   onMouseLeave={() => setHoveredSetActionId((current) => current === set.id ? null : current)}
                   title={`Set actions for ${set.name}`}
@@ -2404,6 +2468,15 @@ function WordsView({
                 </button>
                 {openSetMenuId === set.id && (
                   <div style={{ position: "absolute", right: 0, top: 38, zIndex: 20, minWidth: 150, background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 6, boxShadow: "0 12px 30px rgba(15,15,15,0.18)", display: "grid", gap: 4 }}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHoveredSetMenuAction(`${set.id}:modify`)}
+                      onMouseLeave={() => setHoveredSetMenuAction(null)}
+                      onClick={() => { setModifyingSetId(set.id); setOpenSetMenuId(null); }}
+                      style={setMenuButtonStyle(`${set.id}:modify`)}
+                    >
+                      Modify set
+                    </button>
                     <button
                       type="button"
                       onMouseEnter={() => setHoveredSetMenuAction(`${set.id}:anki`)}
@@ -2441,7 +2514,9 @@ function WordsView({
     );
   }
 
-  if (studyWords) return <FlashcardView words={studyWords} onClose={() => setStudyWords(null)} onReview={onReviewFlashcard} colors={colors} cardFontSize={cardFontSize} />;
+  if (studyWords) return <FlashcardView words={studyWords} onClose={closeFlashcardQuiz} onReview={onReviewFlashcard} colors={colors} cardFontSize={cardFontSize} />;
+
+  const modifyingWords = modifyingSet ? setFlashcards(modifyingSet) : [];
 
   const sourcePanel = source.kind === "set" && activeSet ? (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, background: colors.surface, display: "grid", gap: 12 }}>
@@ -2626,6 +2701,48 @@ function WordsView({
               Save set
             </button>
           </div>
+        </FlashcardPopup>
+      )}
+
+      {modifyingSet && (
+        <FlashcardPopup title={`Modify ${modifyingSet.name}`} onClose={() => setModifyingSetId(null)} colors={colors} width={680}>
+          <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
+            {modifyingWords.length} {modifyingWords.length === 1 ? "card" : "cards"} in this set. Removing a card only removes it from this set.
+          </p>
+          {modifyingWords.length === 0 ? (
+            <p style={{ color: colors.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>No cards in this set.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10, maxHeight: "min(460px, 58vh)", overflow: "auto", paddingRight: 2 }}>
+              {modifyingWords.map((word) => (
+                <div key={word.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "start", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, padding: 12 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ color: colors.text, fontSize: 14, fontWeight: 850, lineHeight: 1.45, margin: "0 0 6px", overflowWrap: "break-word" }}>
+                      {word.word || "Screenshot"}
+                    </p>
+                    <p style={{ color: colors.muted, fontSize: 12, lineHeight: 1.5, margin: 0, overflowWrap: "break-word" }}>
+                      {previewText(word.explanation || word.exampleText || "No answer yet.", 180)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeWordFromSet(modifyingSet.id, word)}
+                    style={{
+                      background: colors.surface,
+                      color: colors.danger,
+                      border: `1px solid ${colors.dangerBorder}`,
+                      borderRadius: 7,
+                      padding: "7px 10px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </FlashcardPopup>
       )}
 
