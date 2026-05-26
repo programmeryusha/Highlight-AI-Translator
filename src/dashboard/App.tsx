@@ -1519,6 +1519,7 @@ interface WordEntry {
   fsrsLapses: number;
   fsrsState: FsrsState;
   fsrsDueAt: string;
+  fsrsLastReviewedAt: string | null;
   fsrsReviewCount: number;
 }
 
@@ -1620,6 +1621,43 @@ function applyFsrsReview(capture: Capture, rating: FsrsRating, now = new Date())
   };
 }
 
+function formatReviewInterval(ms: number) {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 2) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days < 31) return `${days}d`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months}mo`;
+  return `${Math.round(months / 12)}y`;
+}
+
+function reviewIntervalForWord(word: WordEntry, rating: FsrsRating) {
+  const now = new Date();
+  const reviewed = applyFsrsReview({
+    id: word.id,
+    text: word.exampleText,
+    context: word.word,
+    url: "",
+    title: "",
+    savedAt: word.latestSavedAt,
+    explanation: word.explanation,
+    status: "done",
+    imageData: word.imageData,
+    fsrsStability: word.fsrsStability,
+    fsrsDifficulty: word.fsrsDifficulty,
+    fsrsLapses: word.fsrsLapses,
+    fsrsState: word.fsrsState,
+    fsrsDueAt: word.fsrsDueAt,
+    fsrsLastReviewedAt: word.fsrsLastReviewedAt,
+    fsrsReviewCount: word.fsrsReviewCount,
+  }, rating, now);
+  const dueTime = new Date(reviewed.fsrsDueAt ?? now.toISOString()).getTime();
+  return formatReviewInterval((Number.isFinite(dueTime) ? dueTime : now.getTime()) - now.getTime());
+}
+
 function flashcardPrompt(capture: Capture) {
   const context = capture.context?.trim();
   if (context) return context;
@@ -1648,6 +1686,7 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
         fsrsLapses: 0,
         fsrsState: normalizeFsrsState(c.fsrsState),
         fsrsDueAt: fsrsDueAt(c),
+        fsrsLastReviewedAt: c.fsrsLastReviewedAt ?? null,
         fsrsReviewCount: 0,
       });
     }
@@ -1661,6 +1700,7 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
       entry.fsrsDifficulty = c.fsrsDifficulty ?? 5;
       entry.fsrsState = normalizeFsrsState(c.fsrsState);
       entry.fsrsDueAt = fsrsDueAt(c);
+      entry.fsrsLastReviewedAt = c.fsrsLastReviewedAt ?? null;
     }
     if (new Date(c.savedAt).getTime() > new Date(entry.latestSavedAt).getTime()) {
       entry.latestSavedAt = c.savedAt;
@@ -1695,39 +1735,37 @@ function FlashcardView({
 }) {
   const [deck, setDeck] = useState(words);
   const [index, setIndex] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const [ratings, setRatings] = useState<Record<string, FsrsRating>>({});
+  const [revealed, setRevealed] = useState(false);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     setDeck(words);
     setIndex(0);
-    setFlipped(false);
-    setRatings({});
+    setRevealed(false);
   }, [words]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
-      if (event.key === " ") {
+      if (event.key === " " || event.key === "Enter") {
         event.preventDefault();
-        setFlipped((current) => !current);
+        setRevealed(true);
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         next();
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         prev();
-      } else if (event.key === "1" && flipped) {
+      } else if (event.key === "1" && revealed) {
         event.preventDefault();
         rate("again");
-      } else if (event.key === "2" && flipped) {
+      } else if (event.key === "2" && revealed) {
         event.preventDefault();
         rate("hard");
-      } else if (event.key === "3" && flipped) {
+      } else if (event.key === "3" && revealed) {
         event.preventDefault();
         rate("good");
-      } else if (event.key === "4" && flipped) {
+      } else if (event.key === "4" && revealed) {
         event.preventDefault();
         rate("easy");
       }
@@ -1738,24 +1776,30 @@ function FlashcardView({
 
   if (deck.length === 0) return null;
   const card = deck[Math.min(index, deck.length - 1)];
-  const reviewedCount = Object.keys(ratings).length;
-  const againCount = Object.values(ratings).filter((rating) => rating === "again").length;
-  const progress = Math.round(((index + (flipped ? 0.5 : 0)) / deck.length) * 100);
+  const progress = Math.round(((index + (revealed ? 0.35 : 0)) / deck.length) * 100);
+  const frontText = (card.word || (!card.imageData ? card.exampleText : "")).trim();
+  const frontIsRtl = hasRtlText(frontText);
+  const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
+  const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
+    again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
+    hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
+    good: { color: "#059669", soft: "rgba(5, 150, 105, 0.08)", label: "Good" },
+    easy: { color: "#2563eb", soft: "rgba(37, 99, 235, 0.07)", label: "Easy" },
+  };
 
   function next() {
-    setFlipped(false);
+    setRevealed(false);
     setIndex((current) => (current + 1) % deck.length);
   }
 
   function prev() {
-    setFlipped(false);
+    setRevealed(false);
     setIndex((current) => (current - 1 + deck.length) % deck.length);
   }
 
   function rate(rating: FsrsRating) {
     const currentCard = deck[index];
     onReview(currentCard, rating);
-    setRatings((current) => ({ ...current, [currentCard.id]: rating }));
     if (rating === "again" && deck.length > 1) {
       setDeck((currentDeck) => {
         const nextDeck = [...currentDeck];
@@ -1764,7 +1808,7 @@ function FlashcardView({
         nextDeck.splice(insertAt, 0, item);
         return nextDeck;
       });
-      setFlipped(false);
+      setRevealed(false);
       setIndex((current) => Math.min(current, deck.length - 1));
       return;
     }
@@ -1772,100 +1816,147 @@ function FlashcardView({
   }
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", paddingTop: 24 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 16 }}>
-        <button onClick={onClose} style={{ ...subtleButtonStyle(colors, 13), background: colors.surface }}>
-          ← Back to flashcards
+    <div style={{ maxWidth: 1660, margin: "0 auto", padding: "22px 24px 46px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "76px minmax(180px, 680px) 76px", justifyContent: "center", alignItems: "start", gap: 18, marginBottom: 20 }}>
+        <div />
+        <div style={{ paddingTop: 16 }}>
+          <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: colors.text, opacity: 0.82, transition: "width 180ms ease" }} />
+          </div>
+          <p style={{ color: colors.text, fontSize: 16, fontWeight: 800, margin: "10px 0 0", textAlign: "center" }}>
+            {index + 1} / {deck.length}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to flashcards"
+          title="Back to flashcards"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 14,
+            border: `1px solid ${colors.border}`,
+            background: colors.surface,
+            color: colors.text,
+            boxShadow: "0 8px 24px rgba(15,15,15,0.08)",
+            cursor: "pointer",
+            fontSize: 24,
+            fontWeight: 850,
+            justifySelf: "end",
+          }}
+        >
+          ←
         </button>
-        <span style={{ fontSize: 13, color: colors.muted, fontWeight: 750 }}>{index + 1} / {deck.length}</span>
       </div>
 
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${Math.max(4, progress)}%`, background: colors.accent, transition: "width 160ms ease" }} />
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: colors.muted }}>Space flips · arrows navigate · 1 Again · 2 Hard · 3 Good · 4 Easy</span>
-          <span style={{ fontSize: 12, color: colors.muted }}>{reviewedCount} reviewed · {againCount} again</span>
-        </div>
-      </div>
-
-      <div
-        onClick={() => setFlipped((f) => !f)}
+      <section
         style={{
-          minHeight: 320,
-          background: flipped ? colors.surfaceAlt : colors.surface,
+          minHeight: revealed ? 720 : 640,
+          background: colors.surface,
           border: `1px solid ${colors.border}`,
-          borderRadius: 10,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: flipped ? "stretch" : "center",
-          justifyContent: flipped ? "flex-start" : "center",
-          padding: "34px 40px",
-          cursor: "pointer",
-          transition: "background 0.2s",
-          textAlign: flipped ? "left" : "center",
-          marginBottom: 24,
-          boxShadow: "0 10px 30px rgba(15,15,15,0.08)",
+          borderRadius: 22,
+          boxShadow: "0 22px 68px rgba(15,15,15,0.10)",
+          overflow: "hidden",
         }}
       >
-        {!flipped ? (
-          <>
-            <p style={questionLabelStyle(colors)}>Your question</p>
-            <QuestionText
-              text={card.word || "Screenshot"}
-              color={colors.text}
-              fontSize={questionFontSize(typography)}
-              fontWeight={800}
-              lineHeight={1.45}
-            />
-            <p style={{ fontSize: 13, color: colors.muted, marginTop: 16 }}>Click or press Space to reveal</p>
-          </>
-        ) : (
-          <>
-            <p style={{ fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 850, margin: "0 0 10px" }}>Answer</p>
-            <div style={{ fontSize: typography.answer, color: colors.text, lineHeight: 1.78, margin: 0, maxWidth: "72ch" }}>
-              {renderExplanation(card.explanation || "No explanation yet — save a highlight with this question to get one.", colors)}
-            </div>
-            {card.imageData ? (
-              <ScreenshotPreview imageData={card.imageData} colors={colors} margin="16px 0 0" />
-            ) : card.exampleText ? (
-              <p style={{ fontSize: 13, color: colors.muted, marginTop: 16, lineHeight: 1.55, borderLeft: `3px solid ${colors.border}`, paddingLeft: 10 }}>
-                "{card.exampleText.slice(0, 100)}{card.exampleText.length > 100 ? "…" : ""}"
+        <div
+          style={{
+            minHeight: revealed ? 360 : 640,
+            display: "grid",
+            placeItems: "center",
+            padding: "54px min(72px, 5vw)",
+            textAlign: "center",
+            boxSizing: "border-box",
+          }}
+        >
+          <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1180 }}>
+            {card.imageData && (
+              <img
+                src={card.imageData}
+                alt="Card screenshot"
+                onError={() => {
+                  if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
+                }}
+                style={{
+                  display: "block",
+                  maxWidth: "min(100%, 980px)",
+                  maxHeight: revealed ? 300 : 430,
+                  width: "auto",
+                  objectFit: "contain",
+                  borderRadius: 14,
+                  border: `1px solid ${colors.border}`,
+                  background: colors.surfaceAlt,
+                  boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
+                }}
+              />
+            )}
+            {frontText && (
+              <div
+                dir="auto"
+                style={{
+                  color: colors.text,
+                  fontFamily: frontIsRtl ? ARABIC_FONT_STACK : "inherit",
+                  fontSize: frontIsRtl ? "clamp(34px, 4.2vw, 64px)" : "clamp(28px, 3.3vw, 54px)",
+                  fontWeight: frontIsRtl ? 800 : 850,
+                  lineHeight: frontIsRtl ? 1.8 : 1.32,
+                  maxWidth: "min(100%, 1100px)",
+                  overflowWrap: "break-word",
+                  textAlign: "center",
+                }}
+              >
+                {frontText}
+              </div>
+            )}
+            {!revealed && (
+              <p style={{ color: colors.muted, fontSize: 15, fontWeight: 700, margin: card.imageData || frontText ? "8px 0 0" : 0 }}>
+                Press Space or Enter to reveal
               </p>
-            ) : null}
-            <p style={{ fontSize: 12, color: colors.muted, margin: "16px 0 0", lineHeight: 1.5 }}>
-              {card.fsrsState} · S {card.fsrsStability.toFixed(2)}d · D {card.fsrsDifficulty.toFixed(1)} · Lapses {card.fsrsLapses}
-            </p>
+            )}
+          </div>
+        </div>
+
+        {revealed && (
+          <>
+            <div style={{ borderTop: `1px solid ${colors.border}`, padding: "34px min(72px, 5vw) 40px", background: colors.surfaceAlt }}>
+              <div style={{ maxWidth: 1120, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.78, overflowWrap: "break-word" }}>
+                {renderExplanation(answer, colors)}
+              </div>
+            </div>
+            <div style={{ borderTop: `1px solid ${colors.border}`, background: colors.surface, padding: "26px min(72px, 5vw) 34px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(130px, 1fr))", gap: 18, maxWidth: 1320, margin: "0 auto" }}>
+                {(["again", "hard", "good", "easy"] as FsrsRating[]).map((rating) => {
+                  const style = ratingStyles[rating];
+                  return (
+                    <div key={rating} style={{ display: "grid", gap: 10, justifyItems: "center", borderLeft: rating === "again" ? "none" : `1px solid ${colors.border}` }}>
+                      <span style={{ color: colors.text, fontSize: 14, fontWeight: 800 }}>
+                        {reviewIntervalForWord(card, rating)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => rate(rating)}
+                        style={{
+                          minWidth: 150,
+                          minHeight: 52,
+                          borderRadius: 999,
+                          border: `1px solid ${style.color}`,
+                          background: style.soft,
+                          color: style.color,
+                          fontSize: 17,
+                          fontWeight: 850,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {style.label}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </>
         )}
-      </div>
-
-      {flipped && (
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => rate("again")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
-            Again
-          </button>
-          <button type="button" onClick={() => rate("hard")} style={{ background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.text }}>
-            Hard
-          </button>
-          <button type="button" onClick={() => rate("good")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
-            Good
-          </button>
-          <button type="button" onClick={() => rate("easy")} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 850, cursor: "pointer", color: colors.selectedText }}>
-            Easy
-          </button>
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-        <button onClick={prev} style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}`, borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: colors.text }}>
-          ← Prev
-        </button>
-        <button onClick={next} style={{ background: colors.accent, border: "none", borderRadius: 8, padding: "10px 28px", fontSize: 14, cursor: "pointer", color: colors.selectedText }}>
-          Next →
-        </button>
-      </div>
+      </section>
     </div>
   );
 }
