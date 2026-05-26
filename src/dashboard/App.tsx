@@ -1738,8 +1738,10 @@ function FlashcardView({
   const [revealed, setRevealed] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [decodedImageUrls, setDecodedImageUrls] = useState<Set<string>>(() => new Set());
   const quizRootRef = useRef<HTMLDivElement | null>(null);
   const cardContentRef = useRef<HTMLDivElement | null>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1763,11 +1765,39 @@ function FlashcardView({
   }, [words]);
 
   useEffect(() => {
-    deck.forEach((word) => {
-      if (!word.imageData) return;
-      const image = new Image();
-      image.src = word.imageData;
+    let cancelled = false;
+    const imageUrls = Array.from(new Set(deck.flatMap((word) => word.imageData ? [word.imageData] : [])));
+    imageUrls.forEach((url) => {
+      const cachedImage = imageCacheRef.current.get(url);
+      if (cachedImage?.complete && cachedImage.naturalWidth > 0) {
+        setDecodedImageUrls((current) => current.has(url) ? current : new Set(current).add(url));
+        return;
+      }
+
+      const image = cachedImage ?? new Image();
+      if (!cachedImage) {
+        image.decoding = "async";
+        image.loading = "eager";
+        image.setAttribute("fetchpriority", "high");
+        image.src = url;
+        imageCacheRef.current.set(url, image);
+      }
+
+      const markDecoded = () => {
+        if (cancelled) return;
+        setDecodedImageUrls((current) => current.has(url) ? current : new Set(current).add(url));
+      };
+
+      if (image.complete && image.naturalWidth > 0) {
+        markDecoded();
+        return;
+      }
+
+      image.decode().then(markDecoded).catch(() => {
+        image.addEventListener("load", markDecoded, { once: true });
+      });
     });
+    return () => { cancelled = true; };
   }, [deck]);
 
   useEffect(() => {
@@ -1813,7 +1843,8 @@ function FlashcardView({
   const frontText = (card.word || (!card.imageData ? card.exampleText : "")).trim();
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
-  const studyCardHeight = "min(660px, calc(100vh - 142px))";
+  const imageReady = !card.imageData || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
+  const studyCardHeight = "min(780px, calc(100vh - 132px))";
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
     hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
@@ -1945,28 +1976,38 @@ function FlashcardView({
             }}
           >
             {showAnswer ? (
-              <div style={{ maxWidth: 1160, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.82, overflowWrap: "break-word", textAlign: "left" }}>
+              <div style={{ maxWidth: 1240, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.82, overflowWrap: "break-word", textAlign: "left" }}>
                 {renderExplanation(answer, colors)}
               </div>
             ) : (
-              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1180 }}>
+              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1260 }}>
                 {card.imageData && (
                   <img
                     src={card.imageData}
                     alt="Card screenshot"
+                    loading="eager"
+                    decoding={imageReady ? "sync" : "async"}
+                    fetchPriority="high"
+                    onLoad={() => {
+                      const imageData = card.imageData;
+                      if (!imageData) return;
+                      setDecodedImageUrls((current) => current.has(imageData) ? current : new Set(current).add(imageData));
+                    }}
                     onError={() => {
                       if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
                     }}
                     style={{
                       display: "block",
-                      maxWidth: "min(100%, 980px)",
-                      maxHeight: 370,
+                      maxWidth: "min(100%, 1120px)",
+                      maxHeight: 460,
                       width: "auto",
                       objectFit: "contain",
                       borderRadius: 14,
                       border: `1px solid ${colors.border}`,
                       background: colors.surfaceAlt,
                       boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
+                      opacity: imageReady ? 1 : 0.01,
+                      transition: "opacity 80ms ease",
                     }}
                   />
                 )}
