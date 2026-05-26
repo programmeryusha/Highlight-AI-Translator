@@ -1136,24 +1136,7 @@ function SavesView({
   }, [captures]);
 
   if (captures.length === 0) {
-    return (
-      <div style={{ paddingTop: 48, maxWidth: 620 }}>
-        <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
-          Nothing saved yet.
-        </p>
-        <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.65, margin: "0 0 18px" }}>
-          Highlight text on any page, click Ask, and ContextLens will keep the source, your question, and the explanation together as a card.
-        </p>
-        <div style={{ border: `1px solid ${colors.border}`, borderLeft: `3px solid ${colors.accent}`, borderRadius: 8, background: colors.surface, padding: "15px 16px", maxWidth: 460 }}>
-          <p style={{ color: colors.softText, fontSize: 15, lineHeight: 1.55, margin: "0 0 10px" }}>
-            "A word or passage you highlighted…"
-          </p>
-          <p style={{ color: colors.text, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-            The answer appears here, ready to review or turn into flashcards.
-          </p>
-        </div>
-      </div>
-    );
+    return <EmptySavesState colors={colors} />;
   }
 
   const groups = groupByDay(captures);
@@ -1392,6 +1375,27 @@ function SavesView({
   );
 }
 
+function EmptySavesState({ colors }: { colors: DashboardColors }) {
+  return (
+    <div style={{ paddingTop: 48, maxWidth: 620 }}>
+      <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
+        Nothing saved yet.
+      </p>
+      <p style={{ color: colors.muted, fontSize: 15, lineHeight: 1.65, margin: "0 0 18px" }}>
+        Highlight text on any page, click Ask, and ContextLens will keep the source, your question, and the explanation together as a card.
+      </p>
+      <div style={{ border: `1px solid ${colors.border}`, borderLeft: `3px solid ${colors.accent}`, borderRadius: 8, background: colors.surface, padding: "15px 16px", maxWidth: 460 }}>
+        <p style={{ color: colors.softText, fontSize: 15, lineHeight: 1.55, margin: "0 0 10px" }}>
+          "A word or passage you highlighted…"
+        </p>
+        <p style={{ color: colors.text, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+          The answer appears here, ready to review or turn into flashcards.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function HistoryView({
   captures,
   onDeleteCaptures,
@@ -1421,25 +1425,11 @@ function HistoryView({
     setVisibleMonth(monthKeyFromDate(dateFromDayKey(key)));
   }
 
-  function selectedDayLabel() {
-    if (selectedDay === todayKey()) return "Today";
-    return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    });
-  }
-
   function selectedDayShortLabel() {
     return dateFromDayKey(selectedDay).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     });
-  }
-
-  function emptyDayMessage() {
-    if (selectedDay === todayKey()) return "Nothing saved today.";
-    return `Nothing saved on ${selectedDayLabel()}.`;
   }
 
   const calendarPanel = (
@@ -1500,9 +1490,7 @@ function HistoryView({
         />
       ) : wideLayout ? (
         <div style={calendarGridStyle(calendarVisible)}>
-          <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8 }}>
-            {emptyDayMessage()}
-          </p>
+          <EmptySavesState colors={colors} />
           <div aria-hidden={!calendarVisible} style={calendarRailStyle(calendarVisible)}>
             <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
               {calendarPanel}
@@ -1510,9 +1498,7 @@ function HistoryView({
           </div>
         </div>
       ) : (
-        <p style={{ color: colors.muted, fontSize: 15, paddingTop: 8 }}>
-          {emptyDayMessage()}
-        </p>
+        <EmptySavesState colors={colors} />
       )}
     </div>
   );
