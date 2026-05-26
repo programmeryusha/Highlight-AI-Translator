@@ -1481,7 +1481,7 @@ function HistoryView({
       }}
     >
       {!wideLayout && (
-        <div style={{ margin: "0 0 20px" }}>
+        <div style={{ margin: "48px 0 20px" }}>
           {calendarPanel}
         </div>
       )}
@@ -1506,7 +1506,7 @@ function HistoryView({
       ) : wideLayout ? (
         <div style={calendarGridStyle(calendarVisible)}>
           <EmptySavesState colors={colors} />
-          <div aria-hidden={!calendarVisible} style={calendarRailStyle(calendarVisible)}>
+          <div aria-hidden={!calendarVisible} style={{ ...calendarRailStyle(calendarVisible), paddingTop: 48, boxSizing: "border-box" }}>
             <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
               {calendarPanel}
             </div>
@@ -2910,7 +2910,7 @@ function WordsView({
                 </button>
               )}
               {daySelectionSummary && (
-                <span style={toolbarSummaryStyle(colors)}>
+                <span style={{ ...toolbarSummaryStyle(colors), marginLeft: 10 }}>
                   {daySelectionSummary}
                   <span>·</span>
                   {words.length} {words.length === 1 ? "card" : "cards"}
