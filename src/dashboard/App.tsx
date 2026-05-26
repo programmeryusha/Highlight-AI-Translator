@@ -580,6 +580,20 @@ function parseSaveError(message?: string): ParsedError {
   return { summary, userMessage, nextStep, diagnostic, detail };
 }
 
+function friendlyAccountError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/wrong password|invalid email or password|http\s*401|unauthorized/i.test(message)) {
+    return "Sign in failed: That password doesn't match this account. Try again or use Forgot password.";
+  }
+  if (/network|failed to fetch|could not reach/i.test(message)) {
+    return "Sign in failed: We couldn't reach ContextLens. Check your connection and try again.";
+  }
+  if (/not found|endpoint/i.test(message)) {
+    return "Sign in failed: Account sign-in is temporarily unavailable. Please try again in a moment.";
+  }
+  return "Sign in failed: Please check your email and password, then try again.";
+}
+
 function SaveErrorNotice({
   message,
   colors,
@@ -1844,7 +1858,7 @@ function FlashcardView({
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
   const imageReady = !card.imageData || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
-  const studyCardHeight = "min(780px, calc(100vh - 132px))";
+  const studyCardHeight = "calc(100dvh - 84px)";
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
     hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
@@ -1884,8 +1898,17 @@ function FlashcardView({
   }
 
   return (
-    <div ref={quizRootRef} style={{ maxWidth: 1660, margin: "0 auto", padding: "8px 24px 38px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "44px minmax(180px, 920px)", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 14px" }}>
+    <div
+      ref={quizRootRef}
+      style={{
+        width: "calc(100vw - 24px)",
+        maxWidth: "none",
+        margin: "0 0 0 calc(50% - 50vw + 12px)",
+        padding: "4px 0 12px",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ width: "calc(100% - 96px)", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr)", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 8px" }}>
         <button
           type="button"
           onClick={onClose}
@@ -1919,7 +1942,7 @@ function FlashcardView({
       {completed ? (
         <section
           style={{
-            minHeight: 560,
+            height: studyCardHeight,
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
@@ -1951,7 +1974,6 @@ function FlashcardView({
           onClick={revealOrToggle}
           style={{
             height: studyCardHeight,
-            minHeight: 540,
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
@@ -1976,11 +1998,11 @@ function FlashcardView({
             }}
           >
             {showAnswer ? (
-              <div style={{ maxWidth: 1240, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.82, overflowWrap: "break-word", textAlign: "left" }}>
+              <div style={{ maxWidth: 1500, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.82, overflowWrap: "break-word", textAlign: "left" }}>
                 {renderExplanation(answer, colors)}
               </div>
             ) : (
-              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1260 }}>
+              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1560 }}>
                 {card.imageData && (
                   <img
                     src={card.imageData}
@@ -1998,8 +2020,8 @@ function FlashcardView({
                     }}
                     style={{
                       display: "block",
-                      maxWidth: "min(100%, 1120px)",
-                      maxHeight: 460,
+                      maxWidth: "min(100%, 1420px)",
+                      maxHeight: "min(620px, calc(100dvh - 250px))",
                       width: "auto",
                       objectFit: "contain",
                       borderRadius: 14,
@@ -2020,7 +2042,7 @@ function FlashcardView({
                       fontSize: frontIsRtl ? "clamp(34px, 4.2vw, 64px)" : "clamp(28px, 3.3vw, 54px)",
                       fontWeight: frontIsRtl ? 800 : 850,
                       lineHeight: frontIsRtl ? 1.8 : 1.32,
-                      maxWidth: "min(100%, 1100px)",
+                      maxWidth: "min(100%, 1500px)",
                       overflowWrap: "break-word",
                       textAlign: "center",
                     }}
@@ -3112,7 +3134,7 @@ function SettingsView({
       setAuthPassword("");
       setAccountStatus(`Signed in as ${result.email}.`);
     } catch (error) {
-      setAccountStatus(error instanceof Error ? error.message : "Authentication failed.");
+      setAccountStatus(friendlyAccountError(error));
     } finally {
       setAccountLoading(false);
     }
