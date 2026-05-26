@@ -3839,7 +3839,6 @@ export default function App() {
                     justifyContent: "center",
                     background: hoveredNavView === v && view !== v ? colors.subtle : "transparent",
                     border: "none",
-                    borderBottom: view === v ? `2px solid ${colors.text}` : "2px solid transparent",
                     borderRadius: 8,
                     color: view === v ? colors.text : colors.muted,
                     fontWeight: view === v ? 600 : 400,
