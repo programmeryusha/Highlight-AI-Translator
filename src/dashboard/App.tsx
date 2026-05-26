@@ -1753,7 +1753,6 @@ function FlashcardView({
   const [showAnswer, setShowAnswer] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [decodedImageUrls, setDecodedImageUrls] = useState<Set<string>>(() => new Set());
-  const quizRootRef = useRef<HTMLDivElement | null>(null);
   const cardContentRef = useRef<HTMLDivElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
@@ -1767,16 +1766,15 @@ function FlashcardView({
   }, [words]);
 
   useEffect(() => {
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      scrollQuizIntoView();
-      secondFrame = window.requestAnimationFrame(scrollQuizIntoView);
-    });
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     return () => {
-      window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
     };
-  }, [words]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1858,7 +1856,6 @@ function FlashcardView({
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
   const imageReady = !card.imageData || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
-  const studyCardHeight = "calc(100dvh - 84px)";
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
     hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
@@ -1876,14 +1873,6 @@ function FlashcardView({
     setShowAnswer((current) => !current);
   }
 
-  function scrollQuizIntoView() {
-    const node = quizRootRef.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    const top = Math.max(0, window.scrollY + rect.top - 8);
-    window.scrollTo({ top, behavior: "auto" });
-  }
-
   function rate(rating: FsrsRating) {
     if (completed) return;
     const currentCard = deck[index];
@@ -1899,13 +1888,17 @@ function FlashcardView({
 
   return (
     <div
-      ref={quizRootRef}
       style={{
-        width: "calc(100vw - 24px)",
-        maxWidth: "none",
-        margin: "0 0 0 calc(50% - 50vw + 12px)",
-        padding: "4px 0 12px",
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: colors.bg,
+        color: colors.text,
+        padding: "8px 12px 12px",
         boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
       <div style={{ width: "calc(100% - 96px)", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr)", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 8px" }}>
@@ -1942,7 +1935,8 @@ function FlashcardView({
       {completed ? (
         <section
           style={{
-            height: studyCardHeight,
+            flex: "1 1 auto",
+            minHeight: 0,
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
@@ -1973,7 +1967,8 @@ function FlashcardView({
         <section
           onClick={revealOrToggle}
           style={{
-            height: studyCardHeight,
+            flex: "1 1 auto",
+            minHeight: 0,
             background: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 22,
