@@ -2034,6 +2034,12 @@ function WordsView({
 
   useEffect(() => {
     chrome.storage.local.get("flashcard_sets", (result) => setSets(normalizeFlashcardSets(result.flashcard_sets)));
+    void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_FLASHCARD_SETS" }).catch(() => {});
+    const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.flashcard_sets) setSets(normalizeFlashcardSets(changes.flashcard_sets.newValue));
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
   useEffect(() => {
@@ -2134,9 +2140,20 @@ function WordsView({
     });
   }
 
-  function storeSets(next: FlashcardSet[]) {
-    setSets(next);
-    chrome.storage.local.set({ flashcard_sets: next });
+  function storeSets(next: FlashcardSet[], deletedIds: string[] = []) {
+    const normalized = normalizeFlashcardSets(next);
+    setSets(normalized);
+    chrome.storage.local.set({ flashcard_sets: normalized });
+    if (normalized.length > 0) {
+      void sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: normalized }).catch((error) => {
+        console.warn("ContextLens flashcard set sync skipped", error);
+      });
+    }
+    if (deletedIds.length > 0) {
+      void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_FLASHCARD_SETS", ids: deletedIds }).catch((error) => {
+        console.warn("ContextLens flashcard set delete sync skipped", error);
+      });
+    }
   }
 
   function toggleDay(key: string) {
@@ -2190,7 +2207,7 @@ function WordsView({
         if (set.parentSetId !== id) return set;
         const { parentSetId: _parentSetId, ...independentSet } = set;
         return independentSet;
-      }));
+      }), [id]);
     if (source.kind === "set" && source.setId === id) setSource({ kind: "days" });
   }
 
@@ -2212,7 +2229,7 @@ function WordsView({
           return { ...set, parentSetId: targetSetId, updatedAt: now };
         }
         return set;
-      }));
+      }), [sourceSetId]);
     if (source.kind === "set" && source.setId === sourceSetId) {
       setSource({ kind: "set", setId: targetSetId });
     }
@@ -3602,6 +3619,7 @@ export default function App() {
       document.documentElement.style.setProperty("--contextlens-accent", accent);
     });
     void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_CAPTURES" }).catch(() => {});
+    void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_FLASHCARD_SETS" }).catch(() => {});
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
@@ -3701,10 +3719,24 @@ export default function App() {
     });
 
     chrome.storage.local.get("flashcard_sets", (result) => {
-      const next = normalizeFlashcardSets(result.flashcard_sets)
+      const currentSets = normalizeFlashcardSets(result.flashcard_sets);
+      const next = currentSets
         .map((set) => ({ ...set, captureIds: set.captureIds.filter((id) => !idsToDelete.has(id)) }))
         .filter((set) => set.captureIds.length > 0);
-      chrome.storage.local.set({ flashcard_sets: normalizeFlashcardSets(next) });
+      const normalizedNext = normalizeFlashcardSets(next);
+      const nextIds = new Set(normalizedNext.map((set) => set.id));
+      const deletedSetIds = currentSets.filter((set) => !nextIds.has(set.id)).map((set) => set.id);
+      chrome.storage.local.set({ flashcard_sets: normalizedNext });
+      if (normalizedNext.length > 0) {
+        void sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: normalizedNext }).catch((error) => {
+          console.warn("ContextLens flashcard set sync skipped", error);
+        });
+      }
+      if (deletedSetIds.length > 0) {
+        void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_FLASHCARD_SETS", ids: deletedSetIds }).catch((error) => {
+          console.warn("ContextLens flashcard set delete sync skipped", error);
+        });
+      }
     });
 
     void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {

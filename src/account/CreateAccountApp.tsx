@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import type { ContextLensUser, Message } from "../types";
+import type { AppMode, ContextLensUser, Message } from "../types";
 
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -18,17 +18,41 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
   });
 }
 
+function setStoredAppMode(mode: AppMode): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ app_mode: mode }, () => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError) reject(new Error(lastError.message));
+      else resolve();
+    });
+  });
+}
+
+const modeOptions: { value: AppMode; title: string; description: string }[] = [
+  {
+    value: "language_learning",
+    title: "Language Learning",
+    description: "For learning languages: translations, grammar, vocabulary, and natural phrasing.",
+  },
+  {
+    value: "student",
+    title: "Student",
+    description: "For general info: quick explanations, study help, and context for anything you save.",
+  },
+];
+
 export default function CreateAccountApp() {
   const emailInputRef = useRef<HTMLInputElement | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [selectedMode, setSelectedMode] = useState<AppMode | "">("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   const trimmedEmail = email.trim().toLowerCase();
-  const canSubmit = trimmedEmail.includes("@") && password.length >= 6 && confirmPassword.length >= 6 && !loading;
+  const canSubmit = trimmedEmail.includes("@") && password.length >= 6 && confirmPassword.length >= 6 && Boolean(selectedMode) && !loading;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -44,11 +68,16 @@ export default function CreateAccountApp() {
       setError("Passwords do not match.");
       return;
     }
+    if (!selectedMode) {
+      setError("Choose a mode before creating your account.");
+      return;
+    }
 
     setLoading(true);
     setError("");
     setStatus("");
     try {
+      await setStoredAppMode(selectedMode);
       const account = await sendRuntimeMessage<ContextLensUser>({ type: "SIGN_UP", email: trimmedEmail, password });
       setStatus(`Signed in as ${account.email}. Opening your dashboard...`);
       window.setTimeout(() => {
@@ -123,6 +152,41 @@ export default function CreateAccountApp() {
               style={inputStyle}
             />
           </label>
+
+          <div>
+            <p style={{ color: "#37352f", fontSize: 13, fontWeight: 800, margin: "2px 0 8px" }}>Choose your mode</p>
+            <div role="radiogroup" aria-label="Choose mode" style={{ display: "grid", gap: 10 }}>
+              {modeOptions.map((option) => {
+                const selected = selectedMode === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={loading}
+                    onClick={() => setSelectedMode(option.value)}
+                    style={{
+                      width: "100%",
+                      border: `1px solid ${selected ? "#37352f" : "#d8d7d2"}`,
+                      borderRadius: 8,
+                      background: selected ? "#f0efec" : "#fff",
+                      color: "#37352f",
+                      padding: "12px 13px",
+                      textAlign: "left",
+                      cursor: loading ? "default" : "pointer",
+                    }}
+                  >
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 850, marginBottom: 4 }}>{option.title}</span>
+                    <span style={{ display: "block", color: "#6b7280", fontSize: 13, lineHeight: 1.45 }}>{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ color: "#8b8984", fontSize: 12, lineHeight: 1.5, margin: "8px 0 0" }}>
+              You can change this later by tapping the extension icon.
+            </p>
+          </div>
 
           {error && <p style={{ color: "#dc2626", fontSize: 13, lineHeight: 1.5, margin: "2px 0 0" }}>{error}</p>}
           {status && <p style={{ color: "#2563eb", fontSize: 13, lineHeight: 1.5, margin: "2px 0 0" }}>{status}</p>}

@@ -1,4 +1,4 @@
-import type { Capture, ChatMessage, ContextLensUser, Message } from "../types";
+import type { Capture, ChatMessage, ContextLensUser, FlashcardSet, Message } from "../types";
 
 const BACKEND_URL = "https://web-production-223b1.up.railway.app";
 const CONTENT_SCRIPT_FILE = "src/content/content.js";
@@ -26,6 +26,15 @@ interface RemoteCapture {
   fsrs_due_at?: string;
   fsrs_last_reviewed_at?: string | null;
   fsrs_review_count?: number;
+}
+
+interface RemoteFlashcardSet {
+  id: string;
+  name: string;
+  capture_ids: string[];
+  parent_set_id?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface CaptureFallback {
@@ -147,12 +156,18 @@ void injectIntoOpenTabs();
 void syncCapturesWithRemote().catch((error) => {
   console.warn("ContextLens remote sync skipped", error);
 });
+void syncFlashcardSetsWithRemote().catch((error) => {
+  console.warn("ContextLens flashcard set sync skipped", error);
+});
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.storage.local.remove("anthropic_api_key");
   injectIntoOpenTabs();
   void syncCapturesWithRemote().catch((error) => {
     console.warn("ContextLens remote sync skipped", error);
+  });
+  void syncFlashcardSetsWithRemote().catch((error) => {
+    console.warn("ContextLens flashcard set sync skipped", error);
   });
 });
 
@@ -363,6 +378,24 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   }
   if (message.type === "SYNC_REMOTE_CAPTURES") {
     syncCapturesWithRemote(undefined, { force: true })
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "SYNC_REMOTE_FLASHCARD_SETS") {
+    syncFlashcardSetsWithRemote()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "UPSERT_REMOTE_FLASHCARD_SETS") {
+    upsertRemoteFlashcardSets(message.sets)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
+  if (message.type === "DELETE_REMOTE_FLASHCARD_SETS") {
+    deleteRemoteFlashcardSets(message.ids)
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -656,6 +689,9 @@ async function storeAccount(email: string, token: string): Promise<ContextLensUs
   void syncCapturesWithRemote(account, { force: true }).catch((error) => {
     console.warn("ContextLens post-login sync skipped", error);
   });
+  void syncFlashcardSetsWithRemote(account).catch((error) => {
+    console.warn("ContextLens post-login flashcard set sync skipped", error);
+  });
   return account;
 }
 
@@ -785,6 +821,147 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options
     [REMOTE_SYNC_COMPLETED_AT_KEY]: Date.now(),
   });
   return { synced: remoteCaptures.length };
+}
+
+function normalizeFlashcardSets(value: unknown): FlashcardSet[] {
+  if (!Array.isArray(value)) return [];
+  const normalized = value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const captureIds = Array.isArray(raw.captureIds)
+      ? raw.captureIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+    if (typeof raw.id !== "string" || typeof raw.name !== "string" || captureIds.length === 0) return [];
+    const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
+    const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
+    const parentSetId = typeof raw.parentSetId === "string" && raw.parentSetId !== raw.id ? raw.parentSetId : undefined;
+    return [{
+      id: raw.id,
+      name: raw.name.trim() || "Flashcard set",
+      captureIds: Array.from(new Set(captureIds)),
+      parentSetId,
+      createdAt,
+      updatedAt,
+    }];
+  });
+  const ids = new Set(normalized.map((set) => set.id));
+  return normalized.map((set) => {
+    if (!set.parentSetId || ids.has(set.parentSetId)) return set;
+    const { parentSetId: _parentSetId, ...independentSet } = set;
+    return independentSet;
+  });
+}
+
+function remoteToFlashcardSet(remote: RemoteFlashcardSet): FlashcardSet {
+  return {
+    id: remote.id,
+    name: remote.name,
+    captureIds: remote.capture_ids,
+    parentSetId: remote.parent_set_id ?? undefined,
+    createdAt: remote.created_at,
+    updatedAt: remote.updated_at,
+  };
+}
+
+function flashcardSetToRemotePayload(set: FlashcardSet) {
+  return {
+    id: set.id,
+    name: set.name,
+    capture_ids: set.captureIds,
+    parent_set_id: set.parentSetId ?? null,
+    created_at: set.createdAt,
+    updated_at: set.updatedAt,
+  };
+}
+
+function flashcardSetTimestamp(set: FlashcardSet): number {
+  const updatedAt = Date.parse(set.updatedAt);
+  if (Number.isFinite(updatedAt)) return updatedAt;
+  const createdAt = Date.parse(set.createdAt);
+  return Number.isFinite(createdAt) ? createdAt : 0;
+}
+
+function mergeFlashcardSets(localSets: FlashcardSet[], remoteSets: FlashcardSet[]): FlashcardSet[] {
+  const byId = new Map<string, FlashcardSet>();
+  const order: string[] = [];
+  const put = (set: FlashcardSet, replace = true) => {
+    if (!byId.has(set.id)) order.push(set.id);
+    if (replace || !byId.has(set.id)) byId.set(set.id, set);
+  };
+
+  normalizeFlashcardSets(localSets).forEach((set) => put(set));
+  normalizeFlashcardSets(remoteSets).forEach((remoteSet) => {
+    const localSet = byId.get(remoteSet.id);
+    if (!localSet || flashcardSetTimestamp(remoteSet) > flashcardSetTimestamp(localSet)) {
+      put(remoteSet);
+    }
+  });
+
+  return normalizeFlashcardSets(order.map((id) => byId.get(id)).filter((set): set is FlashcardSet => Boolean(set)));
+}
+
+async function fetchRemoteFlashcardSets(token: string): Promise<FlashcardSet[]> {
+  const res = await fetch(`${BACKEND_URL}/flashcard-sets?token=${encodeURIComponent(token)}`);
+  if (!res.ok) await throwResponseError("Flashcard set sync error", res);
+  const remote: RemoteFlashcardSet[] = await res.json();
+  return normalizeFlashcardSets(remote.map(remoteToFlashcardSet));
+}
+
+async function postRemoteFlashcardSets(account: ContextLensUser, sets: FlashcardSet[]): Promise<FlashcardSet[]> {
+  const normalizedSets = normalizeFlashcardSets(sets);
+  if (normalizedSets.length === 0) return [];
+
+  const res = await fetch(`${BACKEND_URL}/flashcard-sets/sync`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      token: account.token,
+      sets: normalizedSets.map(flashcardSetToRemotePayload),
+    }),
+  });
+  if (!res.ok) await throwResponseError("Flashcard set sync error", res);
+  const remote: RemoteFlashcardSet[] = await res.json();
+  return normalizeFlashcardSets(remote.map(remoteToFlashcardSet));
+}
+
+async function syncFlashcardSetsWithRemote(accountOverride?: ContextLensUser): Promise<{ synced: number }> {
+  const account = accountOverride ?? await getAccount();
+  if (!account) return { synced: 0 };
+
+  const storage = await chrome.storage.local.get("flashcard_sets");
+  const localSets = normalizeFlashcardSets(storage.flashcard_sets);
+  const remoteSets = await fetchRemoteFlashcardSets(account.token);
+  const merged = mergeFlashcardSets(localSets, remoteSets);
+  const syncedSets = merged.length > 0 ? mergeFlashcardSets(merged, await postRemoteFlashcardSets(account, merged)) : merged;
+
+  await chrome.storage.local.set({ flashcard_sets: syncedSets });
+  return { synced: syncedSets.length };
+}
+
+async function upsertRemoteFlashcardSets(sets: FlashcardSet[]): Promise<{ sets: FlashcardSet[] }> {
+  const account = await getAccount();
+  const normalizedSets = normalizeFlashcardSets(sets);
+  if (!account || normalizedSets.length === 0) return { sets: normalizedSets };
+
+  const remoteSets = await postRemoteFlashcardSets(account, normalizedSets);
+  const storage = await chrome.storage.local.get("flashcard_sets");
+  const merged = mergeFlashcardSets(normalizeFlashcardSets(storage.flashcard_sets), remoteSets);
+  await chrome.storage.local.set({ flashcard_sets: merged });
+  return { sets: merged };
+}
+
+async function deleteRemoteFlashcardSets(ids: string[]): Promise<{ deleted: number }> {
+  const account = await getAccount();
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (!account || uniqueIds.length === 0) return { deleted: 0 };
+
+  const res = await fetch(`${BACKEND_URL}/flashcard-sets/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: account.token, ids: uniqueIds }),
+  });
+  if (!res.ok) await throwResponseError("Flashcard set delete sync error", res);
+  return await res.json();
 }
 
 async function deleteRemoteCaptures(ids: string[]): Promise<{ deleted: number }> {

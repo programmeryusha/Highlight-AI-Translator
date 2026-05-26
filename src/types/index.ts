@@ -32,6 +32,8 @@ export interface FlashcardSet {
   updatedAt: string;
 }
 
+export type AppMode = "language_learning" | "student";
+
 export interface StorageSchema {
   captures: Capture[];
   card_font_size?: "small" | "default" | "large" | "extra_large";
@@ -61,6 +63,9 @@ export type Message =
   | { type: "DELETE_ACCOUNT" }
   | { type: "DEEP_DIVE"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
+  | { type: "SYNC_REMOTE_FLASHCARD_SETS" }
+  | { type: "UPSERT_REMOTE_FLASHCARD_SETS"; sets: FlashcardSet[] }
+  | { type: "DELETE_REMOTE_FLASHCARD_SETS"; ids: string[] }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
   | { type: "REVIEW_FLASHCARDS"; ids: string[]; rating: "again" | "hard" | "good" | "easy" }
   | { type: "OPEN_DASHBOARD" }
