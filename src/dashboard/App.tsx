@@ -1392,7 +1392,7 @@ function SavesView({
 
 function EmptySavesState({ colors }: { colors: DashboardColors }) {
   return (
-    <div style={{ paddingTop: 72, maxWidth: 620 }}>
+    <div style={{ maxWidth: 620 }}>
       <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
         Nothing saved yet.
       </p>
@@ -1481,7 +1481,7 @@ function HistoryView({
       }}
     >
       {!wideLayout && (
-        <div style={{ margin: "72px 0 20px" }}>
+        <div style={{ margin: "0 0 20px" }}>
           {calendarPanel}
         </div>
       )}
@@ -1506,7 +1506,7 @@ function HistoryView({
       ) : wideLayout ? (
         <div style={calendarGridStyle(calendarVisible)}>
           <EmptySavesState colors={colors} />
-          <div aria-hidden={!calendarVisible} style={{ ...calendarRailStyle(calendarVisible), paddingTop: 72, boxSizing: "border-box" }}>
+          <div aria-hidden={!calendarVisible} style={{ ...calendarRailStyle(calendarVisible), boxSizing: "border-box" }}>
             <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
               {calendarPanel}
             </div>
