@@ -22,7 +22,7 @@ export default function WelcomeApp() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 34 }}>
           <Step number={1} title="Select text" description="Highlight a word, sentence, paragraph, or screenshot region on a page." />
-          <Step number={2} title="Ask what it means" description="Use the save bubble or right-click menu to add a quick note." />
+          <Step number={2} title="Ask what it means" description="Use the Ask button or right-click menu to add a quick note." />
           <Step number={3} title="Review it later" description="Your explanations, history, and flashcards live in the dashboard." />
         </div>
 

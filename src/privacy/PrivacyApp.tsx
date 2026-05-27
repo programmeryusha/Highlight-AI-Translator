@@ -35,7 +35,7 @@ export default function PrivacyApp() {
           <li><strong>storage</strong> — to save your highlights and settings locally</li>
           <li><strong>tabs</strong> — to inject the content script and capture screenshots</li>
           <li><strong>scripting</strong> — to inject the highlight bubble into web pages</li>
-          <li><strong>contextMenus</strong> — to add a "Save to ContextLens" right-click option</li>
+          <li><strong>contextMenus</strong> — to add an "Ask ContextLens" right-click option</li>
         </ul>
         <p style={{ marginTop: 10 }}>We do not read your browsing history or track which pages you visit.</p>
       </Section>

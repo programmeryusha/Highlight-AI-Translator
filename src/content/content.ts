@@ -2843,7 +2843,7 @@ const runtimeMessageHandler = (message: Message) => {
 chrome.runtime.onMessage.addListener(runtimeMessageHandler);
 cleanupTasks.push(() => chrome.runtime.onMessage.removeListener(runtimeMessageHandler));
 
-// Show Save bubble (or immediate context input) on text selection
+// Show Ask bubble (or immediate context input) on text selection
 type RectLike = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
 type SelectionAnchor = { clientX: number; clientY: number };
 type SelectedTextGeometry = { text: string; rect: RectLike; bounds: RectLike };
@@ -2877,18 +2877,6 @@ function isPageEditableTarget(target: EventTarget | null) {
   if (editable instanceof HTMLTextAreaElement || editable instanceof HTMLSelectElement) return true;
   if (editable.getAttribute("role") === "textbox") return true;
   return (editable as HTMLElement).isContentEditable;
-}
-
-function editableTextControl(target: EventTarget | null): HTMLInputElement | HTMLTextAreaElement | null {
-  const element = targetElement(target);
-  if (!element || isInContextLensUi(element)) return null;
-
-  const editable = element.closest("input, textarea");
-  if (editable instanceof HTMLTextAreaElement) return editable;
-  if (editable instanceof HTMLInputElement && !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(editable.type)) {
-    return editable;
-  }
-  return null;
 }
 
 function pageHasTypingFocus(target?: EventTarget | null) {
@@ -3248,39 +3236,22 @@ function extractSelectionText(selection: Selection): string {
   return raw;
 }
 
-function selectedEditableControlText(target?: EventTarget | null): SelectedTextGeometry | null {
-  const control = editableTextControl(target ?? null) ?? editableTextControl(document.activeElement);
-  if (!control) return null;
-  if (control instanceof HTMLInputElement) return null;
-
-  const start = control.selectionStart ?? 0;
-  const end = control.selectionEnd ?? 0;
-  if (start === end) return null;
-
-  const text = control.value.slice(Math.min(start, end), Math.max(start, end)).trim();
-  if (!text) return null;
-
-  const rect = control.getBoundingClientRect();
-  if (rect.width <= 1 || rect.height <= 1) return null;
-  return { text, rect, bounds: rect };
-}
-
 function selectedPageText(anchor?: SelectionAnchor, target?: EventTarget | null): SelectedTextGeometry | null {
   const selection = window.getSelection();
   const text = selection ? extractSelectionText(selection) : "";
 
   if (text.length > 0 && selection && selection.rangeCount > 0) {
     const range = selection.getRangeAt(0);
-    // Skip selections that live inside any editable field (input, textarea, contenteditable).
+    // Skip selections that live inside any editable field.
     const ancestor = range.commonAncestorContainer instanceof Element
       ? range.commonAncestorContainer
       : range.commonAncestorContainer.parentElement;
-    if (ancestor?.closest("input, textarea, [contenteditable]")) return null;
+    if (ancestor?.closest("input, textarea, select, [contenteditable], [role='textbox']")) return null;
     const geometry = rangeSelectionGeometry(range, anchor);
     if (geometry) return { text, ...geometry };
   }
 
-  return selectedEditableControlText(target);
+  return null;
 }
 
 async function resolveQuranText(rawText: string, range: Range): Promise<string> {
@@ -3333,6 +3304,10 @@ async function resolveQuranText(rawText: string, range: Range): Promise<string> 
 function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (saveBubbleSuppressed()) return;
   if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
+  if (pageHasTypingFocus(event?.target ?? null)) {
+    if (widgetMode === "bubble") removeWidget();
+    return;
+  }
   const recentAnchor = lastSelectionAnchor && performance.now() - lastSelectionAnchor.timestamp < 1000
     ? lastSelectionAnchor
     : null;

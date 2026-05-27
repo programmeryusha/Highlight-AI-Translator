@@ -1392,7 +1392,7 @@ function SavesView({
 
 function EmptySavesState({ colors }: { colors: DashboardColors }) {
   return (
-    <div style={{ paddingTop: 48, maxWidth: 620 }}>
+    <div style={{ paddingTop: 72, maxWidth: 620 }}>
       <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
         Nothing saved yet.
       </p>
@@ -1481,7 +1481,7 @@ function HistoryView({
       }}
     >
       {!wideLayout && (
-        <div style={{ margin: "48px 0 20px" }}>
+        <div style={{ margin: "72px 0 20px" }}>
           {calendarPanel}
         </div>
       )}
@@ -1506,7 +1506,7 @@ function HistoryView({
       ) : wideLayout ? (
         <div style={calendarGridStyle(calendarVisible)}>
           <EmptySavesState colors={colors} />
-          <div aria-hidden={!calendarVisible} style={{ ...calendarRailStyle(calendarVisible), paddingTop: 48, boxSizing: "border-box" }}>
+          <div aria-hidden={!calendarVisible} style={{ ...calendarRailStyle(calendarVisible), paddingTop: 72, boxSizing: "border-box" }}>
             <div style={{ width: CALENDAR_COLUMN_WIDTH, boxSizing: "border-box" }}>
               {calendarPanel}
             </div>
@@ -3564,12 +3564,12 @@ function SettingsView({
         </div>
       </div>
 
-      {/* Save triggers */}
-      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Save trigger</p>
+      {/* Ask triggers */}
+      <p style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Ask trigger</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 40 }}>
         {([
           { field: "bubble" as const, label: "Show Ask button on highlight", desc: "A small button appears over your selection — click it to ask." },
-          { field: "contextMenu" as const, label: "Add to right-click menu", desc: "\"Save to ContextLens\" appears in the right-click context menu." },
+          { field: "contextMenu" as const, label: "Add to right-click menu", desc: "\"Ask ContextLens\" appears in the right-click context menu." },
         ]).map((opt) => (
           <label key={opt.field} style={{ display: "flex", gap: 12, cursor: "pointer", alignItems: "flex-start" }}>
             <input type="checkbox" checked={triggers[opt.field]} onChange={(e) => handleTriggerChange(opt.field, e.target.checked)} style={{ accentColor: colors.accent, marginTop: 3 }} />
@@ -4038,7 +4038,8 @@ export default function App() {
 
   const todayCaptures = captures.filter((capture) => dayKey(capture.savedAt) === currentDayKey);
   const streak = computeStreak(captures);
-  const contentMaxWidth = 1280;
+  const navMaxWidth = 1280;
+  const contentMaxWidth = DASHBOARD_INNER_MAX_WIDTH;
   const contentPadding = "32px";
   const colors = colorsForTheme(theme, accentColor);
 
@@ -4148,7 +4149,7 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text }}>
       <div style={{ borderBottom: `1px solid ${colors.border}`, background: colors.bg }}>
-        <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", padding: "4px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 60 }}>
+        <div style={{ maxWidth: navMaxWidth, margin: "0 auto", padding: "4px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 60 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button
               onClick={() => navigateView("saves")}

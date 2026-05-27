@@ -353,7 +353,7 @@ export default function CropApp() {
               Cancel
             </button>
             <button onClick={() => submit()} style={{ flex: 1, background: accentColor, color: accentText, border: "none", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              Save
+              Ask
             </button>
           </div>
         </div>

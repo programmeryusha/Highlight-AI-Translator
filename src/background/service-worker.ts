@@ -201,7 +201,7 @@ function registerContextMenu(enabled: boolean) {
     if (!enabled) return;
     chrome.contextMenus.create({
       id: "save-highlight",
-      title: "Save to ContextLens",
+      title: "Ask ContextLens",
       contexts: ["selection"],
     });
   });
