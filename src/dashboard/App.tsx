@@ -35,6 +35,7 @@ const CARD_TYPOGRAPHY: Record<CardFontSize, { source: number; context: number; a
 };
 const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
+const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_PROMPT_LIMIT = 260;
@@ -1392,7 +1393,7 @@ function SavesView({
 
 function EmptySavesState({ colors }: { colors: DashboardColors }) {
   return (
-    <div style={{ maxWidth: 620 }}>
+    <div style={{ maxWidth: 620, padding: EMPTY_STATE_PADDING }}>
       <p style={{ color: colors.text, fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
         Nothing saved yet.
       </p>
