@@ -4,6 +4,9 @@ import type { ChatMessage, Message } from "../types";
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
+const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
+const SCREENSHOT_PREVIEW_QUALITY = 0.82;
 
 function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): string {
   if (typeof value !== "string") return fallback;
@@ -29,6 +32,28 @@ function textOnColor(hex: string): string {
   const blue = parseInt(color.slice(5, 7), 16) / 255;
   const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
   return luminance > 0.62 ? "#1f2933" : "#fff";
+}
+
+function createScreenshotPreviewData(source: HTMLCanvasElement): string | undefined {
+  if (source.width <= 0 || source.height <= 0) return undefined;
+  const scale = Math.min(
+    1,
+    SCREENSHOT_PREVIEW_MAX_WIDTH / source.width,
+    SCREENSHOT_PREVIEW_MAX_HEIGHT / source.height,
+  );
+  const preview = document.createElement("canvas");
+  preview.width = Math.max(1, Math.round(source.width * scale));
+  preview.height = Math.max(1, Math.round(source.height * scale));
+  const ctx = preview.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, preview.width, preview.height);
+  try {
+    return preview.toDataURL("image/webp", SCREENSHOT_PREVIEW_QUALITY);
+  } catch {
+    return undefined;
+  }
 }
 
 function firstStrongTextDirection(value: string): "ltr" | "rtl" {
@@ -61,10 +86,17 @@ function renderMarkdown(text: string): React.ReactNode {
   const nodes: React.ReactNode[] = [];
   let listItems: React.ReactNode[] = [];
 
-  function inlineBold(line: string): React.ReactNode[] {
-    return line.split(/\*\*(.*?)\*\*/g).map((part, index) => (
-      index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{part}</strong> : part
-    ));
+  function inlineMarkdown(line: string): React.ReactNode[] {
+    return line.split(/(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*)/g).map((part, index) => {
+      if (!part) return null;
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={index} style={{ fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith("*") && part.endsWith("*")) {
+        return <em key={index} style={{ fontStyle: "italic" }}>{part.slice(1, -1)}</em>;
+      }
+      return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
   }
 
   function flushList() {
@@ -82,12 +114,12 @@ function renderMarkdown(text: string): React.ReactNode {
     }
 
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
-      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2))}</li>);
+      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineMarkdown(trimmed.slice(2))}</li>);
       return;
     }
 
     flushList();
-    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.65 }}>{inlineBold(trimmed)}</p>);
+    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.65 }}>{inlineMarkdown(trimmed)}</p>);
   });
   flushList();
 
@@ -232,12 +264,14 @@ export default function CropApp() {
     await new Promise((r) => (img.onload = r));
     ctx.drawImage(img, selection.x, selection.y, selection.w, selection.h, 0, 0, selection.w, selection.h);
     const croppedDataUrl = canvas.toDataURL("image/png");
+    const imagePreviewData = createScreenshotPreviewData(canvas);
 
     if (immediate) {
       try {
         const response = await sendRuntimeMessage<{ captureId: string; explanation: string }>({
           type: "EXPLAIN_SCREENSHOT",
           imageData: croppedDataUrl,
+          imagePreviewData,
           context: finalContext,
         });
         setCaptureId(response.captureId);
@@ -249,7 +283,7 @@ export default function CropApp() {
 
       setStage("done");
     } else {
-      chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context: finalContext });
+      chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, imagePreviewData, context: finalContext });
       window.close();
     }
   }

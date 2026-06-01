@@ -41,6 +41,60 @@ const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
 const SAVED_CARD_EXPLANATION_LIMIT = 760;
+const SCREENSHOT_PREVIEW_CACHE_LIMIT = 96;
+const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
+const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
+const SCREENSHOT_PREVIEW_QUALITY = 0.82;
+const SCREENSHOT_PREVIEW_BACKFILL_BATCH_SIZE = 4;
+const SCREENSHOT_PREVIEW_BACKFILL_DELAY_MS = 180;
+const screenshotPreviewCache = new Map<string, HTMLImageElement>();
+
+function warmScreenshotPreview(imageData: string) {
+  if (!imageData || screenshotPreviewCache.has(imageData)) return;
+  const img = new Image();
+  img.decoding = "async";
+  img.src = imageData;
+  screenshotPreviewCache.set(imageData, img);
+  if (screenshotPreviewCache.size > SCREENSHOT_PREVIEW_CACHE_LIMIT) {
+    const oldest = screenshotPreviewCache.keys().next().value;
+    if (oldest) screenshotPreviewCache.delete(oldest);
+  }
+  void img.decode?.().catch(() => {});
+}
+
+async function createScreenshotPreviewData(imageData: string): Promise<string | undefined> {
+  if (!imageData.startsWith("data:image/")) return undefined;
+  const img = new Image();
+  img.src = imageData;
+  try {
+    if (img.decode) await img.decode();
+    else await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Image preview decode failed."));
+    });
+  } catch {
+    return undefined;
+  }
+
+  const scale = Math.min(
+    1,
+    SCREENSHOT_PREVIEW_MAX_WIDTH / img.naturalWidth,
+    SCREENSHOT_PREVIEW_MAX_HEIGHT / img.naturalHeight,
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  try {
+    return canvas.toDataURL("image/webp", SCREENSHOT_PREVIEW_QUALITY);
+  } catch {
+    return undefined;
+  }
+}
 
 function viewFromHash(): View {
   const hash = window.location.hash.replace(/^#/, "").toLowerCase();
@@ -266,6 +320,7 @@ function normalizeQuestion(question: string): string {
 function cleanExportCell(value: string): string {
   return value
     .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*([^*\n]+?)\*/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -328,12 +383,6 @@ function renderMarkdown(text: string): React.ReactNode {
   const nodes: React.ReactNode[] = [];
   let listItems: React.ReactNode[] = [];
 
-  function inlineBold(line: string): React.ReactNode[] {
-    return line.split(/\*\*(.*?)\*\*/g).map((part, index) => (
-      index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{part}</strong> : part
-    ));
-  }
-
   function flushList() {
     if (listItems.length) {
       nodes.push(<ul key={nodes.length} style={{ margin: "6px 0 6px 20px", padding: 0 }}>{listItems}</ul>);
@@ -349,12 +398,12 @@ function renderMarkdown(text: string): React.ReactNode {
     }
 
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
-      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2))}</li>);
+      listItems.push(<li key={index} style={{ marginBottom: 4 }}>{inlineParts(trimmed.slice(2))}</li>);
       return;
     }
 
     flushList();
-    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineBold(trimmed)}</p>);
+    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineParts(trimmed)}</p>);
   });
   flushList();
 
@@ -391,11 +440,18 @@ function bidiSpan(text: string): React.ReactNode {
 }
 
 function inlineParts(text: string): React.ReactNode {
-  return text.split(/\*\*(.*?)\*\*/g).map((part, i) =>
-    i % 2 === 1
-      ? <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(part) ? ARABIC_FONT_STACK : "inherit" }}>{bidiSpan(part)}</strong>
-      : bidiSpan(part)
-  );
+  return text.split(/(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*)/g).map((part, i) => {
+    if (!part) return null;
+    if (part.startsWith("**") && part.endsWith("**")) {
+      const content = part.slice(2, -2);
+      return <strong key={i} style={{ fontWeight: 800, fontFamily: ARABIC_RANGE.test(content) ? ARABIC_FONT_STACK : "inherit" }}>{bidiSpan(content)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      const content = part.slice(1, -1);
+      return <em key={i} style={{ fontStyle: "italic", fontFamily: ARABIC_RANGE.test(content) ? ARABIC_FONT_STACK : "inherit" }}>{bidiSpan(content)}</em>;
+    }
+    return <React.Fragment key={i}>{bidiSpan(part)}</React.Fragment>;
+  });
 }
 
 function QuestionText({
@@ -882,7 +938,10 @@ function navigateWithSoftFade(url: string) {
 }
 
 function openChat(id: string) {
-  navigateWithSoftFade(chrome.runtime.getURL("src/chat/chat.html") + `?id=${id}`);
+  const url = new URL(chrome.runtime.getURL("src/chat/chat.html"));
+  url.searchParams.set("id", id);
+  url.searchParams.set("returnUrl", window.location.href);
+  navigateWithSoftFade(url.toString());
 }
 
 function openCaptureFromClick(event: React.MouseEvent, id: string) {
@@ -1002,7 +1061,10 @@ function ScreenshotPreview({
   const [imageFailed, setImageFailed] = useState(false);
   const interactive = Boolean(onClick);
 
-  useEffect(() => { setImageFailed(false); }, [imageData]);
+  useEffect(() => {
+    setImageFailed(false);
+    warmScreenshotPreview(imageData);
+  }, [imageData]);
 
   return (
     <figure
@@ -1041,6 +1103,9 @@ function ScreenshotPreview({
         <img
           src={imageData}
           alt={alt}
+          loading="eager"
+          decoding="async"
+          onLoad={() => warmScreenshotPreview(imageData)}
           onError={() => {
             setImageFailed(true);
             if (imageData && !imageData.startsWith("data:")) refreshRemoteImageUrls();
@@ -1089,7 +1154,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
   if (capture.imageData) {
     return (
       <ScreenshotPreview
-        imageData={capture.imageData}
+        imageData={capture.imagePreviewData ?? capture.imageData}
         colors={colors}
         margin="0 0 18px"
         onClick={(event) => openCaptureFromClick(event, capture.id)}
@@ -1527,6 +1592,7 @@ interface WordEntry {
   explanation: string;
   exampleText: string;
   imageData?: string;
+  imagePreviewData?: string;
   latestSavedAt: string;
   captureIds: string[];
   fsrsStability: number;
@@ -1661,6 +1727,7 @@ function reviewIntervalForWord(word: WordEntry, rating: FsrsRating) {
     explanation: word.explanation,
     status: "done",
     imageData: word.imageData,
+    imagePreviewData: word.imagePreviewData,
     fsrsStability: word.fsrsStability,
     fsrsDifficulty: word.fsrsDifficulty,
     fsrsLapses: word.fsrsLapses,
@@ -1694,6 +1761,7 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
         explanation: c.explanation ?? "",
         exampleText: c.imageData ? "" : c.text,
         imageData: c.imageData,
+        imagePreviewData: c.imagePreviewData,
         latestSavedAt: c.savedAt,
         captureIds: [],
         fsrsStability: c.fsrsStability ?? 0,
@@ -1723,9 +1791,11 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
       entry.word = word || entry.word;
       entry.explanation = c.explanation ?? entry.explanation;
       entry.imageData = c.imageData ?? entry.imageData;
+      entry.imagePreviewData = c.imagePreviewData ?? entry.imagePreviewData;
     }
     if (!entry.explanation && c.explanation) entry.explanation = c.explanation;
     if (!entry.imageData && c.imageData) entry.imageData = c.imageData;
+    if (!entry.imagePreviewData && c.imagePreviewData) entry.imagePreviewData = c.imagePreviewData;
   }
   return Array.from(map.values())
     .sort((a, b) => (
@@ -1988,7 +2058,7 @@ function FlashcardView({
               overflowY: "auto",
               display: "grid",
               placeItems: "center",
-              padding: revealed ? "34px min(64px, 5vw)" : "44px min(64px, 5vw)",
+              padding: revealed ? "34px min(64px, 5vw)" : "32px min(56px, 5vw)",
               textAlign: "center",
               boxSizing: "border-box",
             }}
@@ -1998,7 +2068,7 @@ function FlashcardView({
                 {renderExplanation(answer, colors)}
               </div>
             ) : (
-              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 26 : 20, width: "100%", maxWidth: 1560 }}>
+              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : 20, width: "100%", maxWidth: 1560 }}>
                 {card.imageData && (
                   <img
                     src={card.imageData}
@@ -2045,11 +2115,6 @@ function FlashcardView({
                   >
                     {frontText}
                   </div>
-                )}
-                {!revealed && (
-                  <p style={{ color: colors.muted, fontSize: 15, fontWeight: 700, margin: card.imageData || frontText ? "8px 0 0" : 0 }}>
-                    Press Space, Enter, or click to reveal
-                  </p>
                 )}
               </div>
             )}
@@ -2392,14 +2457,24 @@ function WordsView({
     if (nextWords.length === 0) return;
     setStudyWords(nextWords);
     if (window.location.hash !== "#words/quiz") {
-      window.history.pushState({ contextlensFlashcardQuiz: true }, "", `${window.location.pathname}${window.location.search}#words/quiz`);
+      window.history.pushState(
+        { contextlensFlashcardQuiz: true, returnHash: window.location.hash || "#words" },
+        "",
+        `${window.location.pathname}${window.location.search}#words/quiz`,
+      );
     }
   }
 
   function closeFlashcardQuiz() {
     setStudyWords(null);
     if (window.location.hash === "#words/quiz") {
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#words`);
+      const state = window.history.state as { contextlensFlashcardQuiz?: boolean; returnHash?: string } | null;
+      if (state?.contextlensFlashcardQuiz) {
+        window.history.back();
+        return;
+      }
+      const returnHash = state?.returnHash && state.returnHash !== "#words/quiz" ? state.returnHash : "#words";
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${returnHash}`);
     }
   }
 
@@ -2817,7 +2892,7 @@ function WordsView({
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 {word.imageData && (
-                  <ScreenshotPreview imageData={word.imageData} colors={colors} />
+                  <ScreenshotPreview imageData={word.imagePreviewData ?? word.imageData} colors={colors} />
                 )}
                 {promptPreview && (
                   <div style={{ margin: word.imageData ? "14px 0 0" : 0, width: "100%" }}>
@@ -3939,6 +4014,8 @@ export default function App() {
   const [cardFontSize, setCardFontSizeState] = useState<CardFontSize>(DEFAULT_CARD_FONT_SIZE);
   const [streakTooltipVisible, setStreakTooltipVisible] = useState(false);
   const [hoveredNavView, setHoveredNavView] = useState<View | null>(null);
+  const screenshotPreviewBackfillIds = useRef<Set<string>>(new Set());
+  const [screenshotPreviewBackfillTick, setScreenshotPreviewBackfillTick] = useState(0);
 
   useEffect(() => {
     chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
@@ -3991,6 +4068,90 @@ export default function App() {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  useEffect(() => {
+    for (const capture of captures) {
+      if (capture.imagePreviewData) warmScreenshotPreview(capture.imagePreviewData);
+      else if (capture.imageData && !capture.imageData.startsWith("data:image/")) warmScreenshotPreview(capture.imageData);
+    }
+
+    const candidates = captures
+      .filter((capture) => (
+        capture.imageData?.startsWith("data:image/")
+          && !capture.imagePreviewData
+          && !screenshotPreviewBackfillIds.current.has(capture.id)
+      ))
+      .slice(0, SCREENSHOT_PREVIEW_BACKFILL_BATCH_SIZE);
+    if (candidates.length === 0) return;
+
+    for (const candidate of candidates) screenshotPreviewBackfillIds.current.add(candidate.id);
+    let cancelled = false;
+    let completed = false;
+    let continueTimer: number | null = null;
+    const timer = window.setTimeout(() => {
+      void Promise.all(candidates.map(async (candidate) => {
+        const imageData = candidate.imageData!;
+        const preview = await createScreenshotPreviewData(imageData);
+        return { id: candidate.id, imageData, preview };
+      }))
+        .then(async (results) => {
+          if (cancelled) return;
+          const ready = results.filter((result): result is { id: string; imageData: string; preview: string } => Boolean(result.preview));
+          if (ready.length === 0) return;
+          for (const result of ready) warmScreenshotPreview(result.preview);
+          await new Promise<void>((resolve) => {
+            chrome.storage.local.get("captures", (stored) => {
+              if (cancelled) {
+                resolve();
+                return;
+              }
+              const current: Capture[] = stored.captures ?? [];
+              const previewById = new Map(ready.map((item) => [item.id, item]));
+              let changed = false;
+              const next = current.map((capture) => {
+                const preview = previewById.get(capture.id);
+                if (preview && capture.imageData === preview.imageData && !capture.imagePreviewData) {
+                  changed = true;
+                  return { ...capture, imagePreviewData: preview.preview };
+                }
+                return capture;
+              });
+              if (changed) {
+                chrome.storage.local.set({ captures: next }, () => resolve());
+              } else {
+                resolve();
+              }
+            });
+          });
+        })
+        .finally(() => {
+          if (cancelled) {
+            for (const candidate of candidates) screenshotPreviewBackfillIds.current.delete(candidate.id);
+            return;
+          }
+          completed = true;
+          const hasMore = captures.some((capture) => (
+            capture.imageData?.startsWith("data:image/")
+              && !capture.imagePreviewData
+              && !screenshotPreviewBackfillIds.current.has(capture.id)
+          ));
+          if (hasMore) {
+            continueTimer = window.setTimeout(() => {
+              setScreenshotPreviewBackfillTick((tick) => tick + 1);
+            }, SCREENSHOT_PREVIEW_BACKFILL_DELAY_MS);
+          }
+        });
+    }, SCREENSHOT_PREVIEW_BACKFILL_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (continueTimer !== null) window.clearTimeout(continueTimer);
+      if (!completed) {
+        for (const candidate of candidates) screenshotPreviewBackfillIds.current.delete(candidate.id);
+      }
+    };
+  }, [captures, screenshotPreviewBackfillTick]);
 
   function navigateView(nextView: View) {
     setView(nextView);

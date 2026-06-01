@@ -41,9 +41,16 @@ function bidiSpan(text: string): React.ReactNode {
 }
 
 function inlineTextParts(text: string): React.ReactNode {
-  return text.split(/\*\*(.*?)\*\*/g).map((part, index) => (
-    index % 2 === 1 ? <strong key={index} style={{ fontWeight: 800 }}>{bidiSpan(part)}</strong> : bidiSpan(part)
-  ));
+  return text.split(/(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*)/g).map((part, index) => {
+    if (!part) return null;
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index} style={{ fontWeight: 800 }}>{bidiSpan(part.slice(2, -2))}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={index} style={{ fontStyle: "italic" }}>{bidiSpan(part.slice(1, -1))}</em>;
+    }
+    return <React.Fragment key={index}>{bidiSpan(part)}</React.Fragment>;
+  });
 }
 
 function QuestionText({ text, color, fontSize }: { text: string; color: string; fontSize: number }) {
@@ -158,6 +165,31 @@ function navigateWithSoftFade(url: string) {
   }, 150);
 }
 
+function dashboardUrl() {
+  return chrome.runtime.getURL("src/dashboard/dashboard.html");
+}
+
+function safeDashboardReturnUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const dashboard = new URL(dashboardUrl());
+    if (url.origin === dashboard.origin && url.pathname === dashboard.pathname) return url.toString();
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function goBackToDashboardSource(returnUrl: string | null) {
+  const target = safeDashboardReturnUrl(returnUrl);
+  if (target && window.history.length > 1) {
+    window.history.back();
+    return;
+  }
+  navigateWithSoftFade(target ?? dashboardUrl());
+}
+
 function renderMarkdown(text: string): React.ReactNode {
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
@@ -170,16 +202,11 @@ function renderMarkdown(text: string): React.ReactNode {
     }
   }
 
-  function inlineBold(line: string, _key: number): React.ReactNode {
-    const parts = line.split(/\*\*(.*?)\*\*/g);
-    return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ fontWeight: 800 }}>{bidiSpan(part)}</strong> : bidiSpan(part));
-  }
-
   lines.forEach((line, i) => {
     const trimmed = line.trim();
     if (!trimmed) { flushList(); return; }
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
-      listItems.push(<li key={i} style={{ marginBottom: 4 }}>{inlineBold(trimmed.slice(2), i)}</li>);
+      listItems.push(<li key={i} style={{ marginBottom: 4 }}>{inlineTextParts(trimmed.slice(2))}</li>);
     } else {
       flushList();
       const direction = firstStrongTextDirection(trimmed);
@@ -195,7 +222,7 @@ function renderMarkdown(text: string): React.ReactNode {
             unicodeBidi: "plaintext",
           }}
         >
-          {inlineBold(trimmed, i)}
+          {inlineTextParts(trimmed)}
         </p>
       );
     }
@@ -207,6 +234,7 @@ function renderMarkdown(text: string): React.ReactNode {
 export default function ChatApp() {
   const params = new URLSearchParams(location.search);
   const captureId = params.get("id");
+  const returnUrl = params.get("returnUrl");
 
   const [capture, setCapture] = useState<Capture | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -405,10 +433,10 @@ export default function ChatApp() {
       {/* Header */}
       <div style={{ padding: "32px 48px 0" }}>
         <a
-          href={chrome.runtime.getURL("src/dashboard/dashboard.html")}
+          href={safeDashboardReturnUrl(returnUrl) ?? dashboardUrl()}
           onClick={(event) => {
             event.preventDefault();
-            navigateWithSoftFade(chrome.runtime.getURL("src/dashboard/dashboard.html"));
+            goBackToDashboardSource(returnUrl);
           }}
           style={{ fontSize: 13, color: colors.muted, textDecoration: "none", display: "inline-block", marginBottom: 24 }}
         >

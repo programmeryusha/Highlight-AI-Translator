@@ -9,6 +9,7 @@ export interface Capture {
   status: "pending" | "done" | "error";
   errorMessage?: string;
   imageData?: string; // base64 data URL for screenshot captures
+  imagePreviewData?: string; // smaller WebP data URL for dashboard previews
   fsrsStability?: number;
   fsrsDifficulty?: number;
   fsrsLapses?: number;
@@ -52,16 +53,16 @@ export type Message =
   | { type: "SHOW_CONTEXT_INPUT"; text: string }
   | { type: "TAKE_SCREENSHOT"; scrollX?: number; scrollY?: number }
   | { type: "SHOW_CROP_OVERLAY"; imageData: string; scrollX?: number; scrollY?: number }
-  | { type: "SAVE_SCREENSHOT"; imageData: string; context: string }
-  | { type: "EXPLAIN_SCREENSHOT"; imageData: string; context: string; replaceCaptureId?: string }
+  | { type: "SAVE_SCREENSHOT"; imageData: string; imagePreviewData?: string; context: string }
+  | { type: "EXPLAIN_SCREENSHOT"; imageData: string; imagePreviewData?: string; context: string; replaceCaptureId?: string }
   | { type: "RETRY_CAPTURE"; captureId: string }
-  | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
+  | { type: "ASK_FOLLOWUP"; captureId: string; question: string; deepDive?: boolean; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackImagePreviewData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SIGN_UP"; email: string; password: string }
   | { type: "SIGN_IN"; email: string; password: string }
   | { type: "SIGN_IN_OR_SIGN_UP"; email: string; password: string }
   | { type: "SIGN_OUT" }
   | { type: "DELETE_ACCOUNT" }
-  | { type: "DEEP_DIVE"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackUrl?: string; fallbackTitle?: string }
+  | { type: "DEEP_DIVE"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackImagePreviewData?: string; fallbackUrl?: string; fallbackTitle?: string }
   | { type: "SYNC_REMOTE_CAPTURES" }
   | { type: "SYNC_REMOTE_FLASHCARD_SETS" }
   | { type: "UPSERT_REMOTE_FLASHCARD_SETS"; sets: FlashcardSet[] }

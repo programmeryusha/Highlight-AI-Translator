@@ -1,8 +1,12 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-24-overlay-text-inset-v1";
+const CONTENT_SCRIPT_VERSION = "2026-05-31-preview-markdown-v2";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
+const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
+const SCREENSHOT_PREVIEW_QUALITY = 0.82;
 type ThemeName = "light" | "dark";
+type ScreenshotCrop = { imageData: string; imagePreviewData?: string };
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -24,6 +28,28 @@ function rgbTriplet(hex: string): string {
 
 function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${rgbTriplet(hex)}, ${alpha})`;
+}
+
+function createScreenshotPreviewData(source: HTMLCanvasElement): string | undefined {
+  if (source.width <= 0 || source.height <= 0) return undefined;
+  const scale = Math.min(
+    1,
+    SCREENSHOT_PREVIEW_MAX_WIDTH / source.width,
+    SCREENSHOT_PREVIEW_MAX_HEIGHT / source.height,
+  );
+  const preview = document.createElement("canvas");
+  preview.width = Math.max(1, Math.round(source.width * scale));
+  preview.height = Math.max(1, Math.round(source.height * scale));
+  const ctx = preview.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, preview.width, preview.height);
+  try {
+    return preview.toDataURL("image/webp", SCREENSHOT_PREVIEW_QUALITY);
+  } catch {
+    return undefined;
+  }
 }
 
 function relativeLuminance(hex: string): number {
@@ -221,6 +247,7 @@ function fallbackForDisconnectedStream(message: Record<string, unknown>, started
       fallbackText: optionalString(message.fallbackText),
       fallbackContext: optionalString(message.fallbackContext),
       fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
       fallbackUrl: optionalString(message.fallbackUrl),
       fallbackTitle: optionalString(message.fallbackTitle),
     };
@@ -230,6 +257,7 @@ function fallbackForDisconnectedStream(message: Record<string, unknown>, started
     return {
       type: "EXPLAIN_SCREENSHOT",
       imageData: String(message.imageData ?? ""),
+      imagePreviewData: optionalString(message.imagePreviewData),
       context: String(message.context ?? ""),
       replaceCaptureId: startedCaptureId || undefined,
     };
@@ -242,6 +270,7 @@ function fallbackForDisconnectedStream(message: Record<string, unknown>, started
       fallbackText: optionalString(message.fallbackText),
       fallbackContext: optionalString(message.fallbackContext),
       fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
       fallbackUrl: optionalString(message.fallbackUrl),
       fallbackTitle: optionalString(message.fallbackTitle),
     };
@@ -471,10 +500,13 @@ type ConversationScrollState = {
   top: number;
   atBottom: boolean;
   pendingAnchor: "none" | "latest-user" | "latest-assistant";
+  autoFollow: boolean;
+  programmaticScroll: boolean;
+  lastTouchY: number | null;
 };
 
 function createConversationScrollState(): ConversationScrollState {
-  return { top: 0, atBottom: false, pendingAnchor: "none" };
+  return { top: 0, atBottom: false, pendingAnchor: "none", autoFollow: false, programmaticScroll: false, lastTouchY: null };
 }
 
 function conversationMaxScrollTop(element: HTMLElement) {
@@ -484,12 +516,46 @@ function conversationMaxScrollTop(element: HTMLElement) {
 function rememberConversationScroll(state: ConversationScrollState, element: HTMLElement | null) {
   if (!element) return;
   const maxTop = conversationMaxScrollTop(element);
+  if (!state.programmaticScroll && state.autoFollow && element.scrollTop + 8 < state.top) {
+    state.autoFollow = false;
+  }
   state.top = Math.max(0, Math.min(element.scrollTop, maxTop));
   state.atBottom = maxTop > 0 && maxTop - element.scrollTop <= 16;
 }
 
+function setConversationScrollTop(state: ConversationScrollState, element: HTMLElement, top: number) {
+  state.programmaticScroll = true;
+  element.scrollTop = top;
+  rememberConversationScroll(state, element);
+  window.setTimeout(() => {
+    state.programmaticScroll = false;
+  }, 0);
+}
+
+function startConversationAutoFollow(state: ConversationScrollState, anchor: ConversationScrollState["pendingAnchor"]) {
+  state.pendingAnchor = anchor;
+  state.autoFollow = true;
+}
+
+function stopConversationAutoFollow(state: ConversationScrollState) {
+  state.autoFollow = false;
+}
+
 function trackConversationScroll(state: ConversationScrollState, element: HTMLElement) {
   element.addEventListener("scroll", () => rememberConversationScroll(state, element), { passive: true });
+  element.addEventListener("wheel", (event) => {
+    if (event.deltaY < 0) stopConversationAutoFollow(state);
+  }, { passive: true });
+  element.addEventListener("touchstart", (event) => {
+    state.lastTouchY = event.touches[0]?.clientY ?? null;
+  }, { passive: true });
+  element.addEventListener("touchmove", (event) => {
+    const currentY = event.touches[0]?.clientY;
+    if (currentY !== undefined && state.lastTouchY !== null && currentY > state.lastTouchY) {
+      stopConversationAutoFollow(state);
+    }
+    state.lastTouchY = currentY ?? state.lastTouchY;
+  }, { passive: true });
 }
 
 function restoreConversationScroll(
@@ -504,14 +570,15 @@ function restoreConversationScroll(
       ? targets.latestAssistant
       : null;
   if (anchorTarget) {
-    element.scrollTop = Math.max(0, Math.min(anchorTarget.offsetTop - 12, maxTop));
+    setConversationScrollTop(state, element, Math.max(0, Math.min(anchorTarget.offsetTop - 12, maxTop)));
     state.pendingAnchor = "none";
+  } else if (state.autoFollow) {
+    setConversationScrollTop(state, element, maxTop);
   } else if (state.atBottom) {
-    element.scrollTop = maxTop;
+    setConversationScrollTop(state, element, maxTop);
   } else {
-    element.scrollTop = Math.max(0, Math.min(state.top, maxTop));
+    setConversationScrollTop(state, element, Math.max(0, Math.min(state.top, maxTop)));
   }
-  rememberConversationScroll(state, element);
 }
 
 function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
@@ -586,14 +653,20 @@ const LABEL_DISPLAY: Record<string, string> = { "Direct": "Direct meaning" };
 const MEANING_LABELS = new Set(["Meaning", "Direct", "Plain meaning"]);
 
 function appendInlineMarkdown(container: HTMLElement, text: string) {
-  text.split(/\*\*(.*?)\*\*/g).forEach((part, partIndex) => {
+  text.split(/(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*)/g).forEach((part) => {
     if (!part) return;
-    if (partIndex % 2 === 1) {
+    if (part.startsWith("**") && part.endsWith("**")) {
       const strong = document.createElement("strong");
       strong.style.fontWeight = "700";
       strong.style.color = "inherit";
-      appendBidiText(strong, part);
+      appendBidiText(strong, part.slice(2, -2));
       container.appendChild(strong);
+    } else if (part.startsWith("*") && part.endsWith("*")) {
+      const emphasis = document.createElement("em");
+      emphasis.style.fontStyle = "italic";
+      emphasis.style.color = "inherit";
+      appendBidiText(emphasis, part.slice(1, -1));
+      container.appendChild(emphasis);
     } else {
       appendBidiText(container, part);
     }
@@ -1219,11 +1292,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
     styleExpandedWidget();
     const colors = uiColors();
     const title = document.createElement("div");
-    title.textContent = `This looks similar to a save from ${shortRelativeTime(similar.savedAt)}.`;
+    title.textContent = `This looks like a revised save from ${shortRelativeTime(similar.savedAt)}.`;
     title.setAttribute("style", `color:${colors.text};font-size:14px;line-height:1.45;font-weight:700;margin-bottom:6px;`);
     const detail = document.createElement("div");
     const previewText = similar.text.length > 110 ? `${similar.text.slice(0, 110).trim()}…` : similar.text;
-    detail.textContent = `"${previewText}"`;
+    detail.textContent = `Earlier: "${previewText}"`;
     detail.setAttribute("style", `color:${colors.muted};font-size:12px;line-height:1.45;margin-bottom:12px;max-height:54px;overflow:hidden;`);
     const row = document.createElement("div");
     row.setAttribute("style", "display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;");
@@ -1236,7 +1309,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       onKeepBoth();
     });
     const replaceBtn = document.createElement("button");
-    replaceBtn.textContent = "Replace earlier";
+    replaceBtn.textContent = "Keep this only";
     replaceBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 12px;font-size:13px;font-weight:800;cursor:pointer;`);
     replaceBtn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1453,7 +1526,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (!question || loading) return;
       hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-      widgetConversationScroll.pendingAnchor = "latest-user";
+      startConversationAutoFollow(widgetConversationScroll, "latest-user");
       renderConversation(captureId, nextMessages, true, "Thinking…");
       let streamed = "";
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1607,7 +1680,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyText = "";
         analogyLoading = false;
         ensureDeepDiveStyles();
-        widgetConversationScroll.pendingAnchor = "latest-assistant";
+        startConversationAutoFollow(widgetConversationScroll, "latest-assistant");
         renderConversation(captureId, messages, true, "Thinking through a deeper answer…");
         widget?.classList.add("cl-deep-dive-glow");
         const timeout = new Promise<never>((_, reject) =>
@@ -1664,6 +1737,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       settleExpandedWidgetPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
       addResizeHandles();
       restoreConversationScroll(widgetConversationScroll, list, { latestUser: latestUserBlock, latestAssistant: latestAssistantBlock });
+      if (!loading) stopConversationAutoFollow(widgetConversationScroll);
     });
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
@@ -1732,7 +1806,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         return;
       }
 
-      similarRecentSave(selectedText, location.href)
+      similarRecentSave(selectedText, location.href, context)
         .then((similar) => {
           if (!similar || submitted) {
             submitSaveMessage(message, closeAfterSave);
@@ -2006,14 +2080,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }
     }
 
-    function cropSelection(): string | null {
+    function cropSelection(): ScreenshotCrop | null {
       if (!selection) return null;
       const offscreen = document.createElement("canvas");
       offscreen.width = selection.w;
       offscreen.height = selection.h;
       const offCtx = offscreen.getContext("2d")!;
       offCtx.drawImage(img, selection.x, selection.y, selection.w, selection.h, 0, 0, selection.w, selection.h);
-      return offscreen.toDataURL("image/png");
+      return {
+        imageData: offscreen.toDataURL("image/png"),
+        imagePreviewData: createScreenshotPreviewData(offscreen),
+      };
     }
 
     function styleAnswerPanel() {
@@ -2322,7 +2399,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         if (!question || loading) return;
         panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
-        contextPanelConversationScroll.pendingAnchor = "latest-user";
+        startConversationAutoFollow(contextPanelConversationScroll, "latest-user");
         renderConversationPanel(captureId, nextMessages, true, "Thinking…");
         let streamed = "";
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -2476,7 +2553,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           panelAnalogyText = "";
           panelAnalogyLoading = false;
           ensureDeepDiveStyles();
-          contextPanelConversationScroll.pendingAnchor = "latest-assistant";
+          startConversationAutoFollow(contextPanelConversationScroll, "latest-assistant");
           renderConversationPanel(captureId, messages, true, "Thinking through a deeper answer…");
           contextPanel?.classList.add("cl-deep-dive-glow");
           const timeout = new Promise<never>((_, reject) =>
@@ -2531,6 +2608,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       requestAnimationFrame(() => {
         settleAnswerPanelPosition(!loading && messages.length === 1 ? Math.min(52, Math.max(28, viewportHeight() * 0.06)) : 0);
         restoreConversationScroll(contextPanelConversationScroll, list, { latestUser: latestPanelUserBlock, latestAssistant: latestPanelAssistantBlock });
+        if (!loading) stopConversationAutoFollow(contextPanelConversationScroll);
       });
       setTimeout(() => input.focus({ preventScroll: true }), 50);
       closeContextPanelOnOutsideClick();
@@ -2538,8 +2616,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
 
     function cropAndSend(context: string) {
       if (contextPanelSubmitted) return;
-      const croppedDataUrl = cropSelection();
-      if (!croppedDataUrl) return;
+      const crop = cropSelection();
+      if (!crop) return;
 
       chrome.storage.local.get("contextlens_user", (result) => {
         if (!result.contextlens_user) {
@@ -2549,13 +2627,13 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         }
 
         contextPanelSubmitted = true;
-        activePanelImageData = croppedDataUrl;
+        activePanelImageData = crop.imageData;
         activePanelContext = context;
         removeContextPanelOutsideHandler();
 
         getShowAnswerImmediately((immediate) => {
           if (!immediate) {
-            chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: croppedDataUrl, context } as Message);
+            chrome.runtime.sendMessage({ type: "SAVE_SCREENSHOT", imageData: crop.imageData, imagePreviewData: crop.imagePreviewData, context } as Message);
             removeCropOverlay();
             return;
           }
@@ -2563,7 +2641,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           renderLoadingPanel();
           let captureId = "";
           let streamed = "";
-          streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: croppedDataUrl, context }, {
+          streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: crop.imageData, imagePreviewData: crop.imagePreviewData, context }, {
             onStart: (id) => { captureId = id; },
             onChunk: (chunk) => {
               streamed += chunk;
@@ -2800,9 +2878,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
     });
 
     canvas.addEventListener("mouseup", () => {
+      if (!dragStart) return;
       if (!selection) {
         dragStart = null;
-        removeCropOverlay();
+        redraw();
         return;
       }
       if (selection.w < 10 || selection.h < 10) {
@@ -3019,11 +3098,12 @@ function getLocalCaptures(): Promise<Capture[]> {
   });
 }
 
-async function similarRecentSave(text: string, url: string): Promise<Capture | null> {
+async function similarRecentSave(text: string, url: string, context: string): Promise<Capture | null> {
   const captures = await getLocalCaptures();
   const now = Date.now();
   const pageUrl = normalizePageUrl(url);
   const normalizedText = normalizeForSimilarity(text);
+  const normalizedContext = normalizeForSimilarity(context);
   if (!normalizedText) return null;
 
   return captures
@@ -3033,7 +3113,9 @@ async function similarRecentSave(text: string, url: string): Promise<Capture | n
       const age = now - new Date(capture.savedAt).getTime();
       if (age < 0 || age > 5 * 60_000) return false;
       const existing = normalizeForSimilarity(capture.text);
-      if (!existing || existing === normalizedText) return false;
+      const existingContext = normalizeForSimilarity(capture.context);
+      if (!existing) return false;
+      if (existing === normalizedText) return existingContext !== normalizedContext;
       return characterSimilarity(existing, normalizedText) >= 0.86;
     })
     .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())[0] ?? null;

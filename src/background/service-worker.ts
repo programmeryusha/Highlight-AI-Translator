@@ -17,6 +17,7 @@ interface RemoteCapture {
   url?: string;
   title?: string;
   image_data?: string | null;
+  image_preview_data?: string | null;
   explanation: string | null;
   saved_at: string;
   fsrs_stability?: number;
@@ -41,6 +42,7 @@ interface CaptureFallback {
   text?: string;
   context?: string;
   imageData?: string;
+  imagePreviewData?: string;
   url?: string;
   title?: string;
 }
@@ -67,23 +69,31 @@ function normalizeTextForDuplicate(value: string): string {
     .trim();
 }
 
-function findExactRecentDuplicate(captures: Capture[], text: string, url: string, now = Date.now()): Capture | null {
+function findExactRecentDuplicate(captures: Capture[], text: string, context: string, url: string, now = Date.now()): Capture | null {
   const normalizedText = normalizeTextForDuplicate(text);
+  const normalizedContext = normalizeTextForDuplicate(context);
   const normalizedUrl = normalizePageUrl(url);
   if (!normalizedText || !normalizedUrl) return null;
   return captures.find((capture) => {
     if (capture.imageData) return false;
     if (normalizePageUrl(capture.url) !== normalizedUrl) return false;
     if (normalizeTextForDuplicate(capture.text) !== normalizedText) return false;
+    if (normalizeTextForDuplicate(capture.context) !== normalizedContext) return false;
     return now - new Date(capture.savedAt).getTime() <= EXACT_DUPLICATE_WINDOW_MS;
   }) ?? null;
 }
 
 function captureSyncSignature(capture: Capture): string {
   const imageData = capture.imageData ?? "";
+  const imagePreviewData = capture.imagePreviewData ?? "";
   const imageKind = imageData.startsWith("data:")
     ? "data"
     : imageData
+      ? "remote"
+      : "none";
+  const imagePreviewKind = imagePreviewData.startsWith("data:")
+    ? "data"
+    : imagePreviewData
       ? "remote"
       : "none";
 
@@ -103,6 +113,8 @@ function captureSyncSignature(capture: Capture): string {
     fsrsReviewCount: capture.fsrsReviewCount ?? 0,
     imageKind,
     imageSize: imageKind === "data" ? imageData.length : 0,
+    imagePreviewKind,
+    imagePreviewSize: imagePreviewKind === "data" ? imagePreviewData.length : 0,
   });
 }
 
@@ -302,10 +314,10 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     void takeScreenshot(message.scrollX, message.scrollY);
   }
   if (message.type === "SAVE_SCREENSHOT") {
-    void saveScreenshot(message.imageData, message.context);
+    void saveScreenshot(message.imageData, message.context, message.imagePreviewData);
   }
   if (message.type === "EXPLAIN_SCREENSHOT") {
-    explainAndSaveScreenshot(message.imageData, message.context, message.replaceCaptureId)
+    explainAndSaveScreenshot(message.imageData, message.context, message.imagePreviewData, message.replaceCaptureId)
       .then(sendResponse)
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
@@ -321,6 +333,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       text: message.fallbackText,
       context: message.fallbackContext,
       imageData: message.fallbackImageData,
+      imagePreviewData: message.fallbackImagePreviewData,
       url: message.fallbackUrl,
       title: message.fallbackTitle,
     })
@@ -363,6 +376,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       text: message.fallbackText,
       context: message.fallbackContext,
       imageData: message.fallbackImageData,
+      imagePreviewData: message.fallbackImagePreviewData,
       url: message.fallbackUrl,
       title: message.fallbackTitle,
     })
@@ -463,6 +477,7 @@ chrome.runtime.onConnect.addListener((port) => {
           text: typeof message.fallbackText === "string" ? message.fallbackText : undefined,
           context: typeof message.fallbackContext === "string" ? message.fallbackContext : undefined,
           imageData: typeof message.fallbackImageData === "string" ? message.fallbackImageData : undefined,
+          imagePreviewData: typeof message.fallbackImagePreviewData === "string" ? message.fallbackImagePreviewData : undefined,
           url: typeof message.fallbackUrl === "string" ? message.fallbackUrl : undefined,
           title: typeof message.fallbackTitle === "string" ? message.fallbackTitle : undefined,
         },
@@ -480,6 +495,7 @@ chrome.runtime.onConnect.addListener((port) => {
           text: typeof message.fallbackText === "string" ? message.fallbackText : undefined,
           context: typeof message.fallbackContext === "string" ? message.fallbackContext : undefined,
           imageData: typeof message.fallbackImageData === "string" ? message.fallbackImageData : undefined,
+          imagePreviewData: typeof message.fallbackImagePreviewData === "string" ? message.fallbackImagePreviewData : undefined,
           url: typeof message.fallbackUrl === "string" ? message.fallbackUrl : undefined,
           title: typeof message.fallbackTitle === "string" ? message.fallbackTitle : undefined,
         },
@@ -494,6 +510,7 @@ chrome.runtime.onConnect.addListener((port) => {
       explainAndSaveScreenshotStream(
         String(message.imageData ?? ""),
         String(message.context ?? ""),
+        typeof message.imagePreviewData === "string" ? message.imagePreviewData : undefined,
         (captureId) => post({ type: "started", captureId }),
         (chunk) => post({ type: "chunk", text: chunk }),
       )
@@ -613,6 +630,9 @@ function remoteToCapture(remote: RemoteCapture): Capture {
   const imageData = remote.image_data?.startsWith("/")
     ? `${BACKEND_URL}${remote.image_data}`
     : remote.image_data ?? undefined;
+  const imagePreviewData = remote.image_preview_data?.startsWith("/")
+    ? `${BACKEND_URL}${remote.image_preview_data}`
+    : remote.image_preview_data ?? undefined;
 
   return {
     id: remote.id,
@@ -624,6 +644,7 @@ function remoteToCapture(remote: RemoteCapture): Capture {
     explanation: remote.explanation,
     status: "done",
     imageData,
+    imagePreviewData,
     fsrsStability: remote.fsrs_stability ?? 0,
     fsrsDifficulty: remote.fsrs_difficulty ?? 5,
     fsrsLapses: remote.fsrs_lapses ?? 0,
@@ -634,7 +655,7 @@ function remoteToCapture(remote: RemoteCapture): Capture {
   };
 }
 
-function captureToRemotePayload(capture: Capture, token: string) {
+function captureToRemotePayload(capture: Capture, token: string, includePreview = true) {
   const payload: Record<string, unknown> = {
     token,
     id: capture.id,
@@ -646,6 +667,7 @@ function captureToRemotePayload(capture: Capture, token: string) {
     explanation: capture.explanation,
     saved_at: capture.savedAt,
   };
+  if (includePreview && capture.imagePreviewData) payload.image_preview_data = capture.imagePreviewData;
   if (capture.fsrsStability !== undefined) payload.fsrs_stability = capture.fsrsStability;
   if (capture.fsrsDifficulty !== undefined) payload.fsrs_difficulty = capture.fsrsDifficulty;
   if (capture.fsrsLapses !== undefined) payload.fsrs_lapses = capture.fsrsLapses;
@@ -744,11 +766,18 @@ async function saveCaptureRemote(capture: Capture): Promise<void> {
   const account = await getAccount();
   if (!account) return;
 
-  const res = await fetch(`${BACKEND_URL}/captures`, {
+  let res = await fetch(`${BACKEND_URL}/captures`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(captureToRemotePayload(capture, account.token)),
   });
+  if (!res.ok && capture.imagePreviewData && (res.status === 400 || res.status === 422)) {
+    res = await fetch(`${BACKEND_URL}/captures`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(captureToRemotePayload(capture, account.token, false)),
+    });
+  }
   if (!res.ok) await throwResponseError("Sync error", res);
   await markCapturesSynced([capture]);
 }
@@ -804,7 +833,10 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options
       const imageData = capture.imageData?.startsWith("data:")
         ? capture.imageData
         : (remote.imageData ?? capture.imageData);
-      merged.set(capture.id, { ...remote, imageData });
+      const imagePreviewData = capture.imagePreviewData?.startsWith("data:")
+        ? capture.imagePreviewData
+        : (remote.imagePreviewData ?? capture.imagePreviewData);
+      merged.set(capture.id, { ...remote, imageData, imagePreviewData });
     }
   });
   const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
@@ -1032,67 +1064,35 @@ async function waitForCaptureResult(captureId: string): Promise<{ captureId: str
   return { captureId, explanation: "Already saved a moment ago. The first answer is still being prepared." };
 }
 
-function captureHasAttachedData(capture: Capture, setCaptureIds: Set<string>, deepDiveIds: Set<string>): number {
-  let score = 0;
-  if (capture.explanation) score += 3;
-  if (capture.status === "done") score += 1;
-  if (setCaptureIds.has(capture.id)) score += 3;
-  if (deepDiveIds.has(capture.id)) score += 2;
-  return score;
-}
-
-function chooseMergeBase(existing: Capture, incoming: Capture, setCaptureIds: Set<string>, deepDiveIds: Set<string>): Capture {
-  const existingScore = captureHasAttachedData(existing, setCaptureIds, deepDiveIds);
-  const incomingScore = captureHasAttachedData(incoming, setCaptureIds, deepDiveIds);
-  if (existingScore !== incomingScore) return existingScore > incomingScore ? existing : incoming;
-  return normalizeTextForDuplicate(incoming.text).length > normalizeTextForDuplicate(existing.text).length ? incoming : existing;
-}
-
 async function saveMergedHighlight(existingId: string, incoming: Capture): Promise<{ captureId: string; explanation: string }> {
-  const storage = await chrome.storage.local.get(["captures", "flashcard_sets", DEEP_DIVE_CAPTURE_IDS_KEY, `chat_${existingId}`]);
+  const storage = await chrome.storage.local.get("captures");
   const captures: Capture[] = storage.captures ?? [];
   const idx = captures.findIndex((capture) => capture.id === existingId);
   if (idx === -1) {
     await addCapture(incoming);
-    return explainPendingHighlight(incoming);
+    return explainPendingHighlight(incoming, true);
   }
 
-  const sets = Array.isArray(storage.flashcard_sets) ? storage.flashcard_sets : [];
-  const setCaptureIds = new Set<string>();
-  sets.forEach((set: { captureIds?: unknown }) => {
-    if (Array.isArray(set.captureIds)) {
-      set.captureIds.forEach((id) => { if (typeof id === "string") setCaptureIds.add(id); });
-    }
-  });
-  const deepDiveIds = new Set<string>(storage[DEEP_DIVE_CAPTURE_IDS_KEY] ?? []);
   const existing = captures[idx];
-  const base = chooseMergeBase(existing, incoming, setCaptureIds, deepDiveIds);
   const earliestSavedAt = new Date(existing.savedAt) <= new Date(incoming.savedAt) ? existing.savedAt : incoming.savedAt;
   const merged: Capture = {
-    ...base,
+    ...existing,
     id: existing.id,
+    text: incoming.text,
+    context: incoming.context,
+    url: incoming.url || existing.url,
+    title: incoming.title || existing.title,
     savedAt: earliestSavedAt,
-    context: base.context || incoming.context || existing.context,
-    title: base.title || incoming.title || existing.title,
-    url: base.url || incoming.url || existing.url,
+    explanation: null,
+    status: "pending",
+    errorMessage: undefined,
   };
-
-  if (base.id === incoming.id && !incoming.explanation) {
-    merged.explanation = null;
-    merged.status = "pending";
-    delete merged.errorMessage;
-  }
+  delete merged.errorMessage;
 
   captures[idx] = merged;
   await chrome.storage.local.set({ captures });
 
-  if (merged.status === "done" && merged.explanation) {
-    void saveCaptureRemoteBestEffort(merged);
-    await seedChat(existing.id, merged.explanation);
-    return { captureId: existing.id, explanation: merged.explanation };
-  }
-
-  return explainPendingHighlight(merged);
+  return explainPendingHighlight(merged, true);
 }
 
 async function getDeepDiveCaptureIds(): Promise<Set<string>> {
@@ -1110,7 +1110,7 @@ async function markDeepDiveCapture(captureId: string): Promise<void> {
   await chrome.storage.local.set({ [DEEP_DIVE_CAPTURE_IDS_KEY]: Array.from(ids) });
 }
 
-async function createPendingScreenshot(imageData: string, context: string, captureId?: string): Promise<string> {
+async function createPendingScreenshot(imageData: string, context: string, imagePreviewData?: string, captureId?: string): Promise<string> {
   const id = captureId ?? crypto.randomUUID();
 
   if (captureId) {
@@ -1123,6 +1123,7 @@ async function createPendingScreenshot(imageData: string, context: string, captu
       status: "pending",
       errorMessage: undefined,
       imageData,
+      imagePreviewData,
     });
     if (existing) return captureId;
   }
@@ -1137,17 +1138,18 @@ async function createPendingScreenshot(imageData: string, context: string, captu
     explanation: null,
     status: "pending",
     imageData,
+    imagePreviewData,
   };
 
   await addCapture(capture);
   return id;
 }
 
-async function seedChat(captureId: string, explanation: string) {
+async function seedChat(captureId: string, explanation: string, replace = false) {
   const key = `chat_${captureId}`;
   const storage = await chrome.storage.local.get(key);
   const existing: ChatMessage[] = storage[key] ?? [];
-  if (existing.length > 0) return;
+  if (!replace && existing.length > 0) return;
   await chrome.storage.local.set({ [key]: [{ role: "assistant", content: explanation }] satisfies ChatMessage[] });
 }
 
@@ -1172,13 +1174,14 @@ async function restoreCaptureFromFallback(captureId: string, fallback: CaptureFa
     explanation: latestAssistantContent(messages),
     status: "done",
     imageData: fallback.imageData,
+    imagePreviewData: fallback.imagePreviewData,
   };
   await addCapture(capture);
   return capture;
 }
 
-async function explainAndSaveScreenshot(imageData: string, context: string, replaceCaptureId?: string): Promise<{ captureId: string; explanation: string }> {
-  const id = await createPendingScreenshot(imageData, context, replaceCaptureId);
+async function explainAndSaveScreenshot(imageData: string, context: string, imagePreviewData?: string, replaceCaptureId?: string): Promise<{ captureId: string; explanation: string }> {
+  const id = await createPendingScreenshot(imageData, context, imagePreviewData, replaceCaptureId);
 
   try {
     const base64 = imageData.split(",")[1];
@@ -1199,10 +1202,11 @@ async function explainAndSaveScreenshot(imageData: string, context: string, repl
 async function explainAndSaveScreenshotStream(
   imageData: string,
   context: string,
+  imagePreviewData: string | undefined,
   onStart: (captureId: string) => void,
   onChunk: (chunk: string) => void,
 ): Promise<{ captureId: string; explanation: string }> {
-  const id = await createPendingScreenshot(imageData, context);
+  const id = await createPendingScreenshot(imageData, context, imagePreviewData);
   onStart(id);
 
   try {
@@ -1221,8 +1225,8 @@ async function explainAndSaveScreenshotStream(
   }
 }
 
-async function saveScreenshot(imageData: string, context: string) {
-  await explainAndSaveScreenshot(imageData, context).catch(() => {});
+async function saveScreenshot(imageData: string, context: string, imagePreviewData?: string) {
+  await explainAndSaveScreenshot(imageData, context, imagePreviewData).catch(() => {});
 }
 
 async function askFollowup(captureId: string, question: string, _deepDiveRequested = false, fallback: CaptureFallback = {}): Promise<{ reply: string; messages: ChatMessage[] }> {
@@ -1409,7 +1413,7 @@ async function generateAnalogy(text: string): Promise<{ analogy: string }> {
 }
 
 
-async function explainPendingHighlight(capture: Capture): Promise<{ captureId: string; explanation: string }> {
+async function explainPendingHighlight(capture: Capture, replaceChat = false): Promise<{ captureId: string; explanation: string }> {
   const id = capture.id;
   try {
     const explanation = await fetchExplanation(capture.text, capture.context);
@@ -1417,7 +1421,7 @@ async function explainPendingHighlight(capture: Capture): Promise<{ captureId: s
     if (updated) {
       void saveCaptureRemoteBestEffort(updated);
     }
-    await seedChat(id, explanation);
+    await seedChat(id, explanation, replaceChat);
     return { captureId: id, explanation };
   } catch (error) {
     console.error("ContextLens failed to explain highlight", error);
@@ -1429,7 +1433,7 @@ async function explainPendingHighlight(capture: Capture): Promise<{ captureId: s
 async function saveHighlight(text: string, url: string, title: string, context: string, replaceCaptureId?: string): Promise<{ captureId: string; explanation: string }> {
   const storage = await chrome.storage.local.get("captures");
   const captures: Capture[] = storage.captures ?? [];
-  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, url);
+  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, context, url);
   if (duplicate) return waitForCaptureResult(duplicate.id);
 
   const id = crypto.randomUUID();
@@ -1461,7 +1465,7 @@ async function saveHighlightStream(
 ): Promise<{ captureId: string; explanation: string }> {
   const storage = await chrome.storage.local.get("captures");
   const captures: Capture[] = storage.captures ?? [];
-  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, url);
+  const duplicate = replaceCaptureId ? null : findExactRecentDuplicate(captures, text, context, url);
   if (duplicate) {
     onStart(duplicate.id);
     return waitForCaptureResult(duplicate.id);
