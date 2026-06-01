@@ -27,6 +27,7 @@ Disclose these data categories in the Chrome Web Store privacy fields:
 - User activity / website content: selected text, selected screenshot regions, source URL/title for saved items, notes, follow-up questions, and generated answers.
 - Web browsing activity: source URL/title only for webpages where the user chooses to save or explain selected text/screenshot content.
 - User-provided content: flashcard set names, review ratings, and study metadata.
+- First-party diagnostics/analytics: feature event counts, success/failure status, coarse input type, model/provider used, and response latency. Do not include raw highlighted text, screenshots, notes, or full browsing history in these metrics.
 
 Disclose that data is shared with:
 
@@ -36,7 +37,7 @@ Disclose that data is shared with:
 - Anthropic Claude for Deep Dive explanations.
 - QuranCDN only when resolving selected Quran.com verse text.
 
-Do not mark analytics, advertising, or sale of data; the extension does not use them.
+Do not mark advertising or sale of data; the extension does not use them. If the Chrome Web Store form treats first-party operational metrics as analytics, disclose analytics/diagnostics and describe them as first-party reliability, usage, and cost monitoring only.
 
 ## Store Listing Notes
 

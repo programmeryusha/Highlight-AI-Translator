@@ -13,6 +13,7 @@ export default function PrivacyApp() {
 
       <Section title="What you highlight">
         <p>Text you highlight, notes you add, screenshot regions you select, source URL/title for that selected item, and chat context are sent to our backend server to generate an explanation. If you are signed in, they are stored in your account so you can review them later and sync across devices.</p>
+        <p style={{ marginTop: 10 }}>ContextLens may also store first-party operational metrics such as feature event counts, success or failure status, coarse input type, model/provider used, and response latency. These metrics do not include raw highlighted text, screenshot image contents, notes, or full page browsing history, and are used only to monitor reliability, usage, and costs during beta.</p>
         <p style={{ marginTop: 10 }}>Your highlights are stored in two places:</p>
         <ul style={{ paddingLeft: 20, marginTop: 6 }}>
           <li>Locally in <code style={{ fontFamily: "monospace", fontSize: "0.9em", background: "#f0efec", borderRadius: 4, padding: "1px 5px" }}>chrome.storage.local</code> on your device</li>
@@ -42,7 +43,7 @@ export default function PrivacyApp() {
           <li><strong>contextMenus</strong> — to add an "Ask ContextLens" right-click option</li>
           <li><strong>host permissions</strong> — to show ContextLens on pages where you choose to use it</li>
         </ul>
-        <p style={{ marginTop: 10 }}>We do not sell your data, run ads, or use analytics. ContextLens saves source URLs/titles only for items you choose to save.</p>
+        <p style={{ marginTop: 10 }}>We do not sell your data, run ads, or use third-party analytics. ContextLens saves source URLs/titles only for items you choose to save.</p>
       </Section>
 
       <Section title="Limited use">
