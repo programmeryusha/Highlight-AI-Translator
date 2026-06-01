@@ -12,6 +12,7 @@ type CardTypography = (typeof CARD_TYPOGRAPHY)[CardFontSize];
 type FsrsRating = "again" | "hard" | "good" | "easy";
 type FsrsState = "new" | "learning" | "reviewing" | "relearning";
 const LONG_TEXT_LIMIT = 260;
+const BACKEND_URL = "https://web-production-223b1.up.railway.app";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const THEME_STORAGE_KEY = "contextlens_theme";
@@ -51,9 +52,109 @@ const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
 const SCREENSHOT_PREVIEW_QUALITY = 0.82;
 const SCREENSHOT_PREVIEW_BACKFILL_BATCH_SIZE = 4;
 const SCREENSHOT_PREVIEW_BACKFILL_DELAY_MS = 180;
+const AUTHENTICATED_IMAGE_CACHE_LIMIT = 96;
 const screenshotPreviewCache = new Map<string, HTMLImageElement>();
+const authenticatedImageObjectUrlCache = new Map<string, string>();
+
+type AuthenticatedImageSource = { src: string; loading: boolean; error: boolean; ready: boolean };
+
+function sanitizedAuthenticatedCaptureImageUrl(imageData?: string | null): string | null {
+  if (!imageData || typeof imageData !== "string") return null;
+  try {
+    const backend = new URL(BACKEND_URL);
+    const url = new URL(imageData, backend);
+    if (url.origin !== backend.origin) return null;
+    if (!/^\/captures\/[^/]+\/image$/.test(url.pathname)) return null;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function storedAccountToken(): Promise<string | null> {
+  const storage = await chrome.storage.local.get("contextlens_user");
+  const user = storage.contextlens_user as ContextLensUser | undefined;
+  return user?.token ?? null;
+}
+
+function cacheAuthenticatedImageObjectUrl(cacheKey: string, objectUrl: string) {
+  authenticatedImageObjectUrlCache.set(cacheKey, objectUrl);
+  while (authenticatedImageObjectUrlCache.size > AUTHENTICATED_IMAGE_CACHE_LIMIT) {
+    const oldest = authenticatedImageObjectUrlCache.keys().next().value;
+    if (!oldest) break;
+    const oldestUrl = authenticatedImageObjectUrlCache.get(oldest);
+    if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+    authenticatedImageObjectUrlCache.delete(oldest);
+  }
+}
+
+async function fetchAuthenticatedImageObjectUrl(imageData: string): Promise<string> {
+  const cleanUrl = sanitizedAuthenticatedCaptureImageUrl(imageData);
+  if (!cleanUrl) return imageData;
+  const token = await storedAccountToken();
+  if (!token) throw new Error("Missing account token.");
+  const cacheKey = `${token}\n${cleanUrl}`;
+  const cached = authenticatedImageObjectUrlCache.get(cacheKey);
+  if (cached) return cached;
+  const response = await fetch(cleanUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "force-cache",
+  });
+  if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  cacheAuthenticatedImageObjectUrl(cacheKey, objectUrl);
+  return objectUrl;
+}
+
+function useAuthenticatedImageSource(imageData?: string): AuthenticatedImageSource {
+  const cleanUrl = sanitizedAuthenticatedCaptureImageUrl(imageData);
+  const [state, setState] = useState<AuthenticatedImageSource & { key: string }>({
+    key: "",
+    src: "",
+    loading: false,
+    error: false,
+    ready: true,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!imageData || !cleanUrl) {
+      setState({
+        key: imageData ?? "",
+        src: imageData ?? "",
+        loading: false,
+        error: false,
+        ready: true,
+      });
+      return () => { cancelled = true; };
+    }
+
+    setState((current) => current.key === cleanUrl && current.src
+      ? current
+      : { key: cleanUrl, src: "", loading: true, error: false, ready: false });
+    void fetchAuthenticatedImageObjectUrl(cleanUrl)
+      .then((src) => {
+        if (!cancelled) setState({ key: cleanUrl, src, loading: false, error: false, ready: true });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ key: cleanUrl, src: "", loading: false, error: true, ready: false });
+      });
+    return () => { cancelled = true; };
+  }, [cleanUrl, imageData]);
+
+  if (!imageData) return { src: "", loading: false, error: false, ready: true };
+  if (!cleanUrl) return { src: imageData, loading: false, error: false, ready: true };
+  if (state.key === cleanUrl) {
+    const { src, loading, error, ready } = state;
+    return { src, loading, error, ready };
+  }
+  return { src: "", loading: true, error: false, ready: false };
+}
 
 function warmScreenshotPreview(imageData: string) {
+  if (sanitizedAuthenticatedCaptureImageUrl(imageData)) return;
   if (!imageData || screenshotPreviewCache.has(imageData)) return;
   const img = new Image();
   img.decoding = "async";
@@ -1143,12 +1244,19 @@ function ScreenshotPreview({
 }) {
   const [hovered, setHovered] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const resolvedImage = useAuthenticatedImageSource(imageData);
   const interactive = Boolean(onClick);
 
   useEffect(() => {
     setImageFailed(false);
-    warmScreenshotPreview(imageData);
   }, [imageData]);
+
+  useEffect(() => {
+    if (resolvedImage.src) warmScreenshotPreview(resolvedImage.src);
+  }, [resolvedImage.src]);
+
+  const showUnavailable = imageFailed || resolvedImage.error;
+  const showLoading = resolvedImage.loading && !resolvedImage.src;
 
   return (
     <figure
@@ -1168,7 +1276,7 @@ function ScreenshotPreview({
       onMouseEnter={() => interactive && setHovered(true)}
       onMouseLeave={() => interactive && setHovered(false)}
     >
-      {imageFailed ? (
+      {showUnavailable ? (
         <div
           style={{
             minHeight: 124,
@@ -1183,13 +1291,28 @@ function ScreenshotPreview({
         >
           Screenshot preview unavailable
         </div>
+      ) : showLoading ? (
+        <div
+          style={{
+            minHeight: 124,
+            display: "grid",
+            placeItems: "center",
+            color: colors.muted,
+            fontSize: 13,
+            fontWeight: 700,
+            border: `1px dashed ${colors.border}`,
+            background: colors.surface,
+          }}
+        >
+          Loading screenshot…
+        </div>
       ) : (
         <img
-          src={imageData}
+          src={resolvedImage.src}
           alt={alt}
           loading="eager"
           decoding="async"
-          onLoad={() => warmScreenshotPreview(imageData)}
+          onLoad={() => warmScreenshotPreview(resolvedImage.src)}
           onError={() => {
             setImageFailed(true);
             if (imageData && !imageData.startsWith("data:")) refreshRemoteImageUrls();
@@ -1904,7 +2027,6 @@ function extractTransliteration(explanation: string): string {
 
 function flashcardAnswerTypography(answer: string, base: number, scale: number) {
   const length = answer.trim().length;
-  const paragraphCount = Math.max(1, answer.trim().split(/\n{2,}|\n(?=\s*[-•])/).filter(Boolean).length);
   const baseSize = length < 180
     ? 38
     : length < 420
@@ -1925,8 +2047,7 @@ function flashcardAnswerTypography(answer: string, base: number, scale: number) 
         ? 1.6
         : 1.7;
   const maxWidth = length < 260 ? 760 : length < 820 ? 880 : 940;
-  const verticalOffset = paragraphCount <= 2 && length < 520 ? "-2dvh" : 0;
-  return { fontSize, lineHeight, maxWidth, verticalOffset };
+  return { fontSize, lineHeight, maxWidth };
 }
 
 function flashcardFrontFontSize(text: string, rtl: boolean): string {
@@ -1939,13 +2060,6 @@ function flashcardFrontFontSize(text: string, rtl: boolean): string {
   if (length <= 18) return "clamp(44px, 6vw, 76px)";
   if (length <= 54) return "clamp(34px, 4.3vw, 58px)";
   return "clamp(26px, 3vw, 42px)";
-}
-
-function flashcardDotIndexes(total: number, current: number, windowSize = 9): number[] {
-  if (total <= windowSize) return Array.from({ length: total }, (_, index) => index);
-  const half = Math.floor(windowSize / 2);
-  const start = Math.max(0, Math.min(current - half, total - windowSize));
-  return Array.from({ length: windowSize }, (_, index) => start + index);
 }
 
 function prefersReducedFlashcardMotion() {
@@ -1981,6 +2095,7 @@ function FlashcardView({
   const settingsRootRef = useRef<HTMLDivElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const flipTimerRef = useRef<number | null>(null);
+  const flipSwapTimerRef = useRef<number | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -2030,34 +2145,45 @@ function FlashcardView({
     let cancelled = false;
     const imageUrls = Array.from(new Set(deck.flatMap((word) => word.imageData ? [word.imageData] : [])));
     imageUrls.forEach((url) => {
-      const cachedImage = imageCacheRef.current.get(url);
-      if (cachedImage?.complete && cachedImage.naturalWidth > 0) {
-        setDecodedImageUrls((current) => current.has(url) ? current : new Set(current).add(url));
-        return;
-      }
-
-      const image = cachedImage ?? new Image();
-      if (!cachedImage) {
-        image.decoding = "async";
-        image.loading = "eager";
-        image.setAttribute("fetchpriority", "high");
-        image.src = url;
-        imageCacheRef.current.set(url, image);
-      }
-
       const markDecoded = () => {
         if (cancelled) return;
         setDecodedImageUrls((current) => current.has(url) ? current : new Set(current).add(url));
       };
 
-      if (image.complete && image.naturalWidth > 0) {
-        markDecoded();
+      const preloadResolvedImage = (src: string) => {
+        const cachedImage = imageCacheRef.current.get(url);
+        if (cachedImage?.complete && cachedImage.naturalWidth > 0) {
+          markDecoded();
+          return;
+        }
+
+        const image = cachedImage ?? new Image();
+        if (!cachedImage) {
+          image.decoding = "async";
+          image.loading = "eager";
+          image.setAttribute("fetchpriority", "high");
+          image.src = src;
+          imageCacheRef.current.set(url, image);
+        }
+
+        if (image.complete && image.naturalWidth > 0) {
+          markDecoded();
+          return;
+        }
+
+        image.decode().then(markDecoded).catch(() => {
+          image.addEventListener("load", markDecoded, { once: true });
+        });
+      };
+
+      if (sanitizedAuthenticatedCaptureImageUrl(url)) {
+        void fetchAuthenticatedImageObjectUrl(url).then((src) => {
+          if (!cancelled) preloadResolvedImage(src);
+        }).catch(() => {});
         return;
       }
 
-      image.decode().then(markDecoded).catch(() => {
-        image.addEventListener("load", markDecoded, { once: true });
-      });
+      preloadResolvedImage(url);
     });
     return () => { cancelled = true; };
   }, [deck]);
@@ -2097,21 +2223,26 @@ function FlashcardView({
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  if (deck.length === 0) return null;
-  const card = deck[Math.min(index, deck.length - 1)];
+  const activeCard = deck.length > 0 ? deck[Math.min(index, deck.length - 1)] : null;
+  const cardImage = useAuthenticatedImageSource(activeCard?.imageData);
+
+  if (!activeCard) return null;
+  const card = activeCard;
   const progress = completed ? 100 : Math.round(((index + (revealed ? 0.5 : 0)) / deck.length) * 100);
   const frontText = (card.word || (!card.imageData ? card.exampleText : "")).trim();
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
   const transliteration = extractTransliteration(answer);
   const answerTypography = flashcardAnswerTypography(answer, typography.answer, textScale);
-  const dotIndexes = flashcardDotIndexes(deck.length, Math.min(index, deck.length - 1));
   const accentSoft = colorWithAlpha(accentColor, 0.14);
   const accentFaint = colorWithAlpha(accentColor, 0.08);
   const accentStrong = colorWithAlpha(accentColor, 0.42);
-  const manuscriptBg = colors.surface === "#fff" ? "#fffdf8" : "#1d1a16";
-  const manuscriptRule = colors.surface === "#fff" ? "rgba(181, 137, 45, 0.34)" : "rgba(230, 191, 92, 0.28)";
-  const imageReady = !card.imageData || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
+  const flashcardSurface = colors.surface === "#fff" ? "#ffffff" : colors.surface;
+  const flashcardBorder = colors.surface === "#fff" ? "rgba(15, 23, 42, 0.09)" : colors.border;
+  const flashcardShadow = colors.surface === "#fff"
+    ? "0 26px 72px rgba(15, 23, 42, 0.11), 0 8px 24px rgba(15, 23, 42, 0.07)"
+    : "0 26px 72px rgba(0, 0, 0, 0.28)";
+  const imageReady = !card.imageData || cardImage.ready || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
     hard: { color: "#d97706", soft: "rgba(217, 119, 6, 0.08)", label: "Hard" },
@@ -2121,14 +2252,14 @@ function FlashcardView({
   const ratingsVisible = revealed && showAnswer && !flipAnimating;
 
   function clearFlipTimer() {
-    if (flipTimerRef.current === null) return;
-    window.clearTimeout(flipTimerRef.current);
-    flipTimerRef.current = null;
-  }
-
-  function finishFlip() {
-    clearFlipTimer();
-    setFlipAnimating(false);
+    if (flipSwapTimerRef.current !== null) {
+      window.clearTimeout(flipSwapTimerRef.current);
+      flipSwapTimerRef.current = null;
+    }
+    if (flipTimerRef.current !== null) {
+      window.clearTimeout(flipTimerRef.current);
+      flipTimerRef.current = null;
+    }
   }
 
   function startFlip(nextShowAnswer: boolean) {
@@ -2139,7 +2270,10 @@ function FlashcardView({
       return;
     }
     setFlipAnimating(true);
-    setShowAnswer(nextShowAnswer);
+    flipSwapTimerRef.current = window.setTimeout(() => {
+      flipSwapTimerRef.current = null;
+      setShowAnswer(nextShowAnswer);
+    }, Math.round(FLASHCARD_FLIP_MS * 0.46));
     flipTimerRef.current = window.setTimeout(() => {
       flipTimerRef.current = null;
       setFlipAnimating(false);
@@ -2197,7 +2331,7 @@ function FlashcardView({
         zIndex: 1000,
         background: colors.bg,
         color: colors.text,
-        padding: "8px 12px 12px",
+        padding: "12px 22px",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -2206,90 +2340,79 @@ function FlashcardView({
     >
       <style>
         {`
-          @keyframes clFlashcardLoad {
-            from { opacity: 0; transform: translateY(10px) scale(0.992); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-          }
-          @keyframes clFlashcardChildIn {
-            from { opacity: 0; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
+          @keyframes clFlashcardShellFlip {
+            from { transform: rotateX(0deg); }
+            to { transform: rotateX(-180deg); }
           }
           .cl-flashcard-stage {
-            perspective: 1800px;
-            animation: clFlashcardLoad 240ms cubic-bezier(0.2, 0, 0, 1);
-            overflow: hidden;
+            perspective: 2200px;
+            overflow: visible;
             user-select: none;
             -webkit-user-select: none;
+            border-radius: 20px;
           }
-          .cl-flashcard-inner {
-            position: relative;
+          .cl-flashcard-shell {
+            position: absolute;
+            inset: 0;
             width: 100%;
             height: 100%;
             transform-style: preserve-3d;
-            transition: transform ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1);
             transform-origin: center center;
+            box-sizing: border-box;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 3;
             will-change: transform;
           }
-          .cl-flashcard-inner[data-show-answer="true"] {
-            transform: rotateY(180deg);
+          .cl-flashcard-shell[data-flipping="true"] {
+            opacity: 1;
+            animation: clFlashcardShellFlip ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
           }
-          .cl-flashcard-face {
+          .cl-flashcard-shell-face {
             position: absolute;
             inset: 0;
+            background: ${flashcardSurface};
+            border: 1px solid ${flashcardBorder};
+            border-radius: 20px;
+            box-shadow: ${flashcardShadow};
+            box-sizing: border-box;
             backface-visibility: hidden;
             -webkit-backface-visibility: hidden;
-            overflow: hidden;
+          }
+          .cl-flashcard-shell-face[data-side="back"] {
+            transform: rotateX(-180deg);
+          }
+          .cl-flashcard-content {
+            position: relative;
+            z-index: 1;
+            height: 100%;
             display: flex;
             flex-direction: column;
-            background: ${colors.surface};
+            overflow: hidden;
             border-radius: 20px;
-            transform: translateZ(0);
+            background: ${flashcardSurface};
+            border: 1px solid ${flashcardBorder};
+            box-shadow: ${flashcardShadow};
+            box-sizing: border-box;
           }
-          .cl-flashcard-face:first-child {
-            background: ${manuscriptBg};
-          }
-          .cl-flashcard-back {
-            transform: rotateY(180deg);
+          .cl-flashcard-stage[data-flipping="true"] .cl-flashcard-content {
+            opacity: 0;
           }
           .cl-flashcard-stage img {
             -webkit-user-drag: none;
             user-select: none;
           }
-          .cl-flashcard-stagger > * {
-            animation: clFlashcardChildIn 260ms cubic-bezier(0.2, 0, 0, 1) both;
-          }
-          .cl-flashcard-stagger > *:nth-child(2) { animation-delay: 35ms; }
-          .cl-flashcard-stagger > *:nth-child(3) { animation-delay: 70ms; }
-          .cl-flashcard-stagger > *:nth-child(4) { animation-delay: 105ms; }
           @media (prefers-reduced-motion: reduce) {
             .cl-flashcard-stage {
               perspective: none;
+            }
+            .cl-flashcard-shell[data-flipping="true"] {
               animation: none;
-            }
-            .cl-flashcard-inner {
-              transform: none !important;
-              transition: none;
-            }
-            .cl-flashcard-face {
-              transform: none !important;
-              transition: opacity 80ms linear;
-            }
-            .cl-flashcard-back {
-              opacity: 0;
-              pointer-events: none;
-            }
-            .cl-flashcard-inner[data-show-answer="true"] .cl-flashcard-face:first-child {
-              opacity: 0;
-              pointer-events: none;
-            }
-            .cl-flashcard-inner[data-show-answer="true"] .cl-flashcard-back {
-              opacity: 1;
-              pointer-events: auto;
             }
           }
         `}
       </style>
-      <div style={{ width: "min(1180px, calc(100% - 72px))", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr) auto", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 10px" }}>
+      <div style={{ width: "min(1280px, calc(100% - 28px))", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr) auto", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 12px" }}>
         <button
           type="button"
           onClick={onClose}
@@ -2314,49 +2437,11 @@ function FlashcardView({
           <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${accentStrong}`, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: accentColor, transition: "width 220ms cubic-bezier(0.2, 0, 0, 1)" }} />
           </div>
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 10 }}>
-            {dotIndexes[0] > 0 && <span style={{ color: colors.muted, fontSize: 12, fontWeight: 900 }}>...</span>}
-            {dotIndexes.map((dotIndex) => (
-              <span
-                key={dotIndex}
-                aria-hidden="true"
-                style={{
-                  width: dotIndex === index ? 9 : 6,
-                  height: dotIndex === index ? 9 : 6,
-                  borderRadius: 999,
-                  background: dotIndex === index ? accentColor : colorWithAlpha(accentColor, 0.28),
-                  transform: dotIndex === index ? "scale(1.08)" : "scale(1)",
-                  transition: "width 160ms ease, height 160ms ease, background 160ms ease, transform 160ms ease",
-                }}
-              />
-            ))}
-            {dotIndexes[dotIndexes.length - 1] < deck.length - 1 && <span style={{ color: colors.muted, fontSize: 12, fontWeight: 900 }}>...</span>}
-          </div>
-          <p style={{ color: accentColor, fontSize: 14, fontWeight: 850, margin: "7px 0 0", textAlign: "center" }}>
+          <p style={{ color: accentColor, fontSize: 14, fontWeight: 850, margin: "10px 0 0", textAlign: "center" }}>
             {completed ? deck.length : index + 1} / {deck.length}
           </p>
         </div>
         <div ref={settingsRootRef} style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, position: "relative" }}>
-          <button
-            type="button"
-            onClick={goPrevious}
-            disabled={index <= 0 || completed}
-            aria-label="Previous card"
-            title="Previous card"
-            style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${accentStrong}`, background: index <= 0 || completed ? colors.surfaceAlt : accentFaint, color: index <= 0 || completed ? colors.muted : accentColor, cursor: index <= 0 || completed ? "default" : "pointer", fontSize: 18, fontWeight: 900 }}
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            onClick={goNext}
-            disabled={index >= deck.length - 1 || completed}
-            aria-label="Next card"
-            title="Next card"
-            style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${accentStrong}`, background: index >= deck.length - 1 || completed ? colors.surfaceAlt : accentFaint, color: index >= deck.length - 1 || completed ? colors.muted : accentColor, cursor: index >= deck.length - 1 || completed ? "default" : "pointer", fontSize: 18, fontWeight: 900 }}
-          >
-            ›
-          </button>
           <button
             type="button"
             onClick={() => setSettingsOpen((open) => !open)}
@@ -2455,17 +2540,19 @@ function FlashcardView({
           style={{
             flex: "1 1 auto",
             minHeight: 0,
-            background: manuscriptBg,
-            border: `1px solid ${manuscriptRule}`,
-            borderRadius: 22,
-            boxShadow: `0 22px 68px rgba(15,15,15,0.10), inset 0 0 0 1px ${colorWithAlpha("#ffffff", colors.surface === "#fff" ? 0.72 : 0.04)}`,
-            overflow: "hidden",
+            width: "min(1540px, 100%)",
+            margin: "0 auto",
+            padding: "10px 24px",
+            boxSizing: "border-box",
+            background: "transparent",
+            overflow: "visible",
             display: "flex",
             flexDirection: "column",
           }}
         >
           <div
             className="cl-flashcard-stage"
+            data-flipping={String(flipAnimating)}
             onClick={revealOrToggle}
             style={{
               flex: "1 1 auto",
@@ -2476,14 +2563,18 @@ function FlashcardView({
           >
             <div
               key={card.id}
-              className="cl-flashcard-inner"
-              data-show-answer={String(showAnswer)}
-              onTransitionEnd={(event) => {
-                if (event.target === event.currentTarget && event.propertyName === "transform") finishFlip();
-              }}
-              style={{ flex: "1 1 auto", minHeight: 0 }}
+              className="cl-flashcard-shell"
+              data-flipping={String(flipAnimating)}
+              aria-hidden="true"
             >
-              <div className="cl-flashcard-face">
+              <div className="cl-flashcard-shell-face" data-side="front" />
+              <div className="cl-flashcard-shell-face" data-side="back" />
+            </div>
+            <div
+              className="cl-flashcard-content"
+              data-side={showAnswer ? "back" : "front"}
+            >
+              {!showAnswer ? (
                 <div
                   ref={frontContentRef}
                   style={{
@@ -2492,20 +2583,16 @@ function FlashcardView({
                     overflowY: card.imageData ? "auto" : "hidden",
                     display: "grid",
                     placeItems: "center",
-                    padding: card.imageData ? "30px min(54px, 5vw)" : "clamp(18px, 4dvh, 42px) min(54px, 5vw)",
+                    padding: card.imageData ? "clamp(28px, 4.5dvh, 52px) clamp(18px, 3vw, 40px)" : "clamp(30px, 5dvh, 58px) clamp(18px, 3vw, 40px)",
                     textAlign: "center",
                     boxSizing: "border-box",
-                    background:
-                      colors.surface === "#fff"
-                        ? "radial-gradient(circle at 18px 18px, rgba(181,137,45,0.055) 0 1px, transparent 1px), #fffdf8"
-                        : "radial-gradient(circle at 18px 18px, rgba(230,191,92,0.05) 0 1px, transparent 1px), #1d1a16",
-                    backgroundSize: "22px 22px, auto",
+                    background: flashcardSurface,
                   }}
                 >
-                  <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : transliteration ? 12 : 0, width: "100%", maxWidth: 980 }}>
-                    {card.imageData && (
+                  <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : transliteration ? 12 : 0, width: "100%", maxWidth: 980 }}>
+                    {card.imageData && cardImage.src ? (
                       <img
-                        src={card.imageData}
+                        src={cardImage.src}
                         alt="Card screenshot"
                         loading="eager"
                         decoding={imageReady ? "sync" : "async"}
@@ -2532,7 +2619,24 @@ function FlashcardView({
                           transition: "opacity 80ms ease",
                         }}
                       />
-                    )}
+                    ) : card.imageData ? (
+                      <div
+                        style={{
+                          minHeight: frontText ? 220 : 320,
+                          width: "min(100%, 760px)",
+                          display: "grid",
+                          placeItems: "center",
+                          color: colors.muted,
+                          fontSize: 14,
+                          fontWeight: 800,
+                          borderRadius: 14,
+                          border: `1px dashed ${colors.border}`,
+                          background: colors.surfaceAlt,
+                        }}
+                      >
+                        {cardImage.error ? "Screenshot preview unavailable" : "Loading screenshot…"}
+                      </div>
+                    ) : null}
                     {frontText && (
                       <div
                         dir={frontIsRtl ? "rtl" : "ltr"}
@@ -2559,88 +2663,92 @@ function FlashcardView({
                     )}
                   </div>
                 </div>
-              </div>
-              <div className="cl-flashcard-face cl-flashcard-back">
-                <div
-                  ref={backContentRef}
-                  style={{
-                    flex: "1 1 auto",
-                    minHeight: 0,
-                    overflowY: "auto",
-                    display: "grid",
-                    placeItems: "center",
-                    padding: "36px min(64px, 5vw)",
-                    boxSizing: "border-box",
-                    background: colors.surface,
-                  }}
-                >
+              ) : (
+                <>
                   <div
-                    dir="ltr"
+                    ref={backContentRef}
                     style={{
-                      width: `min(100%, ${answerTypography.maxWidth}px)`,
-                      margin: "0 auto",
-                      color: colors.text,
-                      fontFamily: FLASHCARD_LATIN_FONT_STACK,
-                      fontSize: answerTypography.fontSize,
-                      lineHeight: answerTypography.lineHeight,
-                      overflowWrap: "break-word",
-                      textAlign: "left",
-                      transform: answerTypography.verticalOffset ? `translateY(${answerTypography.verticalOffset})` : undefined,
-                      unicodeBidi: "plaintext",
+                      flex: "1 1 auto",
+                      minHeight: 0,
+                      overflowY: "auto",
+                      display: "grid",
+                      placeItems: "center",
+                      padding: "clamp(34px, 5dvh, 60px) clamp(20px, 3.6vw, 52px)",
+                      boxSizing: "border-box",
+                      background: "transparent",
                     }}
                   >
-                    {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
+                    <div
+                      dir="ltr"
+                      style={{
+                        width: `min(100%, ${answerTypography.maxWidth}px)`,
+                        margin: "0 auto",
+                        color: colors.text,
+                        fontFamily: FLASHCARD_LATIN_FONT_STACK,
+                        fontSize: answerTypography.fontSize,
+                        lineHeight: answerTypography.lineHeight,
+                        overflowWrap: "break-word",
+                        textAlign: "left",
+                        unicodeBidi: "plaintext",
+                      }}
+                    >
+                      {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
+                    </div>
                   </div>
-                </div>
-              </div>
+                  <div
+                    onClick={(event) => event.stopPropagation()}
+                    aria-hidden={!ratingsVisible}
+                    style={{
+                      flex: ratingsVisible ? "0 0 auto" : "0 0 0px",
+                      minHeight: ratingsVisible ? "clamp(96px, 11dvh, 128px)" : 0,
+                      borderTop: ratingsVisible ? `1px solid ${colors.border}` : "none",
+                      background: "transparent",
+                      padding: ratingsVisible ? "14px clamp(18px, 3.6vw, 52px) 18px" : 0,
+                      boxSizing: "border-box",
+                      overflow: "hidden",
+                      opacity: ratingsVisible ? 1 : 0,
+                      visibility: ratingsVisible ? "visible" : "hidden",
+                      pointerEvents: ratingsVisible ? "auto" : "none",
+                    }}
+                  >
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(130px, 1fr))", gap: 18, maxWidth: 1320, margin: "0 auto" }}>
+                      {(["again", "hard", "good", "easy"] as FsrsRating[]).map((rating, ratingIndex) => {
+                        const style = ratingStyles[rating];
+                        return (
+                          <div key={rating} style={{ display: "grid", gap: 10, justifyItems: "center", borderLeft: rating === "again" ? "none" : `1px solid ${colors.border}` }}>
+                            <span style={{ color: colors.text, fontSize: 14, fontWeight: 800 }}>
+                              {reviewIntervalForWord(card, rating)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                rate(rating);
+                              }}
+                              style={{
+                                minWidth: 150,
+                                minHeight: 52,
+                                borderRadius: 999,
+                                border: `1px solid ${style.color}`,
+                                background: style.soft,
+                                color: style.color,
+                                fontSize: 17,
+                                fontWeight: 850,
+                                cursor: "pointer",
+                              }}
+                            >
+                              <span style={{ opacity: 0.55, marginRight: 8 }}>{ratingIndex + 1}</span>
+                              {style.label}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
-
-          <div
-            aria-hidden={!ratingsVisible}
-            style={{
-              flex: "0 0 auto",
-              minHeight: "clamp(118px, 14dvh, 154px)",
-              borderTop: `1px solid ${colors.border}`,
-              background: colors.surface,
-              padding: "16px min(64px, 5vw) 20px",
-              boxSizing: "border-box",
-              opacity: ratingsVisible ? 1 : 0,
-              visibility: ratingsVisible ? "visible" : "hidden",
-              pointerEvents: ratingsVisible ? "auto" : "none",
-            }}
-          >
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(130px, 1fr))", gap: 18, maxWidth: 1320, margin: "0 auto" }}>
-                {(["again", "hard", "good", "easy"] as FsrsRating[]).map((rating, ratingIndex) => {
-                  const style = ratingStyles[rating];
-                  return (
-                    <div key={rating} style={{ display: "grid", gap: 10, justifyItems: "center", borderLeft: rating === "again" ? "none" : `1px solid ${colors.border}` }}>
-                      <span style={{ color: colors.text, fontSize: 14, fontWeight: 800 }}>
-                        {reviewIntervalForWord(card, rating)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => rate(rating)}
-                        style={{
-                          minWidth: 150,
-                          minHeight: 52,
-                          borderRadius: 999,
-                          border: `1px solid ${style.color}`,
-                          background: style.soft,
-                          color: style.color,
-                          fontSize: 17,
-                          fontWeight: 850,
-                          cursor: "pointer",
-                        }}
-                      >
-                        <span style={{ opacity: 0.55, marginRight: 8 }}>{ratingIndex + 1}</span>
-                        {style.label}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
         </section>
       )}
     </div>
@@ -4569,8 +4677,11 @@ export default function App() {
 
   useEffect(() => {
     for (const capture of captures) {
-      if (capture.imagePreviewData) warmScreenshotPreview(capture.imagePreviewData);
-      else if (capture.imageData && !capture.imageData.startsWith("data:image/")) warmScreenshotPreview(capture.imageData);
+      if (capture.imagePreviewData && !sanitizedAuthenticatedCaptureImageUrl(capture.imagePreviewData)) {
+        warmScreenshotPreview(capture.imagePreviewData);
+      } else if (capture.imageData && !capture.imageData.startsWith("data:image/") && !sanitizedAuthenticatedCaptureImageUrl(capture.imageData)) {
+        warmScreenshotPreview(capture.imageData);
+      }
     }
 
     const candidates = captures

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { Capture, ChatMessage, Message } from "../types";
+import type { Capture, ChatMessage, ContextLensUser, Message } from "../types";
 
 type ThemeName = "light" | "dark";
+const BACKEND_URL = "https://web-production-223b1.up.railway.app";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const THEME_STORAGE_KEY = "contextlens_theme";
 const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
@@ -13,6 +14,105 @@ const ARABIC_RUN = new RegExp(
   `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟]*)`,
   "gu",
 );
+const AUTHENTICATED_IMAGE_CACHE_LIMIT = 48;
+const authenticatedImageObjectUrlCache = new Map<string, string>();
+
+type AuthenticatedImageSource = { src: string; loading: boolean; error: boolean; ready: boolean };
+
+function sanitizedAuthenticatedCaptureImageUrl(imageData?: string | null): string | null {
+  if (!imageData || typeof imageData !== "string") return null;
+  try {
+    const backend = new URL(BACKEND_URL);
+    const url = new URL(imageData, backend);
+    if (url.origin !== backend.origin) return null;
+    if (!/^\/captures\/[^/]+\/image$/.test(url.pathname)) return null;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function storedAccountToken(): Promise<string | null> {
+  const storage = await chrome.storage.local.get("contextlens_user");
+  const user = storage.contextlens_user as ContextLensUser | undefined;
+  return user?.token ?? null;
+}
+
+function cacheAuthenticatedImageObjectUrl(cacheKey: string, objectUrl: string) {
+  authenticatedImageObjectUrlCache.set(cacheKey, objectUrl);
+  while (authenticatedImageObjectUrlCache.size > AUTHENTICATED_IMAGE_CACHE_LIMIT) {
+    const oldest = authenticatedImageObjectUrlCache.keys().next().value;
+    if (!oldest) break;
+    const oldestUrl = authenticatedImageObjectUrlCache.get(oldest);
+    if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+    authenticatedImageObjectUrlCache.delete(oldest);
+  }
+}
+
+async function fetchAuthenticatedImageObjectUrl(imageData: string): Promise<string> {
+  const cleanUrl = sanitizedAuthenticatedCaptureImageUrl(imageData);
+  if (!cleanUrl) return imageData;
+  const token = await storedAccountToken();
+  if (!token) throw new Error("Missing account token.");
+  const cacheKey = `${token}\n${cleanUrl}`;
+  const cached = authenticatedImageObjectUrlCache.get(cacheKey);
+  if (cached) return cached;
+  const response = await fetch(cleanUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "force-cache",
+  });
+  if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  cacheAuthenticatedImageObjectUrl(cacheKey, objectUrl);
+  return objectUrl;
+}
+
+function useAuthenticatedImageSource(imageData?: string): AuthenticatedImageSource {
+  const cleanUrl = sanitizedAuthenticatedCaptureImageUrl(imageData);
+  const [state, setState] = useState<AuthenticatedImageSource & { key: string }>({
+    key: "",
+    src: "",
+    loading: false,
+    error: false,
+    ready: true,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!imageData || !cleanUrl) {
+      setState({
+        key: imageData ?? "",
+        src: imageData ?? "",
+        loading: false,
+        error: false,
+        ready: true,
+      });
+      return () => { cancelled = true; };
+    }
+
+    setState((current) => current.key === cleanUrl && current.src
+      ? current
+      : { key: cleanUrl, src: "", loading: true, error: false, ready: false });
+    void fetchAuthenticatedImageObjectUrl(cleanUrl)
+      .then((src) => {
+        if (!cancelled) setState({ key: cleanUrl, src, loading: false, error: false, ready: true });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ key: cleanUrl, src: "", loading: false, error: true, ready: false });
+      });
+    return () => { cancelled = true; };
+  }, [cleanUrl, imageData]);
+
+  if (!imageData) return { src: "", loading: false, error: false, ready: true };
+  if (!cleanUrl) return { src: imageData, loading: false, error: false, ready: true };
+  if (state.key === cleanUrl) {
+    const { src, loading, error, ready } = state;
+    return { src, loading, error, ready };
+  }
+  return { src: "", loading: true, error: false, ready: false };
+}
 
 function isThemeName(v: unknown): v is ThemeName { return v === "light" || v === "dark"; }
 
@@ -459,6 +559,8 @@ export default function ChatApp() {
     return () => { document.body.style.background = ""; };
   }, [theme]);
 
+  const captureImage = useAuthenticatedImageSource(capture?.imageData);
+
   async function handleDeepDive() {
     if (!capture || deepDiveActive || deepDiveLoading) return;
     scrollToAnswerOnNextUpdate.current = true;
@@ -607,7 +709,7 @@ export default function ChatApp() {
           }}
         >
           {hasScreenshot ? (
-            imageFailed ? (
+            imageFailed || captureImage.error ? (
               <div
                 style={{
                   minHeight: 80,
@@ -623,9 +725,25 @@ export default function ChatApp() {
               >
                 Screenshot preview unavailable
               </div>
+            ) : captureImage.loading && !captureImage.src ? (
+              <div
+                style={{
+                  minHeight: 80,
+                  display: "grid",
+                  placeItems: "center",
+                  color: colors.muted,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  borderRadius: 6,
+                  border: `1px dashed ${colors.border}`,
+                  background: dark ? "#1e1d1b" : "#f7f6f3",
+                }}
+              >
+                Loading screenshot…
+              </div>
             ) : (
               <img
-                src={capture.imageData}
+                src={captureImage.src}
                 alt="Saved screenshot"
                 onError={() => {
                   setImageFailed(true);

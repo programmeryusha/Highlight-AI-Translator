@@ -136,6 +136,19 @@ function errorMessage(error: unknown): string {
   return String(error || "Unknown error");
 }
 
+function authHeaders(token: string, extra: Record<string, string> = {}): Record<string, string> {
+  return { ...extra, Authorization: `Bearer ${token}` };
+}
+
+function backendResourceUrl(path: string): string {
+  const url = new URL(path, BACKEND_URL);
+  if (/^\/captures\/[^/]+\/image$/.test(url.pathname)) {
+    url.search = "";
+    url.hash = "";
+  }
+  return url.toString();
+}
+
 async function throwResponseError(label: string, res: Response): Promise<never> {
   let detail = "";
   try {
@@ -628,10 +641,10 @@ async function getAccount(): Promise<ContextLensUser | null> {
 
 function remoteToCapture(remote: RemoteCapture): Capture {
   const imageData = remote.image_data?.startsWith("/")
-    ? `${BACKEND_URL}${remote.image_data}`
+    ? backendResourceUrl(remote.image_data)
     : remote.image_data ?? undefined;
   const imagePreviewData = remote.image_preview_data?.startsWith("/")
-    ? `${BACKEND_URL}${remote.image_preview_data}`
+    ? backendResourceUrl(remote.image_preview_data)
     : remote.image_preview_data ?? undefined;
 
   return {
@@ -791,7 +804,9 @@ async function saveCaptureRemoteBestEffort(capture: Capture): Promise<void> {
 }
 
 async function fetchRemoteCaptures(token: string): Promise<Capture[]> {
-  const res = await fetch(`${BACKEND_URL}/captures?token=${encodeURIComponent(token)}`);
+  const res = await fetch(`${BACKEND_URL}/captures`, {
+    headers: authHeaders(token),
+  });
   if (!res.ok) await throwResponseError("Sync error", res);
   const remote: RemoteCapture[] = await res.json();
   return remote.map(remoteToCapture);
@@ -933,7 +948,9 @@ function mergeFlashcardSets(localSets: FlashcardSet[], remoteSets: FlashcardSet[
 }
 
 async function fetchRemoteFlashcardSets(token: string): Promise<FlashcardSet[]> {
-  const res = await fetch(`${BACKEND_URL}/flashcard-sets?token=${encodeURIComponent(token)}`);
+  const res = await fetch(`${BACKEND_URL}/flashcard-sets`, {
+    headers: authHeaders(token),
+  });
   if (!res.ok) await throwResponseError("Flashcard set sync error", res);
   const remote: RemoteFlashcardSet[] = await res.json();
   return normalizeFlashcardSets(remote.map(remoteToFlashcardSet));

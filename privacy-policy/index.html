@@ -26,56 +26,83 @@
 <body>
   <div class="wrap">
     <h1>Privacy Policy</h1>
-    <p class="meta">ContextLens Chrome Extension &mdash; Last updated May 2026</p>
+    <p class="meta">ContextLens Chrome Extension &mdash; Last updated June 2026</p>
 
     <p>
-      ContextLens is a Chrome extension that lets you highlight text on any webpage
-      and receive an AI-generated explanation. This policy explains what data is
-      handled and how.
+      ContextLens is a Chrome extension that lets you highlight text or select a
+      screenshot region on a webpage, receive an AI-generated explanation, and
+      review saved explanations as history and flashcards. This policy explains
+      what data is handled and how.
     </p>
 
     <h2>Data stored on your device</h2>
-    <p>The following data is stored locally in your browser using Chrome's built-in
-    storage API (<code>chrome.storage.local</code>). It leaves your device only
-    when you ask ContextLens to generate an explanation.</p>
+    <p>The following data may be stored locally in your browser using Chrome's
+    built-in storage API (<code>chrome.storage.local</code>):</p>
     <ul>
-      <li><strong>Your highlights</strong> — the text you save and any context you add</li>
-      <li><strong>Your preferences</strong> — save trigger settings (bubble, context menu, screenshot shortcuts)</li>
+      <li><strong>Saved highlights</strong> — selected text, optional notes, source page URL/title, AI explanations, follow-up chats, and timestamps</li>
+      <li><strong>Web browsing activity for saved items</strong> — the URL and title of pages where you choose to save a highlight or screenshot</li>
+      <li><strong>Screenshots</strong> — screenshot regions you choose to save, plus smaller preview images for faster dashboard rendering</li>
+      <li><strong>Flashcard data</strong> — sets, review state, due dates, ratings, and related scheduling metadata</li>
+      <li><strong>Account data</strong> — your email address and authentication token when you sign in</li>
+      <li><strong>Preferences</strong> — theme, accent color, mode, font size, save trigger settings, and screenshot trigger settings</li>
     </ul>
 
-    <h2>Data sent to third parties</h2>
-    <p>When you save a highlight or screenshot, the selected text and your optional
-    context note are sent to the <strong>ContextLens backend</strong>, which calls
-    the Anthropic API to generate the explanation.</p>
-    <ul>
-      <li>Anthropic's privacy policy applies to data sent to their API:
-        <a href="https://www.anthropic.com/privacy" target="_blank">anthropic.com/privacy</a>
-      </li>
-      <li>The ContextLens backend receives explanation requests so it can return AI-generated responses</li>
-    </ul>
+    <h2>Data sent to ContextLens</h2>
+    <p>When you ask ContextLens to explain or save something, the relevant selected
+    text, screenshot region, optional note, source URL/title for that selected item, chat context, and
+    generated response may be sent over HTTPS to the ContextLens backend hosted on
+    Railway. If you are signed in, saved highlights, screenshots, explanations,
+    flashcard sets, and review metadata are stored in the ContextLens backend so
+    they can sync across your devices.</p>
 
-    <h2>Data we collect</h2>
-    <p>
-      <strong>None.</strong> The developer of ContextLens does not collect, receive,
-      store, or have access to your locally saved highlights. The backend receives
-      only the explanation requests you send. There is no analytics, no telemetry,
-      and no crash reporting.
-    </p>
+    <h2>Account data</h2>
+    <p>When you create an account or sign in, your email address and password are
+    sent over HTTPS to the ContextLens backend for authentication. The extension
+    stores your email address and authentication token locally so it can keep you
+    signed in. Passwords are not stored in the extension.</p>
+
+    <h2>Data shared with service providers</h2>
+    <p>ContextLens uses service providers only to provide the extension's core
+    explanation, screenshot, account, and sync features. Data is not sold and is
+    not used for advertising.</p>
+    <ul>
+      <li><strong>Railway / ContextLens backend</strong> — hosts the backend API and database used for accounts, sync, saved captures, screenshots, explanations, flashcard sets, and review metadata</li>
+      <li><strong>Google Gemini</strong> — may receive highlighted text, screenshot text/image content, notes, and chat context to generate standard explanations</li>
+      <li><strong>Google Cloud Vision</strong> — may receive screenshot image content to extract text from screenshots</li>
+      <li><strong>Google Fonts</strong> — may be loaded to render Arabic text cleanly in the extension interface</li>
+      <li><strong>Anthropic Claude</strong> — may receive highlighted text, screenshot content, notes, and chat context for Deep Dive explanations</li>
+      <li><strong>QuranCDN</strong> — when you select text on Quran.com, ContextLens may request verse text by verse key to preserve the correct Arabic source text</li>
+    </ul>
 
     <h2>Screenshots</h2>
-    <p>When you use the screenshot feature, the visible area of your current tab is
-    captured temporarily in memory to let you select a region. The selected region
-    is then sent to the ContextLens backend for explanation. No screenshot data is
-    stored permanently on your device.</p>
+    <p>When you use the screenshot feature, the visible area of the current tab is
+    captured so you can select a region. Only the selected region is sent for
+    explanation. If you save the explanation or are signed in, the selected
+    screenshot region and a smaller preview may be stored locally and in the
+    ContextLens backend for history, review, and flashcards.</p>
 
     <h2>Permissions</h2>
     <p>The extension requests the following Chrome permissions:</p>
     <ul>
       <li><strong>storage</strong> — to save your highlights and settings locally</li>
-      <li><strong>tabs</strong> — to capture the visible tab for screenshots</li>
-      <li><strong>contextMenus</strong> — to add a "Save to ContextLens" right-click option</li>
-      <li><strong>host_permissions (&lt;all_urls&gt;)</strong> — to inject the save bubble on any webpage you visit</li>
+      <li><strong>unlimitedStorage</strong> — to support saved screenshots and larger study histories</li>
+      <li><strong>tabs</strong> — to identify the active tab and capture the visible tab when you start a screenshot</li>
+      <li><strong>scripting</strong> — to inject or refresh the ContextLens content script when needed</li>
+      <li><strong>contextMenus</strong> — to add an "Ask ContextLens" right-click option for selected text</li>
+      <li><strong>host permissions (&lt;all_urls&gt;)</strong> — to show the selection bubble and screenshot button on webpages where you choose to use ContextLens</li>
     </ul>
+
+    <h2>Limited use</h2>
+    <p>The use of information received from Google APIs will adhere to the Chrome
+    Web Store User Data Policy, including the Limited Use requirements. ContextLens
+    uses user data only to provide or improve its explanation, screenshot, history,
+    sync, and flashcard features.</p>
+
+    <h2>Data retention and deletion</h2>
+    <p>You can delete individual saved items from the ContextLens dashboard.
+    Deleting a synced item removes it from local storage and requests deletion
+    from the ContextLens backend. You can also delete your account from the
+    dashboard or contact us for data deletion requests.</p>
 
     <h2>Children's privacy</h2>
     <p>This extension does not knowingly collect data from anyone, including children.</p>
@@ -85,7 +112,7 @@
     revised date.</p>
 
     <h2>Contact</h2>
-    <p>Questions? Open an issue or reach out via the Chrome Web Store listing.</p>
+    <p>Questions or data deletion requests? Email <strong>contextlens@gmail.com</strong>.</p>
   </div>
 </body>
 </html>
