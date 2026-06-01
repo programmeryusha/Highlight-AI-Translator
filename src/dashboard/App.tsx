@@ -37,7 +37,8 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
-const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const HONORIFIC_MARK = "ﷺ";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
 const SAVED_CARD_EXPLANATION_LIMIT = 760;
@@ -403,7 +404,22 @@ function renderMarkdown(text: string): React.ReactNode {
     }
 
     flushList();
-    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.75 }}>{inlineParts(trimmed)}</p>);
+    const direction = firstStrongTextDirection(trimmed);
+    nodes.push(
+      <p
+        key={index}
+        dir={direction}
+        style={{
+          margin: "0 0 10px",
+          lineHeight: 1.75,
+          direction,
+          textAlign: direction === "rtl" ? "right" : "left",
+          unicodeBidi: "plaintext",
+        }}
+      >
+        {inlineParts(trimmed)}
+      </p>
+    );
   });
   flushList();
 
@@ -426,13 +442,52 @@ function bidiSpan(text: string): React.ReactNode {
   let last = 0;
   const re = new RegExp(ARABIC_RUN.source, "gu");
   let m: RegExpExecArray | null;
+  const pushArabicRun = (run: string, keyPrefix: number) => {
+    run.split(new RegExp(`(${HONORIFIC_MARK})`, "g")).forEach((chunk, chunkIndex) => {
+      if (!chunk) return;
+      if (chunk === HONORIFIC_MARK) {
+        parts.push(
+          <span
+            key={`${keyPrefix}-honorific-${chunkIndex}`}
+            dir="rtl"
+            lang="ar"
+            className="cl-honorific"
+            style={{
+              display: "inline-block",
+              fontFamily: ARABIC_FONT_STACK,
+              fontSize: "0.86em",
+              fontWeight: 650,
+              lineHeight: 1,
+              marginInline: "0.16em",
+              verticalAlign: "0.18em",
+              unicodeBidi: "isolate",
+            }}
+          >
+            {chunk}
+          </span>
+        );
+        return;
+      }
+      if (!ARABIC_RANGE.test(chunk)) {
+        parts.push(chunk);
+        return;
+      }
+      parts.push(
+        <bdi
+          key={`${keyPrefix}-ar-${chunkIndex}`}
+          dir="rtl"
+          lang="ar"
+          className="cl-ar"
+          style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}
+        >
+          {chunk}
+        </bdi>
+      );
+    });
+  };
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push(
-      <bdi key={m.index} dir="rtl" lang="ar" style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}>
-        {m[0]}
-      </bdi>
-    );
+    pushArabicRun(m[0], m.index);
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
@@ -484,7 +539,8 @@ function QuestionText({
     margin,
     fontWeight,
     direction,
-    textAlign: "left",
+    textAlign: isRtl ? "right" : "left",
+    unicodeBidi: "plaintext",
     overflowWrap: "break-word",
   };
   if (onClick) {
@@ -538,10 +594,10 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
     const termMatch = line.match(EXPL_TERM_RE);
     if (termMatch) {
       nodes.push(
-        <div key={i} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 6px", margin: "6px 0" }}>
+        <div key={i} dir="ltr" style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 6px", margin: "6px 0", unicodeBidi: "isolate" }}>
           <strong style={{ fontFamily: ARABIC_FONT_STACK, fontWeight: 700, fontSize: "1.08em" }}>{bidiSpan(termMatch[1])}</strong>
           <span style={{ color: colors.muted }}>—</span>
-          <span>{termMatch[2]}</span>
+          <span>{inlineParts(termMatch[2])}</span>
         </div>
       );
       return;
@@ -555,7 +611,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
         if (body) {
           const isAr = ARABIC_RANGE.test(body);
           nodes.push(
-            <p key={i} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit" }}>
+            <p key={i} dir={isAr ? "rtl" : "ltr"} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit", unicodeBidi: "plaintext" }}>
               {bidiSpan(body)}
             </p>
           );
@@ -564,7 +620,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
       }
       const display = EXPL_RENAME[label] ?? label;
       nodes.push(
-        <p key={i} style={{ margin: "8px 0 2px", lineHeight: 1.75 }}>
+        <p key={i} dir="ltr" style={{ margin: "8px 0 2px", lineHeight: 1.75, direction: "ltr", unicodeBidi: "plaintext" }}>
           <span style={{ fontWeight: 700, color: colors.muted, fontSize: "0.82em", letterSpacing: "0.05em", textTransform: "uppercase" }}>{display}:</span>
           {body && <> {inlineParts(body)}</>}
         </p>
@@ -572,7 +628,12 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
       return;
     }
 
-    nodes.push(<p key={i} style={{ margin: "0 0 8px", lineHeight: 1.78 }}>{inlineParts(line)}</p>);
+    const direction = firstStrongTextDirection(line);
+    nodes.push(
+      <p key={i} dir={direction} style={{ margin: "0 0 8px", lineHeight: 1.78, direction, textAlign: direction === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}>
+        {inlineParts(line)}
+      </p>
+    );
   });
   return <>{nodes}</>;
 }
@@ -1144,6 +1205,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
     padding: "2px 0",
     direction: rtl ? "rtl" : "ltr",
     textAlign: rtl ? "right" : "left",
+    unicodeBidi: "plaintext",
     textDecoration: hovered ? "underline" : "none",
     textDecorationColor: colors.accent,
     textUnderlineOffset: 4,
@@ -1174,7 +1236,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
         onClick={(event) => openCaptureFromClick(event, capture.id)}
         style={sourceStyle}
       >
-        {text}
+        {bidiSpan(text)}
       </button>
     </>
   );
@@ -1805,17 +1867,71 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
     ));
 }
 
+function stripInlineMarkdown(value: string) {
+  return value
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*([^*\n]+?)\*/g, "$1")
+    .trim();
+}
+
+function extractTransliteration(explanation: string): string {
+  const match = explanation.match(/(?:^|\n)\s*(?:transliteration|pronunciation|romanization)\s*[:—-]\s*([^\n]+)/i);
+  return match ? stripInlineMarkdown(match[1]).replace(/^["']|["']$/g, "").trim() : "";
+}
+
+function flashcardAnswerFontSize(answer: string, base: number): number {
+  const length = answer.trim().length;
+  if (length < 160) return Math.min(30, Math.max(base + 5, 24));
+  if (length < 360) return Math.min(26, Math.max(base + 3, 22));
+  if (length < 760) return Math.min(23, Math.max(base + 1, 20));
+  return Math.min(21, Math.max(base - 1, 18));
+}
+
+function flashcardFrontFontSize(text: string, rtl: boolean): string {
+  const length = text.trim().length;
+  if (rtl) {
+    if (length <= 18) return "clamp(54px, 8vw, 104px)";
+    if (length <= 48) return "clamp(42px, 5.6vw, 76px)";
+    return "clamp(32px, 4vw, 58px)";
+  }
+  if (length <= 18) return "clamp(38px, 5vw, 68px)";
+  if (length <= 54) return "clamp(30px, 3.6vw, 52px)";
+  return "clamp(24px, 2.6vw, 38px)";
+}
+
+function flashcardDotIndexes(total: number, current: number, windowSize = 9): number[] {
+  if (total <= windowSize) return Array.from({ length: total }, (_, index) => index);
+  const half = Math.floor(windowSize / 2);
+  const start = Math.max(0, Math.min(current - half, total - windowSize));
+  return Array.from({ length: windowSize }, (_, index) => start + index);
+}
+
+function speakArabicText(text: string) {
+  const phrase = text.trim();
+  if (!phrase || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(phrase);
+  utterance.lang = "ar";
+  utterance.rate = 0.86;
+  const voices = window.speechSynthesis.getVoices();
+  const arabicVoice = voices.find((voice) => voice.lang.toLowerCase().startsWith("ar"));
+  if (arabicVoice) utterance.voice = arabicVoice;
+  window.speechSynthesis.speak(utterance);
+}
+
 function FlashcardView({
   words,
   onClose,
   onReview,
   colors,
+  accentColor,
   cardFontSize,
 }: {
   words: WordEntry[];
   onClose: () => void;
   onReview: (word: WordEntry, rating: FsrsRating) => void;
   colors: DashboardColors;
+  accentColor: string;
   cardFontSize: CardFontSize;
 }) {
   const [deck, setDeck] = useState(words);
@@ -1824,7 +1940,8 @@ function FlashcardView({
   const [showAnswer, setShowAnswer] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [decodedImageUrls, setDecodedImageUrls] = useState<Set<string>>(() => new Set());
-  const cardContentRef = useRef<HTMLDivElement | null>(null);
+  const frontContentRef = useRef<HTMLDivElement | null>(null);
+  const backContentRef = useRef<HTMLDivElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
@@ -1884,7 +2001,8 @@ function FlashcardView({
   }, [deck]);
 
   useEffect(() => {
-    cardContentRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    frontContentRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    backContentRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [index, showAnswer, revealed]);
 
   useEffect(() => {
@@ -1902,6 +2020,15 @@ function FlashcardView({
       if (event.key === " " || event.key === "Enter") {
         event.preventDefault();
         revealOrToggle();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goPrevious();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goNext();
+      } else if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        speakCurrentCard();
       } else if (event.key === "1" && revealed) {
         event.preventDefault();
         rate("again");
@@ -1926,6 +2053,14 @@ function FlashcardView({
   const frontText = (card.word || (!card.imageData ? card.exampleText : "")).trim();
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
+  const transliteration = extractTransliteration(answer);
+  const answerFontSize = flashcardAnswerFontSize(answer, typography.answer);
+  const dotIndexes = flashcardDotIndexes(deck.length, Math.min(index, deck.length - 1));
+  const accentSoft = colorWithAlpha(accentColor, 0.14);
+  const accentFaint = colorWithAlpha(accentColor, 0.08);
+  const accentStrong = colorWithAlpha(accentColor, 0.42);
+  const manuscriptBg = colors.surface === "#fff" ? "#fffdf8" : "#1d1a16";
+  const manuscriptRule = colors.surface === "#fff" ? "rgba(181, 137, 45, 0.34)" : "rgba(230, 191, 92, 0.28)";
   const imageReady = !card.imageData || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
@@ -1942,6 +2077,25 @@ function FlashcardView({
       return;
     }
     setShowAnswer((current) => !current);
+  }
+
+  function goPrevious() {
+    if (completed || index <= 0) return;
+    setIndex((current) => Math.max(0, current - 1));
+    setRevealed(false);
+    setShowAnswer(false);
+  }
+
+  function goNext() {
+    if (completed || index >= deck.length - 1) return;
+    setIndex((current) => Math.min(deck.length - 1, current + 1));
+    setRevealed(false);
+    setShowAnswer(false);
+  }
+
+  function speakCurrentCard() {
+    if (!frontIsRtl || !frontText) return;
+    speakArabicText(frontText);
   }
 
   function rate(rating: FsrsRating) {
@@ -1972,7 +2126,51 @@ function FlashcardView({
         overflow: "hidden",
       }}
     >
-      <div style={{ width: "calc(100% - 96px)", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr)", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 8px" }}>
+      <style>
+        {`
+          @keyframes clFlashcardLoad {
+            from { opacity: 0; transform: translateY(10px) scale(0.992); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+          }
+          @keyframes clFlashcardChildIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          .cl-flashcard-stage {
+            perspective: 1800px;
+            animation: clFlashcardLoad 240ms cubic-bezier(0.2, 0, 0, 1);
+          }
+          .cl-flashcard-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transform-style: preserve-3d;
+            transition: transform 460ms cubic-bezier(0.2, 0.7, 0.2, 1);
+          }
+          .cl-flashcard-inner[data-show-answer="true"] {
+            transform: rotateY(180deg);
+          }
+          .cl-flashcard-face {
+            position: absolute;
+            inset: 0;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          }
+          .cl-flashcard-back {
+            transform: rotateY(180deg);
+          }
+          .cl-flashcard-stagger > * {
+            animation: clFlashcardChildIn 260ms cubic-bezier(0.2, 0, 0, 1) both;
+          }
+          .cl-flashcard-stagger > *:nth-child(2) { animation-delay: 35ms; }
+          .cl-flashcard-stagger > *:nth-child(3) { animation-delay: 70ms; }
+          .cl-flashcard-stagger > *:nth-child(4) { animation-delay: 105ms; }
+        `}
+      </style>
+      <div style={{ width: "min(1180px, calc(100% - 72px))", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr) auto", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 10px" }}>
         <button
           type="button"
           onClick={onClose}
@@ -1982,10 +2180,10 @@ function FlashcardView({
             width: 40,
             height: 40,
             borderRadius: 10,
-            border: `1px solid ${colors.border}`,
-            background: colors.surface,
-            color: colors.text,
-            boxShadow: "0 6px 18px rgba(15,15,15,0.07)",
+            border: `1px solid ${accentStrong}`,
+            background: accentFaint,
+            color: accentColor,
+            boxShadow: `0 6px 18px ${colorWithAlpha(accentColor, 0.12)}`,
             cursor: "pointer",
             fontSize: 20,
             fontWeight: 850,
@@ -1993,13 +2191,53 @@ function FlashcardView({
         >
           ←
         </button>
-        <div style={{ paddingTop: 16 }}>
-          <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: colors.text, opacity: 0.82, transition: "width 180ms ease" }} />
+        <div style={{ paddingTop: 15 }}>
+          <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${accentStrong}`, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: accentColor, transition: "width 220ms cubic-bezier(0.2, 0, 0, 1)" }} />
           </div>
-          <p style={{ color: colors.text, fontSize: 16, fontWeight: 800, margin: "10px 0 0", textAlign: "center" }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 10 }}>
+            {dotIndexes[0] > 0 && <span style={{ color: colors.muted, fontSize: 12, fontWeight: 900 }}>...</span>}
+            {dotIndexes.map((dotIndex) => (
+              <span
+                key={dotIndex}
+                aria-hidden="true"
+                style={{
+                  width: dotIndex === index ? 9 : 6,
+                  height: dotIndex === index ? 9 : 6,
+                  borderRadius: 999,
+                  background: dotIndex === index ? accentColor : colorWithAlpha(accentColor, 0.28),
+                  transform: dotIndex === index ? "scale(1.08)" : "scale(1)",
+                  transition: "width 160ms ease, height 160ms ease, background 160ms ease, transform 160ms ease",
+                }}
+              />
+            ))}
+            {dotIndexes[dotIndexes.length - 1] < deck.length - 1 && <span style={{ color: colors.muted, fontSize: 12, fontWeight: 900 }}>...</span>}
+          </div>
+          <p style={{ color: accentColor, fontSize: 14, fontWeight: 850, margin: "7px 0 0", textAlign: "center" }}>
             {completed ? deck.length : index + 1} / {deck.length}
           </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+          <button
+            type="button"
+            onClick={goPrevious}
+            disabled={index <= 0 || completed}
+            aria-label="Previous card"
+            title="Previous card"
+            style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${accentStrong}`, background: index <= 0 || completed ? colors.surfaceAlt : accentFaint, color: index <= 0 || completed ? colors.muted : accentColor, cursor: index <= 0 || completed ? "default" : "pointer", fontSize: 18, fontWeight: 900 }}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={index >= deck.length - 1 || completed}
+            aria-label="Next card"
+            title="Next card"
+            style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${accentStrong}`, background: index >= deck.length - 1 || completed ? colors.surfaceAlt : accentFaint, color: index >= deck.length - 1 || completed ? colors.muted : accentColor, cursor: index >= deck.length - 1 || completed ? "default" : "pointer", fontSize: 18, fontWeight: 900 }}
+          >
+            ›
+          </button>
         </div>
       </div>
 
@@ -2036,88 +2274,141 @@ function FlashcardView({
         </section>
       ) : (
         <section
+          className="cl-flashcard-stage"
           onClick={revealOrToggle}
           style={{
             flex: "1 1 auto",
             minHeight: 0,
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
+            background: manuscriptBg,
+            border: `1px solid ${manuscriptRule}`,
             borderRadius: 22,
-            boxShadow: "0 22px 68px rgba(15,15,15,0.10)",
+            boxShadow: `0 22px 68px rgba(15,15,15,0.10), inset 0 0 0 1px ${colorWithAlpha("#ffffff", colors.surface === "#fff" ? 0.72 : 0.04)}`,
             overflow: "hidden",
             cursor: "pointer",
             display: "flex",
             flexDirection: "column",
           }}
         >
-          <div
-            ref={cardContentRef}
-            style={{
-              flex: "1 1 auto",
-              minHeight: 0,
-              overflowY: "auto",
-              display: "grid",
-              placeItems: "center",
-              padding: revealed ? "34px min(64px, 5vw)" : "32px min(56px, 5vw)",
-              textAlign: "center",
-              boxSizing: "border-box",
-            }}
-          >
-            {showAnswer ? (
-              <div style={{ maxWidth: 1500, margin: "0 auto", color: colors.text, fontSize: typography.answer, lineHeight: 1.82, overflowWrap: "break-word", textAlign: "left" }}>
-                {renderExplanation(answer, colors)}
-              </div>
-            ) : (
-              <div style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : 20, width: "100%", maxWidth: 1560 }}>
-                {card.imageData && (
-                  <img
-                    src={card.imageData}
-                    alt="Card screenshot"
-                    loading="eager"
-                    decoding={imageReady ? "sync" : "async"}
-                    fetchPriority="high"
-                    onLoad={() => {
-                      const imageData = card.imageData;
-                      if (!imageData) return;
-                      setDecodedImageUrls((current) => current.has(imageData) ? current : new Set(current).add(imageData));
+          <div className="cl-flashcard-inner" data-show-answer={String(showAnswer)} style={{ flex: "1 1 auto", minHeight: 0 }}>
+            <div className="cl-flashcard-face">
+              <div
+                ref={frontContentRef}
+                style={{
+                  flex: "1 1 auto",
+                  minHeight: 0,
+                  overflowY: "auto",
+                  display: "grid",
+                  placeItems: "center",
+                  padding: "30px min(54px, 5vw)",
+                  textAlign: "center",
+                  boxSizing: "border-box",
+                  background:
+                    colors.surface === "#fff"
+                      ? "radial-gradient(circle at 18px 18px, rgba(181,137,45,0.055) 0 1px, transparent 1px), #fffdf8"
+                      : "radial-gradient(circle at 18px 18px, rgba(230,191,92,0.05) 0 1px, transparent 1px), #1d1a16",
+                  backgroundSize: "22px 22px, auto",
+                }}
+              >
+                <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 14 : 18, width: "100%", maxWidth: 980 }}>
+                  {card.imageData && (
+                    <img
+                      src={card.imageData}
+                      alt="Card screenshot"
+                      loading="eager"
+                      decoding={imageReady ? "sync" : "async"}
+                      fetchPriority="high"
+                      onLoad={() => {
+                        const imageData = card.imageData;
+                        if (!imageData) return;
+                        setDecodedImageUrls((current) => current.has(imageData) ? current : new Set(current).add(imageData));
+                      }}
+                      onError={() => {
+                        if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
+                      }}
+                      style={{
+                        display: "block",
+                        maxWidth: "min(100%, 1180px)",
+                        maxHeight: frontText ? "min(580px, calc(100dvh - 340px))" : "min(640px, calc(100dvh - 280px))",
+                        width: "auto",
+                        objectFit: "contain",
+                        borderRadius: 14,
+                        border: `1px solid ${colors.border}`,
+                        background: colors.surfaceAlt,
+                        boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
+                        opacity: imageReady ? 1 : 0.01,
+                        transition: "opacity 80ms ease",
+                      }}
+                    />
+                  )}
+                  {frontText && (
+                    <div
+                      dir={frontIsRtl ? "rtl" : "ltr"}
+                      lang={frontIsRtl ? "ar" : undefined}
+                      style={{
+                        color: colors.text,
+                        fontFamily: frontIsRtl ? ARABIC_FONT_STACK : "inherit",
+                        fontSize: flashcardFrontFontSize(frontText, frontIsRtl),
+                        fontWeight: frontIsRtl ? 800 : 850,
+                        lineHeight: frontIsRtl ? 1.72 : 1.28,
+                        maxWidth: "min(100%, 18ch)",
+                        overflowWrap: "break-word",
+                        textAlign: "center",
+                        unicodeBidi: "plaintext",
+                      }}
+                    >
+                      {bidiSpan(frontText)}
+                    </div>
+                  )}
+                  {transliteration && (
+                    <p style={{ color: accentColor, fontSize: "clamp(18px, 2.3vw, 28px)", lineHeight: 1.35, fontWeight: 750, margin: "-4px 0 0", maxWidth: "34ch" }}>
+                      {transliteration}
+                    </p>
+                  )}
+                  <div style={{ width: "min(360px, 42vw)", height: 2, background: manuscriptRule, margin: "2px 0 0" }} />
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      revealOrToggle();
                     }}
-                    onError={() => {
-                      if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
-                    }}
-                    style={{
-                      display: "block",
-                      maxWidth: "min(100%, 1420px)",
-                      maxHeight: "min(620px, calc(100dvh - 250px))",
-                      width: "auto",
-                      objectFit: "contain",
-                      borderRadius: 14,
-                      border: `1px solid ${colors.border}`,
-                      background: colors.surfaceAlt,
-                      boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
-                      opacity: imageReady ? 1 : 0.01,
-                      transition: "opacity 80ms ease",
-                    }}
-                  />
-                )}
-                {frontText && (
-                  <div
-                    dir="auto"
-                    style={{
-                      color: colors.text,
-                      fontFamily: frontIsRtl ? ARABIC_FONT_STACK : "inherit",
-                      fontSize: frontIsRtl ? "clamp(34px, 4.2vw, 64px)" : "clamp(28px, 3.3vw, 54px)",
-                      fontWeight: frontIsRtl ? 800 : 850,
-                      lineHeight: frontIsRtl ? 1.8 : 1.32,
-                      maxWidth: "min(100%, 1500px)",
-                      overflowWrap: "break-word",
-                      textAlign: "center",
-                    }}
+                    style={{ background: accentSoft, color: accentColor, border: `1px solid ${accentStrong}`, borderRadius: 999, padding: "9px 16px", fontSize: 14, fontWeight: 850, cursor: "pointer" }}
                   >
-                    {frontText}
-                  </div>
-                )}
+                    Reveal meaning
+                  </button>
+                  {frontIsRtl && frontText && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        speakCurrentCard();
+                      }}
+                      style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
+                    >
+                      Listen
+                    </button>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
+            <div className="cl-flashcard-face cl-flashcard-back">
+              <div
+                ref={backContentRef}
+                style={{
+                  flex: "1 1 auto",
+                  minHeight: 0,
+                  overflowY: "auto",
+                  display: "grid",
+                  placeItems: "center",
+                  padding: "36px min(64px, 5vw)",
+                  boxSizing: "border-box",
+                  background: colors.surface,
+                }}
+              >
+                <div dir="ltr" style={{ width: "min(100%, 840px)", margin: "0 auto", color: colors.text, fontSize: answerFontSize, lineHeight: 1.78, overflowWrap: "break-word", textAlign: "left", unicodeBidi: "plaintext" }}>
+                  {renderExplanation(answer, colors)}
+                </div>
+              </div>
+            </div>
           </div>
 
           {revealed && (
@@ -2831,7 +3122,7 @@ function WordsView({
     );
   }
 
-  if (studyWords) return <FlashcardView words={studyWords} onClose={closeFlashcardQuiz} onReview={onReviewFlashcard} colors={colors} cardFontSize={cardFontSize} />;
+  if (studyWords) return <FlashcardView words={studyWords} onClose={closeFlashcardQuiz} onReview={onReviewFlashcard} colors={colors} accentColor={accentColor} cardFontSize={cardFontSize} />;
 
   const modifyingWords = modifyingSet ? setFlashcards(modifyingSet) : [];
 

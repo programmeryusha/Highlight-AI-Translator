@@ -4,6 +4,14 @@ import type { ChatMessage, Message } from "../types";
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const HONORIFIC_MARK = "ﷺ";
+const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
+const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
+const ARABIC_RUN = new RegExp(
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟]*)`,
+  "gu",
+);
 const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
 const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
 const SCREENSHOT_PREVIEW_QUALITY = 0.82;
@@ -64,6 +72,42 @@ function firstStrongTextDirection(value: string): "ltr" | "rtl" {
   return "ltr";
 }
 
+function bidiSpan(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  const re = new RegExp(ARABIC_RUN.source, "gu");
+  let match: RegExpExecArray | null;
+  const pushArabicRun = (run: string, keyPrefix: number) => {
+    run.split(new RegExp(`(${HONORIFIC_MARK})`, "g")).forEach((chunk, chunkIndex) => {
+      if (!chunk) return;
+      if (chunk === HONORIFIC_MARK) {
+        parts.push(
+          <span key={`${keyPrefix}-honorific-${chunkIndex}`} dir="rtl" lang="ar" style={{ display: "inline-block", fontFamily: ARABIC_FONT_STACK, fontSize: "0.86em", lineHeight: 1, marginInline: "0.16em", verticalAlign: "0.18em", unicodeBidi: "isolate" }}>
+            {chunk}
+          </span>
+        );
+        return;
+      }
+      if (!/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(chunk)) {
+        parts.push(chunk);
+        return;
+      }
+      parts.push(
+        <bdi key={`${keyPrefix}-ar-${chunkIndex}`} dir="rtl" lang="ar" style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}>
+          {chunk}
+        </bdi>
+      );
+    });
+  };
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    pushArabicRun(match[0], match.index);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -90,12 +134,12 @@ function renderMarkdown(text: string): React.ReactNode {
     return line.split(/(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*)/g).map((part, index) => {
       if (!part) return null;
       if (part.startsWith("**") && part.endsWith("**")) {
-        return <strong key={index} style={{ fontWeight: 800 }}>{part.slice(2, -2)}</strong>;
+        return <strong key={index} style={{ fontWeight: 800 }}>{bidiSpan(part.slice(2, -2))}</strong>;
       }
       if (part.startsWith("*") && part.endsWith("*")) {
-        return <em key={index} style={{ fontStyle: "italic" }}>{part.slice(1, -1)}</em>;
+        return <em key={index} style={{ fontStyle: "italic" }}>{bidiSpan(part.slice(1, -1))}</em>;
       }
-      return <React.Fragment key={index}>{part}</React.Fragment>;
+      return <React.Fragment key={index}>{bidiSpan(part)}</React.Fragment>;
     });
   }
 
@@ -119,7 +163,12 @@ function renderMarkdown(text: string): React.ReactNode {
     }
 
     flushList();
-    nodes.push(<p key={index} style={{ margin: "0 0 10px", lineHeight: 1.65 }}>{inlineMarkdown(trimmed)}</p>);
+    const direction = firstStrongTextDirection(trimmed);
+    nodes.push(
+      <p key={index} dir={direction} style={{ margin: "0 0 10px", lineHeight: 1.65, direction, textAlign: direction === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}>
+        {inlineMarkdown(trimmed)}
+      </p>
+    );
   });
   flushList();
 

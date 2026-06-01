@@ -1,7 +1,9 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-31-preview-markdown-v2";
+const CONTENT_SCRIPT_VERSION = "2026-05-31-bidi-audio-flashcards-v3";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
+const ARABIC_FONT_STACK = "'Amiri','Noto Naskh Arabic',ui-serif,Georgia,serif";
+const HONORIFIC_MARK = "ﷺ";
 const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
 const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
 const SCREENSHOT_PREVIEW_QUALITY = 0.82;
@@ -107,7 +109,7 @@ function ensureBaseStyles() {
   document.head.appendChild(style);
 
   if (!document.querySelector('[data-cl-font]')) {
-    fetch("https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;700&display=swap")
+    fetch("https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&display=swap")
       .then((r) => r.text())
       .then((css) => {
         if (document.querySelector("[data-cl-font]")) return;
@@ -600,18 +602,40 @@ type HardWordEntry = { term: string; definition: string };
 function appendBidiText(container: HTMLElement, text: string) {
   let start = 0;
 
+  function appendArabicRun(run: string) {
+    run.split(new RegExp(`(${HONORIFIC_MARK})`, "g")).forEach((chunk) => {
+      if (!chunk) return;
+      if (chunk === HONORIFIC_MARK) {
+        const honorific = document.createElement("span");
+        honorific.dir = "rtl";
+        honorific.lang = "ar";
+        honorific.className = "cl-honorific";
+        honorific.style.cssText = `display:inline-block;direction:rtl;unicode-bidi:isolate;font-family:${ARABIC_FONT_STACK};font-size:0.86em;font-weight:650;line-height:1;margin-inline:0.16em;vertical-align:0.18em;`;
+        honorific.textContent = chunk;
+        container.appendChild(honorific);
+        return;
+      }
+      if (!/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(chunk)) {
+        container.appendChild(document.createTextNode(chunk));
+        return;
+      }
+      const arabic = document.createElement("bdi");
+      arabic.dir = "rtl";
+      arabic.lang = "ar";
+      arabic.className = "cl-ar";
+      arabic.style.cssText = `direction:rtl;unicode-bidi:isolate;font-family:${ARABIC_FONT_STACK};font-size:1.16em;line-height:1.85;`;
+      arabic.textContent = chunk;
+      container.appendChild(arabic);
+    });
+  }
+
   for (const match of text.matchAll(ARABIC_RUN_RE)) {
     const index = match.index ?? 0;
     if (index > start) {
       container.appendChild(document.createTextNode(text.slice(start, index)));
     }
 
-    const arabic = document.createElement("bdi");
-    arabic.dir = "rtl";
-    arabic.lang = "ar";
-    arabic.style.cssText = "direction:rtl;unicode-bidi:isolate;font-family:'Noto Naskh Arabic',ui-serif,Georgia,serif;font-size:1.16em;line-height:1.85;";
-    arabic.textContent = match[0];
-    container.appendChild(arabic);
+    appendArabicRun(match[0]);
     start = index + match[0].length;
   }
 
@@ -634,7 +658,7 @@ function appendHardWordRows(container: HTMLElement, entries: HardWordEntry[]) {
     termRow.style.cssText = "margin:10px 0 0;";
 
     const termEl = document.createElement("div");
-    termEl.style.cssText = "font-weight:700;font-family:'Noto Naskh Arabic',serif;font-size:1.08em;line-height:1.83;";
+    termEl.style.cssText = `font-weight:700;font-family:${ARABIC_FONT_STACK};font-size:1.08em;line-height:1.83;`;
     appendBidiText(termEl, term);
 
     const defEl = document.createElement("div");
@@ -710,7 +734,7 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
             source.setAttribute("style", `
               color:${colors.text};
               direction:${isRtl ? "rtl" : "ltr"};
-              font-family:${isRtl ? "'Noto Naskh Arabic',ui-serif,Georgia,serif" : "inherit"};
+              font-family:${isRtl ? ARABIC_FONT_STACK : "inherit"};
               font-size:1.06em;
               font-weight:650;
               line-height:1.9;

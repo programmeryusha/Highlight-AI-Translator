@@ -4,7 +4,9 @@ import type { Capture, ChatMessage, Message } from "../types";
 type ThemeName = "light" | "dark";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const THEME_STORAGE_KEY = "contextlens_theme";
-const ARABIC_FONT_STACK = "'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const HONORIFIC_MARK = "ﷺ";
+const STREAM_DISCONNECTED_MESSAGE = "Streaming connection closed before the answer finished.";
 const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN = new RegExp(
@@ -27,13 +29,52 @@ function bidiSpan(text: string): React.ReactNode {
   let last = 0;
   const re = new RegExp(ARABIC_RUN.source, "gu");
   let match: RegExpExecArray | null;
+  const pushArabicRun = (run: string, keyPrefix: number) => {
+    run.split(new RegExp(`(${HONORIFIC_MARK})`, "g")).forEach((chunk, chunkIndex) => {
+      if (!chunk) return;
+      if (chunk === HONORIFIC_MARK) {
+        parts.push(
+          <span
+            key={`${keyPrefix}-honorific-${chunkIndex}`}
+            dir="rtl"
+            lang="ar"
+            className="cl-honorific"
+            style={{
+              display: "inline-block",
+              fontFamily: ARABIC_FONT_STACK,
+              fontSize: "0.86em",
+              fontWeight: 650,
+              lineHeight: 1,
+              marginInline: "0.16em",
+              verticalAlign: "0.18em",
+              unicodeBidi: "isolate",
+            }}
+          >
+            {chunk}
+          </span>
+        );
+        return;
+      }
+      if (!/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(chunk)) {
+        parts.push(chunk);
+        return;
+      }
+      parts.push(
+        <bdi
+          key={`${keyPrefix}-ar-${chunkIndex}`}
+          dir="rtl"
+          lang="ar"
+          className="cl-ar"
+          style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}
+        >
+          {chunk}
+        </bdi>
+      );
+    });
+  };
   while ((match = re.exec(text)) !== null) {
     if (match.index > last) parts.push(text.slice(last, match.index));
-    parts.push(
-      <bdi key={match.index} dir="rtl" lang="ar" style={{ fontFamily: ARABIC_FONT_STACK, fontSize: "1.08em", lineHeight: 1.85, unicodeBidi: "isolate" }}>
-        {match[0]}
-      </bdi>
-    );
+    pushArabicRun(match[0], match.index);
     last = match.index + match[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
@@ -65,7 +106,7 @@ function QuestionText({ text, color, fontSize }: { text: string; color: string; 
         margin: 0,
         fontWeight: 650,
         direction,
-        textAlign: "left",
+        textAlign: direction === "rtl" ? "right" : "left",
         unicodeBidi: "plaintext",
         overflowWrap: "break-word",
         width: "fit-content",
@@ -129,6 +170,83 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
       if (response?.error) { reject(new Error(response.error)); return; }
       resolve(response as T);
     });
+  });
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function fallbackForDisconnectedStream(message: Record<string, unknown>): Message | null {
+  if (message.type === "ASK_FOLLOWUP_STREAM") {
+    return {
+      type: "ASK_FOLLOWUP",
+      captureId: String(message.captureId ?? ""),
+      question: String(message.question ?? ""),
+      deepDive: Boolean(message.deepDive),
+      fallbackText: optionalString(message.fallbackText),
+      fallbackContext: optionalString(message.fallbackContext),
+      fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
+      fallbackUrl: optionalString(message.fallbackUrl),
+      fallbackTitle: optionalString(message.fallbackTitle),
+    };
+  }
+  if (message.type === "DEEP_DIVE_STREAM") {
+    return {
+      type: "DEEP_DIVE",
+      captureId: String(message.captureId ?? ""),
+      fallbackText: optionalString(message.fallbackText),
+      fallbackContext: optionalString(message.fallbackContext),
+      fallbackImageData: optionalString(message.fallbackImageData),
+      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
+      fallbackUrl: optionalString(message.fallbackUrl),
+      fallbackTitle: optionalString(message.fallbackTitle),
+    };
+  }
+  return null;
+}
+
+function streamRuntimeMessage<T>(
+  message: Record<string, unknown>,
+  handlers: { onChunk?: (chunk: string) => void } = {},
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: "contextlens-explain-stream" });
+    let settled = false;
+
+    port.onMessage.addListener((event: Record<string, unknown>) => {
+      if (event.type === "chunk" && typeof event.text === "string") {
+        handlers.onChunk?.(event.text);
+        return;
+      }
+      if (event.type === "done") {
+        settled = true;
+        port.disconnect();
+        resolve(event as T);
+        return;
+      }
+      if (event.type === "error") {
+        settled = true;
+        port.disconnect();
+        reject(new Error(typeof event.error === "string" ? event.error : "Streaming answer failed."));
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (settled) return;
+      settled = true;
+
+      const fallbackMessage = fallbackForDisconnectedStream(message);
+      if (fallbackMessage) {
+        sendRuntimeMessage<T>(fallbackMessage).then(resolve).catch(reject);
+        return;
+      }
+
+      reject(new Error(STREAM_DISCONNECTED_MESSAGE));
+    });
+
+    port.postMessage(message);
   });
 }
 
@@ -241,6 +359,7 @@ export default function ChatApp() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
+  const [streamingAnswerStarted, setStreamingAnswerStarted] = useState(false);
   const [deepDiveActive, setDeepDiveActive] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
@@ -309,20 +428,23 @@ export default function ChatApp() {
         break;
       }
     }
-    const target = loading || deepDiveLoading
-      ? loadingAnswerRef.current
-      : lastAssistantIndex >= 0
-        ? messageRefs.current.get(lastAssistantIndex)
-        : null;
+    const target = streamingAnswerStarted && lastAssistantIndex >= 0
+      ? messageRefs.current.get(lastAssistantIndex)
+      : loading || deepDiveLoading
+        ? loadingAnswerRef.current
+        : lastAssistantIndex >= 0
+          ? messageRefs.current.get(lastAssistantIndex)
+          : null;
     if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    scrollToAnswerOnNextUpdate.current = false;
-  }, [messages, loading, deepDiveLoading]);
+    target.scrollIntoView({ behavior: streamingAnswerStarted ? "auto" : "smooth", block: streamingAnswerStarted ? "end" : "start" });
+    if (!loading && !deepDiveLoading) scrollToAnswerOnNextUpdate.current = false;
+  }, [messages, loading, deepDiveLoading, streamingAnswerStarted]);
 
   useEffect(() => {
     if (!capture) return;
     setSourceExpanded(false);
     setDeepDiveLoading(false);
+    setStreamingAnswerStarted(false);
     setImageFailed(false);
   }, [capture?.id]);
 
@@ -341,10 +463,25 @@ export default function ChatApp() {
     if (!capture || deepDiveActive || deepDiveLoading) return;
     scrollToAnswerOnNextUpdate.current = true;
     setDeepDiveLoading(true);
+    setStreamingAnswerStarted(false);
+    const baseMessages = messages;
+    let streamed = "";
     try {
-      const data = await sendRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
-        type: "DEEP_DIVE",
+      const data = await streamRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
+        type: "DEEP_DIVE_STREAM",
         captureId: capture.id,
+        fallbackText: capture.imageData ? undefined : capture.text,
+        fallbackContext: capture.context,
+        fallbackImageData: capture.imageData,
+        fallbackImagePreviewData: capture.imagePreviewData,
+        fallbackUrl: capture.url,
+        fallbackTitle: capture.title,
+      }, {
+        onChunk: (chunk) => {
+          streamed += chunk;
+          setStreamingAnswerStarted(true);
+          setMessages([...baseMessages, { role: "assistant", content: streamed }]);
+        },
       });
       const result: ChatMessage[] = data.messages ?? [{ role: "assistant", content: data.explanation }];
       setMessages(result);
@@ -355,9 +492,10 @@ export default function ChatApp() {
       const content = msg === "DEEP_DIVE_LIMIT_REACHED"
         ? "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer."
         : msg;
-      setMessages((prev) => [...prev, { role: "assistant", content }]);
+      setMessages([...baseMessages, { role: "assistant", content }]);
     } finally {
       setDeepDiveLoading(false);
+      setStreamingAnswerStarted(false);
     }
   }
 
@@ -366,17 +504,31 @@ export default function ChatApp() {
     if (!text || loading || deepDiveLoading || !capture) return;
     setInput("");
     scrollToAnswerOnNextUpdate.current = true;
+    setStreamingAnswerStarted(false);
 
     const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(updated);
     setLoading(true);
+    let streamed = "";
 
     try {
-      const data = await sendRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
-        type: "ASK_FOLLOWUP",
+      const data = await streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
+        type: "ASK_FOLLOWUP_STREAM",
         captureId: capture.id,
         question: text,
         deepDive: deepDiveActive,
+        fallbackText: capture.imageData ? undefined : capture.text,
+        fallbackContext: capture.context,
+        fallbackImageData: capture.imageData,
+        fallbackImagePreviewData: capture.imagePreviewData,
+        fallbackUrl: capture.url,
+        fallbackTitle: capture.title,
+      }, {
+        onChunk: (chunk) => {
+          streamed += chunk;
+          setStreamingAnswerStarted(true);
+          setMessages([...updated, { role: "assistant", content: streamed }]);
+        },
       });
       const final = data.messages ?? [...updated, { role: "assistant", content: data.reply }];
       setMessages(final);
@@ -386,6 +538,7 @@ export default function ChatApp() {
       setMessages([...updated, { role: "assistant", content: message }]);
     }
     setLoading(false);
+    setStreamingAnswerStarted(false);
   }
 
   const dark = theme === "dark";
@@ -426,6 +579,7 @@ export default function ChatApp() {
   const hasScreenshot = Boolean(capture.imageData);
   const sourceIsLong = !hasScreenshot && capture.text.length > 700;
   const sourcePreview = sourceIsLong && !sourceExpanded;
+  const sourceDirection = firstStrongTextDirection(capture.text);
   const showDeepDiveBtn = capture.status === "done" && !deepDiveActive && !deepDiveLoading;
 
   return (
@@ -489,18 +643,23 @@ export default function ChatApp() {
             )
           ) : (
             <p
+              dir={sourceDirection}
               style={{
                 fontSize: 21,
                 color: colors.text,
                 lineHeight: 1.6,
                 fontWeight: 650,
+                direction: sourceDirection,
+                textAlign: sourceDirection === "rtl" ? "right" : "left",
+                unicodeBidi: "plaintext",
+                fontFamily: sourceDirection === "rtl" ? ARABIC_FONT_STACK : "inherit",
                 maxHeight: sourcePreview ? 220 : undefined,
                 overflow: sourcePreview ? "hidden" : undefined,
                 marginBottom: sourceIsLong ? 8 : undefined,
                 margin: 0,
               }}
             >
-              {capture.text}
+              {bidiSpan(capture.text)}
             </p>
           )}
           {sourceIsLong && (
@@ -553,13 +712,13 @@ export default function ChatApp() {
             </button>
           </div>
         )}
-        {deepDiveLoading && (
+        {deepDiveLoading && !streamingAnswerStarted && (
           <div ref={loadingAnswerRef} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: accentColor, marginBottom: 4, fontWeight: 500 }}>AI</p>
             <p style={{ fontSize: 15, color: accentColor, fontStyle: "italic" }}>Thinking through a deeper answer…</p>
           </div>
         )}
-        {loading && (
+        {loading && !streamingAnswerStarted && (
           <div ref={loadingAnswerRef} style={{ marginBottom: 20 }}>
             <p style={{ fontSize: 12, color: deepDiveActive ? accentColor : colors.muted, marginBottom: 4, fontWeight: 500 }}>AI</p>
             <p style={{ fontSize: 15, color: deepDiveActive ? accentColor : colors.muted, fontStyle: deepDiveActive ? "italic" : undefined }}>
