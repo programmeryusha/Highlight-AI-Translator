@@ -15,6 +15,7 @@ const LONG_TEXT_LIMIT = 260;
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const THEME_STORAGE_KEY = "contextlens_theme";
+const FLASHCARD_TEXT_SCALE_KEY = "contextlens_flashcard_text_scale";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
   { value: "past3", label: "Past 3 days", days: 3 },
@@ -37,7 +38,9 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
+const FLASHCARD_FLIP_MS = 680;
 const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const FLASHCARD_LATIN_FONT_STACK = "'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, ui-serif, serif";
 const HONORIFIC_MARK = "ﷺ";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
@@ -140,6 +143,23 @@ function rememberTheme(theme: ThemeName) {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   } catch {
     // The chrome storage value remains authoritative.
+  }
+}
+
+function storedFlashcardTextScale(): number {
+  try {
+    const stored = Number(localStorage.getItem(FLASHCARD_TEXT_SCALE_KEY));
+    return Number.isFinite(stored) ? Math.max(0.82, Math.min(1.25, stored)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function rememberFlashcardTextScale(scale: number) {
+  try {
+    localStorage.setItem(FLASHCARD_TEXT_SCALE_KEY, String(scale));
+  } catch {
+    // This display preference can remain session-only if storage is blocked.
   }
 }
 
@@ -585,8 +605,11 @@ function QuestionText({
   );
 }
 
-function renderExplanation(text: string, colors: DashboardColors): React.ReactNode {
+function renderExplanation(text: string, colors: DashboardColors, options: { lineHeight?: number } = {}): React.ReactNode {
   const nodes: React.ReactNode[] = [];
+  const proseLineHeight = options.lineHeight ?? 1.78;
+  const labelLineHeight = options.lineHeight ?? 1.75;
+  const arabicLineHeight = Math.max(1.55, proseLineHeight + 0.08);
   text.split("\n").forEach((raw, i) => {
     const line = raw.trim();
     if (!line) return;
@@ -611,7 +634,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
         if (body) {
           const isAr = ARABIC_RANGE.test(body);
           nodes.push(
-            <p key={i} dir={isAr ? "rtl" : "ltr"} style={{ margin: "3px 0 6px", lineHeight: 1.85, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit", unicodeBidi: "plaintext" }}>
+            <p key={i} dir={isAr ? "rtl" : "ltr"} style={{ margin: "3px 0 6px", lineHeight: isAr ? arabicLineHeight : proseLineHeight, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit", unicodeBidi: "plaintext" }}>
               {bidiSpan(body)}
             </p>
           );
@@ -620,7 +643,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
       }
       const display = EXPL_RENAME[label] ?? label;
       nodes.push(
-        <p key={i} dir="ltr" style={{ margin: "8px 0 2px", lineHeight: 1.75, direction: "ltr", unicodeBidi: "plaintext" }}>
+        <p key={i} dir="ltr" style={{ margin: "8px 0 2px", lineHeight: labelLineHeight, direction: "ltr", unicodeBidi: "plaintext" }}>
           <span style={{ fontWeight: 700, color: colors.muted, fontSize: "0.82em", letterSpacing: "0.05em", textTransform: "uppercase" }}>{display}:</span>
           {body && <> {inlineParts(body)}</>}
         </p>
@@ -630,7 +653,7 @@ function renderExplanation(text: string, colors: DashboardColors): React.ReactNo
 
     const direction = firstStrongTextDirection(line);
     nodes.push(
-      <p key={i} dir={direction} style={{ margin: "0 0 8px", lineHeight: 1.78, direction, textAlign: direction === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}>
+      <p key={i} dir={direction} style={{ margin: "0 0 8px", lineHeight: direction === "rtl" ? arabicLineHeight : proseLineHeight, direction, textAlign: direction === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}>
         {inlineParts(line)}
       </p>
     );
@@ -1879,24 +1902,43 @@ function extractTransliteration(explanation: string): string {
   return match ? stripInlineMarkdown(match[1]).replace(/^["']|["']$/g, "").trim() : "";
 }
 
-function flashcardAnswerFontSize(answer: string, base: number): number {
+function flashcardAnswerTypography(answer: string, base: number, scale: number) {
   const length = answer.trim().length;
-  if (length < 160) return Math.min(30, Math.max(base + 5, 24));
-  if (length < 360) return Math.min(26, Math.max(base + 3, 22));
-  if (length < 760) return Math.min(23, Math.max(base + 1, 20));
-  return Math.min(21, Math.max(base - 1, 18));
+  const paragraphCount = Math.max(1, answer.trim().split(/\n{2,}|\n(?=\s*[-•])/).filter(Boolean).length);
+  const baseSize = length < 180
+    ? 38
+    : length < 420
+      ? 33
+      : length < 820
+        ? 28
+        : length < 1400
+          ? 24
+          : Math.max(base + 1, 21);
+  const cap = length < 180 ? 46 : length < 420 ? 39 : length < 820 ? 33 : length < 1400 ? 28 : 24;
+  const floor = length < 420 ? 25 : length < 820 ? 22 : 19;
+  const fontSize = Math.max(floor, Math.min(cap, Math.round(baseSize * scale)));
+  const lineHeight = fontSize >= 36
+    ? 1.42
+    : fontSize >= 30
+      ? 1.5
+      : fontSize >= 24
+        ? 1.6
+        : 1.7;
+  const maxWidth = length < 260 ? 760 : length < 820 ? 880 : 940;
+  const verticalOffset = paragraphCount <= 2 && length < 520 ? "-2dvh" : 0;
+  return { fontSize, lineHeight, maxWidth, verticalOffset };
 }
 
 function flashcardFrontFontSize(text: string, rtl: boolean): string {
   const length = text.trim().length;
   if (rtl) {
-    if (length <= 18) return "clamp(54px, 8vw, 104px)";
-    if (length <= 48) return "clamp(42px, 5.6vw, 76px)";
-    return "clamp(32px, 4vw, 58px)";
+    if (length <= 18) return "clamp(64px, 10vw, 124px)";
+    if (length <= 48) return "clamp(48px, 6.8vw, 88px)";
+    return "clamp(36px, 4.8vw, 66px)";
   }
-  if (length <= 18) return "clamp(38px, 5vw, 68px)";
-  if (length <= 54) return "clamp(30px, 3.6vw, 52px)";
-  return "clamp(24px, 2.6vw, 38px)";
+  if (length <= 18) return "clamp(44px, 6vw, 76px)";
+  if (length <= 54) return "clamp(34px, 4.3vw, 58px)";
+  return "clamp(26px, 3vw, 42px)";
 }
 
 function flashcardDotIndexes(total: number, current: number, windowSize = 9): number[] {
@@ -1904,19 +1946,6 @@ function flashcardDotIndexes(total: number, current: number, windowSize = 9): nu
   const half = Math.floor(windowSize / 2);
   const start = Math.max(0, Math.min(current - half, total - windowSize));
   return Array.from({ length: windowSize }, (_, index) => start + index);
-}
-
-function speakArabicText(text: string) {
-  const phrase = text.trim();
-  if (!phrase || !("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(phrase);
-  utterance.lang = "ar";
-  utterance.rate = 0.86;
-  const voices = window.speechSynthesis.getVoices();
-  const arabicVoice = voices.find((voice) => voice.lang.toLowerCase().startsWith("ar"));
-  if (arabicVoice) utterance.voice = arabicVoice;
-  window.speechSynthesis.speak(utterance);
 }
 
 function FlashcardView({
@@ -1938,20 +1967,33 @@ function FlashcardView({
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [flipAnimating, setFlipAnimating] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [textScale, setTextScale] = useState(storedFlashcardTextScale);
   const [decodedImageUrls, setDecodedImageUrls] = useState<Set<string>>(() => new Set());
   const frontContentRef = useRef<HTMLDivElement | null>(null);
   const backContentRef = useRef<HTMLDivElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const flipTimerRef = useRef<number | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
+    clearFlipTimer();
     setDeck(words);
     setIndex(0);
     setRevealed(false);
     setShowAnswer(false);
+    setFlipAnimating(false);
     setCompleted(false);
+    setSettingsOpen(false);
   }, [words]);
+
+  useEffect(() => () => clearFlipTimer(), []);
+
+  useEffect(() => {
+    rememberFlashcardTextScale(textScale);
+  }, [textScale]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -2006,17 +2048,8 @@ function FlashcardView({
   }, [index, showAnswer, revealed]);
 
   useEffect(() => {
-    const revealOrToggle = () => {
-      if (completed) return;
-      if (!revealed) {
-        setRevealed(true);
-        setShowAnswer(true);
-        return;
-      }
-      setShowAnswer((current) => !current);
-    };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
       if (event.key === " " || event.key === "Enter") {
         event.preventDefault();
         revealOrToggle();
@@ -2026,19 +2059,16 @@ function FlashcardView({
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         goNext();
-      } else if (event.key.toLowerCase() === "l") {
-        event.preventDefault();
-        speakCurrentCard();
-      } else if (event.key === "1" && revealed) {
+      } else if (event.key === "1" && revealed && showAnswer && !flipAnimating) {
         event.preventDefault();
         rate("again");
-      } else if (event.key === "2" && revealed) {
+      } else if (event.key === "2" && revealed && showAnswer && !flipAnimating) {
         event.preventDefault();
         rate("hard");
-      } else if (event.key === "3" && revealed) {
+      } else if (event.key === "3" && revealed && showAnswer && !flipAnimating) {
         event.preventDefault();
         rate("good");
-      } else if (event.key === "4" && revealed) {
+      } else if (event.key === "4" && revealed && showAnswer && !flipAnimating) {
         event.preventDefault();
         rate("easy");
       }
@@ -2054,7 +2084,7 @@ function FlashcardView({
   const frontIsRtl = hasRtlText(frontText);
   const answer = card.explanation || "No answer yet. Save an explanation for this card to study it here.";
   const transliteration = extractTransliteration(answer);
-  const answerFontSize = flashcardAnswerFontSize(answer, typography.answer);
+  const answerTypography = flashcardAnswerTypography(answer, typography.answer, textScale);
   const dotIndexes = flashcardDotIndexes(deck.length, Math.min(index, deck.length - 1));
   const accentSoft = colorWithAlpha(accentColor, 0.14);
   const accentFaint = colorWithAlpha(accentColor, 0.08);
@@ -2068,38 +2098,59 @@ function FlashcardView({
     good: { color: "#059669", soft: "rgba(5, 150, 105, 0.08)", label: "Good" },
     easy: { color: "#2563eb", soft: "rgba(37, 99, 235, 0.07)", label: "Easy" },
   };
+  const ratingsVisible = revealed && showAnswer && !flipAnimating;
+
+  function clearFlipTimer() {
+    if (flipTimerRef.current === null) return;
+    window.clearTimeout(flipTimerRef.current);
+    flipTimerRef.current = null;
+  }
+
+  function finishFlip() {
+    clearFlipTimer();
+    setFlipAnimating(false);
+  }
+
+  function startFlip(nextShowAnswer: boolean) {
+    clearFlipTimer();
+    setFlipAnimating(true);
+    setShowAnswer(nextShowAnswer);
+    flipTimerRef.current = window.setTimeout(() => {
+      flipTimerRef.current = null;
+      setFlipAnimating(false);
+    }, FLASHCARD_FLIP_MS + 80);
+  }
 
   function revealOrToggle() {
-    if (completed) return;
-    if (!revealed) {
-      setRevealed(true);
-      setShowAnswer(true);
-      return;
-    }
-    setShowAnswer((current) => !current);
+    if (completed || flipAnimating) return;
+    setSettingsOpen(false);
+    if (!revealed) setRevealed(true);
+    startFlip(!showAnswer);
   }
 
   function goPrevious() {
     if (completed || index <= 0) return;
+    clearFlipTimer();
     setIndex((current) => Math.max(0, current - 1));
     setRevealed(false);
     setShowAnswer(false);
+    setFlipAnimating(false);
+    setSettingsOpen(false);
   }
 
   function goNext() {
     if (completed || index >= deck.length - 1) return;
+    clearFlipTimer();
     setIndex((current) => Math.min(deck.length - 1, current + 1));
     setRevealed(false);
     setShowAnswer(false);
-  }
-
-  function speakCurrentCard() {
-    if (!frontIsRtl || !frontText) return;
-    speakArabicText(frontText);
+    setFlipAnimating(false);
+    setSettingsOpen(false);
   }
 
   function rate(rating: FsrsRating) {
-    if (completed) return;
+    if (completed || flipAnimating) return;
+    clearFlipTimer();
     const currentCard = deck[index];
     onReview(currentCard, rating);
     if (index >= deck.length - 1) {
@@ -2109,6 +2160,8 @@ function FlashcardView({
     setIndex((current) => current + 1);
     setRevealed(false);
     setShowAnswer(false);
+    setFlipAnimating(false);
+    setSettingsOpen(false);
   }
 
   return (
@@ -2145,7 +2198,9 @@ function FlashcardView({
             width: 100%;
             height: 100%;
             transform-style: preserve-3d;
-            transition: transform 460ms cubic-bezier(0.2, 0.7, 0.2, 1);
+            transition: transform ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 1, 0.36, 1);
+            transform-origin: center center;
+            will-change: transform;
           }
           .cl-flashcard-inner[data-show-answer="true"] {
             transform: rotateY(180deg);
@@ -2158,6 +2213,10 @@ function FlashcardView({
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            background: ${colors.surface};
+          }
+          .cl-flashcard-face:first-child {
+            background: ${manuscriptBg};
           }
           .cl-flashcard-back {
             transform: rotateY(180deg);
@@ -2217,7 +2276,7 @@ function FlashcardView({
             {completed ? deck.length : index + 1} / {deck.length}
           </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, position: "relative" }}>
           <button
             type="button"
             onClick={goPrevious}
@@ -2238,6 +2297,65 @@ function FlashcardView({
           >
             ›
           </button>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-label="Flashcard text settings"
+            title="Text size"
+            style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${accentStrong}`, background: settingsOpen ? accentSoft : accentFaint, color: accentColor, cursor: "pointer", fontSize: 18, fontWeight: 900 }}
+          >
+            ⚙
+          </button>
+          {settingsOpen && (
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 46,
+                zIndex: 8,
+                width: 246,
+                border: `1px solid ${accentStrong}`,
+                borderRadius: 12,
+                background: colors.surface,
+                boxShadow: "0 16px 42px rgba(15,15,15,0.16)",
+                padding: 14,
+                display: "grid",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <span style={{ color: colors.text, fontSize: 13, fontWeight: 850 }}>Text size</span>
+                <span style={{ color: accentColor, fontSize: 12, fontWeight: 850 }}>{Math.round(textScale * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={82}
+                max={125}
+                step={1}
+                value={Math.round(textScale * 100)}
+                onChange={(event) => setTextScale(Number(event.target.value) / 100)}
+                style={{ width: "100%", accentColor }}
+                aria-label="Flashcard text size"
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                {[
+                  { label: "A-", value: 0.9 },
+                  { label: "A", value: 1 },
+                  { label: "A+", value: 1.14 },
+                ].map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => setTextScale(option.value)}
+                    style={{ border: `1px solid ${Math.abs(textScale - option.value) < 0.01 ? accentColor : colors.border}`, borderRadius: 8, background: Math.abs(textScale - option.value) < 0.01 ? accentFaint : colors.surfaceAlt, color: Math.abs(textScale - option.value) < 0.01 ? accentColor : colors.text, padding: "6px 0", fontSize: 12, fontWeight: 900, cursor: "pointer" }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2287,19 +2405,28 @@ function FlashcardView({
             cursor: "pointer",
             display: "flex",
             flexDirection: "column",
+            position: "relative",
           }}
         >
-          <div className="cl-flashcard-inner" data-show-answer={String(showAnswer)} style={{ flex: "1 1 auto", minHeight: 0 }}>
+          <div
+            key={card.id}
+            className="cl-flashcard-inner"
+            data-show-answer={String(showAnswer)}
+            onTransitionEnd={(event) => {
+              if (event.target === event.currentTarget && event.propertyName === "transform") finishFlip();
+            }}
+            style={{ flex: "1 1 auto", minHeight: 0 }}
+          >
             <div className="cl-flashcard-face">
               <div
                 ref={frontContentRef}
                 style={{
                   flex: "1 1 auto",
                   minHeight: 0,
-                  overflowY: "auto",
+                  overflowY: card.imageData ? "auto" : "hidden",
                   display: "grid",
                   placeItems: "center",
-                  padding: "30px min(54px, 5vw)",
+                  padding: card.imageData ? "30px min(54px, 5vw)" : "clamp(18px, 4dvh, 42px) min(54px, 5vw)",
                   textAlign: "center",
                   boxSizing: "border-box",
                   background:
@@ -2309,7 +2436,7 @@ function FlashcardView({
                   backgroundSize: "22px 22px, auto",
                 }}
               >
-                <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 14 : 18, width: "100%", maxWidth: 980 }}>
+                <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : transliteration ? 12 : 0, width: "100%", maxWidth: 980 }}>
                   {card.imageData && (
                     <img
                       src={card.imageData}
@@ -2328,7 +2455,7 @@ function FlashcardView({
                       style={{
                         display: "block",
                         maxWidth: "min(100%, 1180px)",
-                        maxHeight: frontText ? "min(580px, calc(100dvh - 340px))" : "min(640px, calc(100dvh - 280px))",
+                        maxHeight: frontText ? "min(620px, calc(100dvh - 260px))" : "min(720px, calc(100dvh - 220px))",
                         width: "auto",
                         objectFit: "contain",
                         borderRadius: 14,
@@ -2346,11 +2473,11 @@ function FlashcardView({
                       lang={frontIsRtl ? "ar" : undefined}
                       style={{
                         color: colors.text,
-                        fontFamily: frontIsRtl ? ARABIC_FONT_STACK : "inherit",
-                        fontSize: flashcardFrontFontSize(frontText, frontIsRtl),
-                        fontWeight: frontIsRtl ? 800 : 850,
-                        lineHeight: frontIsRtl ? 1.72 : 1.28,
-                        maxWidth: "min(100%, 18ch)",
+                        fontFamily: frontIsRtl ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK,
+                        fontSize: `calc(${flashcardFrontFontSize(frontText, frontIsRtl)} * ${textScale})`,
+                        fontWeight: frontIsRtl ? 700 : 680,
+                        lineHeight: frontIsRtl ? 1.56 : 1.18,
+                        maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 24ch)",
                         overflowWrap: "break-word",
                         textAlign: "center",
                         unicodeBidi: "plaintext",
@@ -2360,32 +2487,9 @@ function FlashcardView({
                     </div>
                   )}
                   {transliteration && (
-                    <p style={{ color: accentColor, fontSize: "clamp(18px, 2.3vw, 28px)", lineHeight: 1.35, fontWeight: 750, margin: "-4px 0 0", maxWidth: "34ch" }}>
+                    <p style={{ color: accentColor, fontFamily: FLASHCARD_LATIN_FONT_STACK, fontSize: `calc(clamp(18px, 2.3vw, 28px) * ${textScale})`, lineHeight: 1.25, fontWeight: 650, margin: "-4px 0 0", maxWidth: "34ch" }}>
                       {transliteration}
                     </p>
-                  )}
-                  <div style={{ width: "min(360px, 42vw)", height: 2, background: manuscriptRule, margin: "2px 0 0" }} />
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      revealOrToggle();
-                    }}
-                    style={{ background: accentSoft, color: accentColor, border: `1px solid ${accentStrong}`, borderRadius: 999, padding: "9px 16px", fontSize: 14, fontWeight: 850, cursor: "pointer" }}
-                  >
-                    Reveal meaning
-                  </button>
-                  {frontIsRtl && frontText && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        speakCurrentCard();
-                      }}
-                      style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 999, padding: "8px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
-                    >
-                      Listen
-                    </button>
                   )}
                 </div>
               </div>
@@ -2399,20 +2503,53 @@ function FlashcardView({
                   overflowY: "auto",
                   display: "grid",
                   placeItems: "center",
-                  padding: "36px min(64px, 5vw)",
+                  padding: "36px min(64px, 5vw) calc(clamp(124px, 15dvh, 166px) + 28px)",
                   boxSizing: "border-box",
                   background: colors.surface,
                 }}
               >
-                <div dir="ltr" style={{ width: "min(100%, 840px)", margin: "0 auto", color: colors.text, fontSize: answerFontSize, lineHeight: 1.78, overflowWrap: "break-word", textAlign: "left", unicodeBidi: "plaintext" }}>
-                  {renderExplanation(answer, colors)}
+                <div
+                  dir="ltr"
+                  style={{
+                    width: `min(100%, ${answerTypography.maxWidth}px)`,
+                    margin: "0 auto",
+                    color: colors.text,
+                    fontFamily: FLASHCARD_LATIN_FONT_STACK,
+                    fontSize: answerTypography.fontSize,
+                    lineHeight: answerTypography.lineHeight,
+                    overflowWrap: "break-word",
+                    textAlign: "left",
+                    transform: answerTypography.verticalOffset ? `translateY(${answerTypography.verticalOffset})` : undefined,
+                    unicodeBidi: "plaintext",
+                  }}
+                >
+                  {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
                 </div>
               </div>
             </div>
           </div>
 
-          {revealed && (
-            <div onClick={(event) => event.stopPropagation()} style={{ borderTop: `1px solid ${colors.border}`, background: colors.surface, padding: "18px min(64px, 5vw) 24px" }}>
+          <div
+            onClick={(event) => event.stopPropagation()}
+            aria-hidden={!ratingsVisible}
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 4,
+              background: colors.surface,
+              padding: "16px min(64px, 5vw) 20px",
+              opacity: ratingsVisible ? 1 : 0,
+              visibility: ratingsVisible ? "visible" : "hidden",
+              pointerEvents: ratingsVisible ? "auto" : "none",
+              transform: ratingsVisible ? "translateY(0)" : "translateY(8px)",
+              transition: ratingsVisible
+                ? "opacity 180ms ease 40ms, transform 180ms ease 40ms"
+                : "opacity 140ms ease, transform 140ms ease, visibility 0ms linear 140ms",
+              boxShadow: ratingsVisible ? "0 -18px 42px rgba(15,15,15,0.06)" : "none",
+            }}
+          >
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(130px, 1fr))", gap: 18, maxWidth: 1320, margin: "0 auto" }}>
                 {(["again", "hard", "good", "easy"] as FsrsRating[]).map((rating, ratingIndex) => {
                   const style = ratingStyles[rating];
@@ -2444,7 +2581,6 @@ function FlashcardView({
                 })}
               </div>
             </div>
-          )}
         </section>
       )}
     </div>
