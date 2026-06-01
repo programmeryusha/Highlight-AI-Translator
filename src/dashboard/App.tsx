@@ -38,7 +38,7 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
-const FLASHCARD_FLIP_MS = 680;
+const FLASHCARD_FLIP_MS = 520;
 const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
 const FLASHCARD_LATIN_FONT_STACK = "'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, ui-serif, serif";
 const HONORIFIC_MARK = "ﷺ";
@@ -1948,6 +1948,10 @@ function flashcardDotIndexes(total: number, current: number, windowSize = 9): nu
   return Array.from({ length: windowSize }, (_, index) => start + index);
 }
 
+function prefersReducedFlashcardMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function FlashcardView({
   words,
   onClose,
@@ -1974,6 +1978,7 @@ function FlashcardView({
   const [decodedImageUrls, setDecodedImageUrls] = useState<Set<string>>(() => new Set());
   const frontContentRef = useRef<HTMLDivElement | null>(null);
   const backContentRef = useRef<HTMLDivElement | null>(null);
+  const settingsRootRef = useRef<HTMLDivElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const flipTimerRef = useRef<number | null>(null);
   const typography = CARD_TYPOGRAPHY[cardFontSize];
@@ -1994,6 +1999,21 @@ function FlashcardView({
   useEffect(() => {
     rememberFlashcardTextScale(textScale);
   }, [textScale]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const closeSettings = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && settingsRootRef.current?.contains(target)) return;
+      setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", closeSettings);
+    document.addEventListener("touchstart", closeSettings, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", closeSettings);
+      document.removeEventListener("touchstart", closeSettings);
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -2113,6 +2133,11 @@ function FlashcardView({
 
   function startFlip(nextShowAnswer: boolean) {
     clearFlipTimer();
+    if (prefersReducedFlashcardMotion()) {
+      setFlipAnimating(false);
+      setShowAnswer(nextShowAnswer);
+      return;
+    }
     setFlipAnimating(true);
     setShowAnswer(nextShowAnswer);
     flipTimerRef.current = window.setTimeout(() => {
@@ -2192,13 +2217,16 @@ function FlashcardView({
           .cl-flashcard-stage {
             perspective: 1800px;
             animation: clFlashcardLoad 240ms cubic-bezier(0.2, 0, 0, 1);
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
           }
           .cl-flashcard-inner {
             position: relative;
             width: 100%;
             height: 100%;
             transform-style: preserve-3d;
-            transition: transform ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition: transform ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1);
             transform-origin: center center;
             will-change: transform;
           }
@@ -2214,6 +2242,8 @@ function FlashcardView({
             display: flex;
             flex-direction: column;
             background: ${colors.surface};
+            border-radius: 20px;
+            transform: translateZ(0);
           }
           .cl-flashcard-face:first-child {
             background: ${manuscriptBg};
@@ -2221,12 +2251,42 @@ function FlashcardView({
           .cl-flashcard-back {
             transform: rotateY(180deg);
           }
+          .cl-flashcard-stage img {
+            -webkit-user-drag: none;
+            user-select: none;
+          }
           .cl-flashcard-stagger > * {
             animation: clFlashcardChildIn 260ms cubic-bezier(0.2, 0, 0, 1) both;
           }
           .cl-flashcard-stagger > *:nth-child(2) { animation-delay: 35ms; }
           .cl-flashcard-stagger > *:nth-child(3) { animation-delay: 70ms; }
           .cl-flashcard-stagger > *:nth-child(4) { animation-delay: 105ms; }
+          @media (prefers-reduced-motion: reduce) {
+            .cl-flashcard-stage {
+              perspective: none;
+              animation: none;
+            }
+            .cl-flashcard-inner {
+              transform: none !important;
+              transition: none;
+            }
+            .cl-flashcard-face {
+              transform: none !important;
+              transition: opacity 80ms linear;
+            }
+            .cl-flashcard-back {
+              opacity: 0;
+              pointer-events: none;
+            }
+            .cl-flashcard-inner[data-show-answer="true"] .cl-flashcard-face:first-child {
+              opacity: 0;
+              pointer-events: none;
+            }
+            .cl-flashcard-inner[data-show-answer="true"] .cl-flashcard-back {
+              opacity: 1;
+              pointer-events: auto;
+            }
+          }
         `}
       </style>
       <div style={{ width: "min(1180px, calc(100% - 72px))", display: "grid", gridTemplateColumns: "44px minmax(180px, 1fr) auto", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 10px" }}>
@@ -2276,7 +2336,7 @@ function FlashcardView({
             {completed ? deck.length : index + 1} / {deck.length}
           </p>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, position: "relative" }}>
+        <div ref={settingsRootRef} style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, position: "relative" }}>
           <button
             type="button"
             onClick={goPrevious}
@@ -2392,8 +2452,6 @@ function FlashcardView({
         </section>
       ) : (
         <section
-          className="cl-flashcard-stage"
-          onClick={revealOrToggle}
           style={{
             flex: "1 1 auto",
             minHeight: 0,
@@ -2402,152 +2460,154 @@ function FlashcardView({
             borderRadius: 22,
             boxShadow: `0 22px 68px rgba(15,15,15,0.10), inset 0 0 0 1px ${colorWithAlpha("#ffffff", colors.surface === "#fff" ? 0.72 : 0.04)}`,
             overflow: "hidden",
-            cursor: "pointer",
             display: "flex",
             flexDirection: "column",
-            position: "relative",
           }}
         >
           <div
-            key={card.id}
-            className="cl-flashcard-inner"
-            data-show-answer={String(showAnswer)}
-            onTransitionEnd={(event) => {
-              if (event.target === event.currentTarget && event.propertyName === "transform") finishFlip();
+            className="cl-flashcard-stage"
+            onClick={revealOrToggle}
+            style={{
+              flex: "1 1 auto",
+              minHeight: 0,
+              cursor: "pointer",
+              position: "relative",
             }}
-            style={{ flex: "1 1 auto", minHeight: 0 }}
           >
-            <div className="cl-flashcard-face">
-              <div
-                ref={frontContentRef}
-                style={{
-                  flex: "1 1 auto",
-                  minHeight: 0,
-                  overflowY: card.imageData ? "auto" : "hidden",
-                  display: "grid",
-                  placeItems: "center",
-                  padding: card.imageData ? "30px min(54px, 5vw)" : "clamp(18px, 4dvh, 42px) min(54px, 5vw)",
-                  textAlign: "center",
-                  boxSizing: "border-box",
-                  background:
-                    colors.surface === "#fff"
-                      ? "radial-gradient(circle at 18px 18px, rgba(181,137,45,0.055) 0 1px, transparent 1px), #fffdf8"
-                      : "radial-gradient(circle at 18px 18px, rgba(230,191,92,0.05) 0 1px, transparent 1px), #1d1a16",
-                  backgroundSize: "22px 22px, auto",
-                }}
-              >
-                <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : transliteration ? 12 : 0, width: "100%", maxWidth: 980 }}>
-                  {card.imageData && (
-                    <img
-                      src={card.imageData}
-                      alt="Card screenshot"
-                      loading="eager"
-                      decoding={imageReady ? "sync" : "async"}
-                      fetchPriority="high"
-                      onLoad={() => {
-                        const imageData = card.imageData;
-                        if (!imageData) return;
-                        setDecodedImageUrls((current) => current.has(imageData) ? current : new Set(current).add(imageData));
-                      }}
-                      onError={() => {
-                        if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
-                      }}
-                      style={{
-                        display: "block",
-                        maxWidth: "min(100%, 1180px)",
-                        maxHeight: frontText ? "min(620px, calc(100dvh - 260px))" : "min(720px, calc(100dvh - 220px))",
-                        width: "auto",
-                        objectFit: "contain",
-                        borderRadius: 14,
-                        border: `1px solid ${colors.border}`,
-                        background: colors.surfaceAlt,
-                        boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
-                        opacity: imageReady ? 1 : 0.01,
-                        transition: "opacity 80ms ease",
-                      }}
-                    />
-                  )}
-                  {frontText && (
-                    <div
-                      dir={frontIsRtl ? "rtl" : "ltr"}
-                      lang={frontIsRtl ? "ar" : undefined}
-                      style={{
-                        color: colors.text,
-                        fontFamily: frontIsRtl ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK,
-                        fontSize: `calc(${flashcardFrontFontSize(frontText, frontIsRtl)} * ${textScale})`,
-                        fontWeight: frontIsRtl ? 700 : 680,
-                        lineHeight: frontIsRtl ? 1.56 : 1.18,
-                        maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 24ch)",
-                        overflowWrap: "break-word",
-                        textAlign: "center",
-                        unicodeBidi: "plaintext",
-                      }}
-                    >
-                      {bidiSpan(frontText)}
-                    </div>
-                  )}
-                  {transliteration && (
-                    <p style={{ color: accentColor, fontFamily: FLASHCARD_LATIN_FONT_STACK, fontSize: `calc(clamp(18px, 2.3vw, 28px) * ${textScale})`, lineHeight: 1.25, fontWeight: 650, margin: "-4px 0 0", maxWidth: "34ch" }}>
-                      {transliteration}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="cl-flashcard-face cl-flashcard-back">
-              <div
-                ref={backContentRef}
-                style={{
-                  flex: "1 1 auto",
-                  minHeight: 0,
-                  overflowY: "auto",
-                  display: "grid",
-                  placeItems: "center",
-                  padding: "36px min(64px, 5vw) calc(clamp(124px, 15dvh, 166px) + 28px)",
-                  boxSizing: "border-box",
-                  background: colors.surface,
-                }}
-              >
+            <div
+              key={card.id}
+              className="cl-flashcard-inner"
+              data-show-answer={String(showAnswer)}
+              onTransitionEnd={(event) => {
+                if (event.target === event.currentTarget && event.propertyName === "transform") finishFlip();
+              }}
+              style={{ flex: "1 1 auto", minHeight: 0 }}
+            >
+              <div className="cl-flashcard-face">
                 <div
-                  dir="ltr"
+                  ref={frontContentRef}
                   style={{
-                    width: `min(100%, ${answerTypography.maxWidth}px)`,
-                    margin: "0 auto",
-                    color: colors.text,
-                    fontFamily: FLASHCARD_LATIN_FONT_STACK,
-                    fontSize: answerTypography.fontSize,
-                    lineHeight: answerTypography.lineHeight,
-                    overflowWrap: "break-word",
-                    textAlign: "left",
-                    transform: answerTypography.verticalOffset ? `translateY(${answerTypography.verticalOffset})` : undefined,
-                    unicodeBidi: "plaintext",
+                    flex: "1 1 auto",
+                    minHeight: 0,
+                    overflowY: card.imageData ? "auto" : "hidden",
+                    display: "grid",
+                    placeItems: "center",
+                    padding: card.imageData ? "30px min(54px, 5vw)" : "clamp(18px, 4dvh, 42px) min(54px, 5vw)",
+                    textAlign: "center",
+                    boxSizing: "border-box",
+                    background:
+                      colors.surface === "#fff"
+                        ? "radial-gradient(circle at 18px 18px, rgba(181,137,45,0.055) 0 1px, transparent 1px), #fffdf8"
+                        : "radial-gradient(circle at 18px 18px, rgba(230,191,92,0.05) 0 1px, transparent 1px), #1d1a16",
+                    backgroundSize: "22px 22px, auto",
                   }}
                 >
-                  {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
+                  <div className="cl-flashcard-stagger" style={{ display: "grid", justifyItems: "center", gap: card.imageData && frontText ? 16 : transliteration ? 12 : 0, width: "100%", maxWidth: 980 }}>
+                    {card.imageData && (
+                      <img
+                        src={card.imageData}
+                        alt="Card screenshot"
+                        loading="eager"
+                        decoding={imageReady ? "sync" : "async"}
+                        fetchPriority="high"
+                        onLoad={() => {
+                          const imageData = card.imageData;
+                          if (!imageData) return;
+                          setDecodedImageUrls((current) => current.has(imageData) ? current : new Set(current).add(imageData));
+                        }}
+                        onError={() => {
+                          if (card.imageData && !card.imageData.startsWith("data:")) refreshRemoteImageUrls();
+                        }}
+                        style={{
+                          display: "block",
+                          maxWidth: "min(100%, 1180px)",
+                          maxHeight: frontText ? "min(620px, calc(100dvh - 260px))" : "min(720px, calc(100dvh - 220px))",
+                          width: "auto",
+                          objectFit: "contain",
+                          borderRadius: 14,
+                          border: `1px solid ${colors.border}`,
+                          background: colors.surfaceAlt,
+                          boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
+                          opacity: imageReady ? 1 : 0.01,
+                          transition: "opacity 80ms ease",
+                        }}
+                      />
+                    )}
+                    {frontText && (
+                      <div
+                        dir={frontIsRtl ? "rtl" : "ltr"}
+                        lang={frontIsRtl ? "ar" : undefined}
+                        style={{
+                          color: colors.text,
+                          fontFamily: frontIsRtl ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK,
+                          fontSize: `calc(${flashcardFrontFontSize(frontText, frontIsRtl)} * ${textScale})`,
+                          fontWeight: frontIsRtl ? 700 : 680,
+                          lineHeight: frontIsRtl ? 1.56 : 1.18,
+                          maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 24ch)",
+                          overflowWrap: "break-word",
+                          textAlign: "center",
+                          unicodeBidi: "plaintext",
+                        }}
+                      >
+                        {bidiSpan(frontText)}
+                      </div>
+                    )}
+                    {transliteration && (
+                      <p style={{ color: accentColor, fontFamily: FLASHCARD_LATIN_FONT_STACK, fontSize: `calc(clamp(18px, 2.3vw, 28px) * ${textScale})`, lineHeight: 1.25, fontWeight: 650, margin: "-4px 0 0", maxWidth: "34ch" }}>
+                        {transliteration}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="cl-flashcard-face cl-flashcard-back">
+                <div
+                  ref={backContentRef}
+                  style={{
+                    flex: "1 1 auto",
+                    minHeight: 0,
+                    overflowY: "auto",
+                    display: "grid",
+                    placeItems: "center",
+                    padding: "36px min(64px, 5vw)",
+                    boxSizing: "border-box",
+                    background: colors.surface,
+                  }}
+                >
+                  <div
+                    dir="ltr"
+                    style={{
+                      width: `min(100%, ${answerTypography.maxWidth}px)`,
+                      margin: "0 auto",
+                      color: colors.text,
+                      fontFamily: FLASHCARD_LATIN_FONT_STACK,
+                      fontSize: answerTypography.fontSize,
+                      lineHeight: answerTypography.lineHeight,
+                      overflowWrap: "break-word",
+                      textAlign: "left",
+                      transform: answerTypography.verticalOffset ? `translateY(${answerTypography.verticalOffset})` : undefined,
+                      unicodeBidi: "plaintext",
+                    }}
+                  >
+                    {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           <div
-            onClick={(event) => event.stopPropagation()}
             aria-hidden={!ratingsVisible}
             style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 4,
+              flex: "0 0 auto",
+              minHeight: "clamp(118px, 14dvh, 154px)",
+              borderTop: `1px solid ${colors.border}`,
               background: colors.surface,
               padding: "16px min(64px, 5vw) 20px",
+              boxSizing: "border-box",
               opacity: ratingsVisible ? 1 : 0,
               visibility: ratingsVisible ? "visible" : "hidden",
               pointerEvents: ratingsVisible ? "auto" : "none",
-              transform: ratingsVisible ? "translateY(0)" : "translateY(8px)",
-              transition: ratingsVisible
-                ? "opacity 180ms ease 40ms, transform 180ms ease 40ms"
-                : "opacity 140ms ease, transform 140ms ease, visibility 0ms linear 140ms",
-              boxShadow: ratingsVisible ? "0 -18px 42px rgba(15,15,15,0.06)" : "none",
             }}
           >
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(130px, 1fr))", gap: 18, maxWidth: 1320, margin: "0 auto" }}>
@@ -2862,6 +2922,14 @@ function WordsView({
     });
   }
 
+  function clearSetInteractionState() {
+    setOpenSetMenuId(null);
+    setHoveredSetId(null);
+    setHoveredSetActionId(null);
+    setHoveredSetMenuAction(null);
+    setDragOverSetId(null);
+  }
+
   function storeSets(next: FlashcardSet[], deletedIds: string[] = []) {
     const normalized = normalizeFlashcardSets(next);
     const deletedIdSet = new Set(deletedIds);
@@ -2882,6 +2950,7 @@ function WordsView({
 
   function startFlashcardQuiz(nextWords: WordEntry[]) {
     if (nextWords.length === 0) return;
+    clearSetInteractionState();
     setStudyWords(nextWords);
     if (window.location.hash !== "#words/quiz") {
       window.history.pushState(
@@ -2893,6 +2962,7 @@ function WordsView({
   }
 
   function closeFlashcardQuiz() {
+    clearSetInteractionState();
     setStudyWords(null);
     if (window.location.hash === "#words/quiz") {
       const state = window.history.state as { contextlensFlashcardQuiz?: boolean; returnHash?: string } | null;
@@ -2921,6 +2991,7 @@ function WordsView({
   }
 
   function handleSetsButton() {
+    clearSetInteractionState();
     setShowCreateSet(false);
     setShowExport(false);
     setSource({ kind: "days" });
@@ -3271,7 +3342,7 @@ function WordsView({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {exportButtons(words, `set-${activeSet.id}`, activeSet.name)}
-        <button type="button" onClick={() => setSource({ kind: "days" })} style={{ background: colors.surfaceAlt, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+        <button type="button" onClick={() => { clearSetInteractionState(); setSource({ kind: "days" }); }} style={{ background: colors.surfaceAlt, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
           Pick days from calendar to create custom set
         </button>
       </div>
