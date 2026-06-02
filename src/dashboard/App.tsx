@@ -2794,8 +2794,8 @@ function FlashcardView({
   const flashcardSurface = colors.surface === "#fff" ? "#ffffff" : colors.surface;
   const flashcardBorder = colors.surface === "#fff" ? "rgba(15, 23, 42, 0.09)" : colors.border;
   const flashcardShadow = colors.surface === "#fff"
-    ? "0 26px 72px rgba(15, 23, 42, 0.11), 0 8px 24px rgba(15, 23, 42, 0.07)"
-    : "0 26px 72px rgba(0, 0, 0, 0.28)";
+    ? "0 4px 16px rgba(15, 23, 42, 0.04), 0 8px 32px rgba(15, 23, 42, 0.08)"
+    : "0 4px 16px rgba(0, 0, 0, 0.16), 0 8px 32px rgba(0, 0, 0, 0.22)";
   const imageReady = !card.imageData || cardImage.ready || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
@@ -2912,6 +2912,7 @@ function FlashcardView({
             user-select: none;
             -webkit-user-select: none;
             border-radius: 20px;
+            box-shadow: ${flashcardShadow};
           }
           .cl-flashcard-shell {
             position: absolute;
@@ -2928,7 +2929,7 @@ function FlashcardView({
           }
           .cl-flashcard-shell[data-flipping="true"] {
             opacity: 1;
-            animation: clFlashcardShellFlip ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+            animation: clFlashcardShellFlip ${FLASHCARD_FLIP_MS}ms cubic-bezier(0.25, 1, 0.5, 1) both;
           }
           .cl-flashcard-shell-face {
             position: absolute;
@@ -2936,7 +2937,6 @@ function FlashcardView({
             background: ${flashcardSurface};
             border: 1px solid ${flashcardBorder};
             border-radius: 20px;
-            box-shadow: ${flashcardShadow};
             box-sizing: border-box;
             backface-visibility: hidden;
             -webkit-backface-visibility: hidden;
@@ -2954,7 +2954,6 @@ function FlashcardView({
             border-radius: 20px;
             background: ${flashcardSurface};
             border: 1px solid ${flashcardBorder};
-            box-shadow: ${flashcardShadow};
             box-sizing: border-box;
           }
           .cl-flashcard-stage[data-content-hidden="true"] .cl-flashcard-content {
