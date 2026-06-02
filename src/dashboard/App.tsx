@@ -17,7 +17,6 @@ const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const THEME_STORAGE_KEY = "contextlens_theme";
 const FLASHCARD_TEXT_SCALE_KEY = "contextlens_flashcard_text_scale";
-const LAST_USED_FLASHCARD_SET_ID_KEY = "last_used_flashcard_set_id";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
   { value: "past3", label: "Past 3 days", days: 3 },
@@ -40,9 +39,9 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
-const FLASHCARD_FLIP_MS = 480;
+const FLASHCARD_FLIP_MS = 520;
 const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
-const FLASHCARD_LATIN_FONT_STACK = "'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const FLASHCARD_LATIN_FONT_STACK = "'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, ui-serif, serif";
 const HONORIFIC_MARK = "ﷺ";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
@@ -226,8 +225,6 @@ type DashboardColors = {
   dangerSoft: string;
   dangerBorder: string;
 };
-
-type CaptureEditPatch = Partial<Pick<Capture, "context" | "explanation" | "status" | "errorMessage">>;
 
 function isThemeName(value: unknown): value is ThemeName {
   return value === "light" || value === "dark";
@@ -422,7 +419,7 @@ function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors 
   return {
     bg: dark ? "#141413" : "#fff",
     text: dark ? "#f5f2ec" : "#37352f",
-    muted: dark ? "#a9a39a" : "#6f6d68",
+    muted: dark ? "#a9a39a" : "#9b9a97",
     softText: dark ? "#d4cec5" : "#6b6b6b",
     border: dark ? "#393631" : "#e3e2de",
     subtle: dark ? "#22211f" : "#f0efec",
@@ -1150,23 +1147,6 @@ function TrashIcon() {
   );
 }
 
-function EditIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
-
-function StarIcon({ filled = false }: { filled?: boolean }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 21l1.1-6.5-4.7-4.6 6.5-.9Z" />
-    </svg>
-  );
-}
-
 function SelectSaveButton({
   selected,
   onToggle,
@@ -1243,54 +1223,6 @@ function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: 
       }}
     >
       <TrashIcon />
-    </button>
-  );
-}
-
-function SaveIconButton({
-  label,
-  onClick,
-  colors,
-  children,
-  active = false,
-  danger = false,
-}: {
-  label: string;
-  onClick: () => void;
-  colors: DashboardColors;
-  children: React.ReactNode;
-  active?: boolean;
-  danger?: boolean;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const activeColor = danger ? colors.danger : colors.accent;
-  const activeSoft = danger ? colors.dangerSoft : colors.accentSoft;
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        width: 28,
-        height: 28,
-        borderRadius: 7,
-        border: `1px solid ${active || hovered ? activeColor : colors.border}`,
-        background: active || hovered ? activeSoft : "transparent",
-        color: active || hovered ? activeColor : colors.muted,
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        padding: 0,
-        transition: "background 120ms ease, border 120ms ease, color 120ms ease",
-      }}
-    >
-      {children}
     </button>
   );
 }
@@ -1459,11 +1391,7 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
 function SavesView({
   captures,
   onDeleteCaptures,
-  onUpdateCapture,
   onRetryCapture,
-  starredIds,
-  onToggleStar,
-  onQuickStudyCaptures,
   headerAction,
   toolbarSummary,
   sidePanel,
@@ -1473,11 +1401,7 @@ function SavesView({
 }: {
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
-  onUpdateCapture: (id: string, patch: CaptureEditPatch) => void;
   onRetryCapture: (id: string) => void;
-  starredIds: Set<string>;
-  onToggleStar: (id: string) => void;
-  onQuickStudyCaptures: (captures: Capture[]) => void;
   headerAction?: React.ReactNode;
   toolbarSummary?: React.ReactNode;
   sidePanel?: React.ReactNode;
@@ -1491,9 +1415,6 @@ function SavesView({
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editFront, setEditFront] = useState("");
-  const [editBack, setEditBack] = useState("");
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
@@ -1501,7 +1422,6 @@ function SavesView({
     setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
     setLastRangeAnchorId((current) => current && visibleIds.has(current) ? current : null);
     setExpandedCardIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
-    setEditingId((current) => current && visibleIds.has(current) ? current : null);
   }, [captures]);
 
   if (captures.length === 0) {
@@ -1510,10 +1430,6 @@ function SavesView({
 
   const groups = groupByDay(captures);
   const selectedCount = selectedIds.size;
-  const selectedCaptures = captures.filter((capture) => selectedIds.has(capture.id));
-  const starredCaptures = captures.filter((capture) => starredIds.has(capture.id));
-  const actionSelectedCaptures = selectionMode ? selectedCaptures : starredCaptures;
-  const actionSelectedLabel = selectionMode ? "selected" : "starred";
 
   function toggleSelectionMode() {
     const nextMode = !selectionMode;
@@ -1554,12 +1470,6 @@ function SavesView({
     setSelectedIds(new Set());
   }
 
-  function exportCaptures(nextCaptures: Capture[], name: string) {
-    const words = capturesToQuickStudyWords(nextCaptures);
-    if (words.length === 0) return;
-    exportFlashcards("anki", words, name);
-  }
-
   function retryCapture(id: string) {
     setRetryingIds((current) => new Set(current).add(id));
     onRetryCapture(id);
@@ -1581,33 +1491,6 @@ function SavesView({
     });
   }
 
-  function beginEdit(capture: Capture) {
-    setEditingId(capture.id);
-    setEditFront(capture.context ?? "");
-    setEditBack(capture.explanation ?? "");
-  }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setEditFront("");
-    setEditBack("");
-  }
-
-  function saveEdit(capture: Capture) {
-    const nextFront = editFront.trim();
-    const nextBack = editBack.trim();
-    const patch: CaptureEditPatch = {
-      context: nextFront,
-      explanation: nextBack || null,
-    };
-    if (nextBack) {
-      patch.status = "done";
-      patch.errorMessage = undefined;
-    }
-    onUpdateCapture(capture.id, patch);
-    cancelEdit();
-  }
-
   const cards = (
     <>
       {groups.map((group) => (
@@ -1625,8 +1508,6 @@ function SavesView({
               const explanationIsLong = explanation.trim().length > SAVED_CARD_EXPLANATION_LIMIT;
               const cardExpanded = expandAll || expandedCardIds.has(c.id) || !explanationIsLong;
               const explanationPreview = cardExpanded ? explanation : previewText(explanation, SAVED_CARD_EXPLANATION_LIMIT);
-              const isEditing = editingId === c.id;
-              const isStarred = starredIds.has(c.id);
 
               return (
                 <div
@@ -1642,70 +1523,7 @@ function SavesView({
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <CapturePreview capture={c} colors={colors} typography={typography} />
 
-                      {isEditing ? (
-                        <div
-                          onClick={(event) => event.stopPropagation()}
-                          style={{
-                            display: "grid",
-                            gap: 10,
-                            margin: "14px 0 0",
-                            width: "100%",
-                          }}
-                        >
-                          <label style={{ display: "grid", gap: 6 }}>
-                            <span style={questionLabelStyle(colors)}>Front</span>
-                            <textarea
-                              value={editFront}
-                              onChange={(event) => setEditFront(event.target.value)}
-                              placeholder="Question or prompt"
-                              rows={3}
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                resize: "vertical",
-                                border: `1px solid ${colors.border}`,
-                                borderRadius: 8,
-                                background: colors.surface,
-                                color: colors.text,
-                                padding: "10px 12px",
-                                font: "inherit",
-                                fontSize: 15,
-                                lineHeight: 1.5,
-                              }}
-                            />
-                          </label>
-                          <label style={{ display: "grid", gap: 6 }}>
-                            <span style={questionLabelStyle(colors)}>Back</span>
-                            <textarea
-                              value={editBack}
-                              onChange={(event) => setEditBack(event.target.value)}
-                              placeholder="Answer"
-                              rows={7}
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                resize: "vertical",
-                                border: `1px solid ${colors.border}`,
-                                borderRadius: 8,
-                                background: colors.surface,
-                                color: colors.text,
-                                padding: "10px 12px",
-                                font: "inherit",
-                                fontSize: 15,
-                                lineHeight: 1.55,
-                              }}
-                            />
-                          </label>
-                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                            <button type="button" onClick={() => saveEdit(c)} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                              Save
-                            </button>
-                            <button type="button" onClick={cancelEdit} style={{ ...subtleButtonStyle(colors, 13) }}>
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : c.context && (
+                      {c.context && (
                         <div style={{ margin: "14px 0 0", width: "100%" }}>
                           <p style={questionLabelStyle(colors)}>
                             Your question
@@ -1720,12 +1538,12 @@ function SavesView({
                         </div>
                       )}
 
-                      {!isEditing && c.status === "pending" && (
+                      {c.status === "pending" && (
                         <p style={{ fontSize: typography.status, color: colors.muted, margin: "12px 0 0", fontStyle: "italic" }}>
                           thinking…
                         </p>
                       )}
-                      {!isEditing && c.status === "error" && (
+                      {c.status === "error" && (
                         <SaveErrorNotice
                           message={c.errorMessage}
                           colors={colors}
@@ -1733,7 +1551,7 @@ function SavesView({
                           retrying={retryingIds.has(c.id)}
                         />
                       )}
-                      {!isEditing && c.status === "done" && explanation && (
+                      {c.status === "done" && explanation && (
                         <>
                           <div
                             style={{
@@ -1760,18 +1578,10 @@ function SavesView({
                       )}
                     </div>
                     {!selectionMode && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        <SaveIconButton label={isStarred ? "Unstar save" : "Star save"} onClick={() => onToggleStar(c.id)} colors={colors} active={isStarred}>
-                          <StarIcon filled={isStarred} />
-                        </SaveIconButton>
-                        <SaveIconButton label="Edit save" onClick={() => beginEdit(c)} colors={colors} active={isEditing}>
-                          <EditIcon />
-                        </SaveIconButton>
-                        <SaveDeleteButton
-                          onDelete={() => onDeleteCaptures([c.id])}
-                          colors={colors}
-                        />
-                      </div>
+                      <SaveDeleteButton
+                        onDelete={() => onDeleteCaptures([c.id])}
+                        colors={colors}
+                      />
                     )}
                   </div>
                 </div>
@@ -1795,34 +1605,6 @@ function SavesView({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {!selectionMode && (
-            <>
-              <button
-                type="button"
-                onClick={() => onQuickStudyCaptures(captures)}
-                style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontWeight: 850, cursor: "pointer" }}
-              >
-                Quick Study
-              </button>
-              {starredCaptures.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onQuickStudyCaptures(starredCaptures)}
-                  style={{ ...subtleButtonStyle(colors, 13), color: colors.accent, borderColor: colorWithAlpha(colors.accent, 0.42), background: colorWithAlpha(colors.accent, 0.08) }}
-                >
-                  Quick Study Selected
-                </button>
-              )}
-              <button type="button" onClick={() => exportCaptures(captures, "saved-cards")} style={{ ...subtleButtonStyle(colors, 13) }}>
-                Export
-              </button>
-              {starredCaptures.length > 0 && (
-                <button type="button" onClick={() => exportCaptures(starredCaptures, "selected-saved-cards")} style={{ ...subtleButtonStyle(colors, 13) }}>
-                  Export Selected
-                </button>
-              )}
-            </>
-          )}
           <button
             type="button"
             onClick={toggleSelectionMode}
@@ -1843,20 +1625,6 @@ function SavesView({
                 style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
               >
                 Delete {selectedCount}
-              </button>
-              <button
-                type="button"
-                onClick={() => onQuickStudyCaptures(actionSelectedCaptures)}
-                style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}
-              >
-                Quick Study {actionSelectedLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => exportCaptures(actionSelectedCaptures, `${actionSelectedLabel}-saved-cards`)}
-                style={{ ...subtleButtonStyle(colors, 13), padding: "6px 12px" }}
-              >
-                Export {actionSelectedLabel}
               </button>
               <button
                 type="button"
@@ -1920,11 +1688,7 @@ function EmptySavesState({ colors }: { colors: DashboardColors }) {
 function HistoryView({
   captures,
   onDeleteCaptures,
-  onUpdateCapture,
   onRetryCapture,
-  starredIds,
-  onToggleStar,
-  onQuickStudyCaptures,
   colors,
   theme,
   accentColor,
@@ -1932,11 +1696,7 @@ function HistoryView({
 }: {
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
-  onUpdateCapture: (id: string, patch: CaptureEditPatch) => void;
   onRetryCapture: (id: string) => void;
-  starredIds: Set<string>;
-  onToggleStar: (id: string) => void;
-  onQuickStudyCaptures: (captures: Capture[]) => void;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
@@ -2004,11 +1764,7 @@ function HistoryView({
         <SavesView
           captures={selectedCaptures}
           onDeleteCaptures={onDeleteCaptures}
-          onUpdateCapture={onUpdateCapture}
           onRetryCapture={onRetryCapture}
-          starredIds={starredIds}
-          onToggleStar={onToggleStar}
-          onQuickStudyCaptures={onQuickStudyCaptures}
           toolbarSummary={
             <span style={toolbarSummaryStyle(colors)}>
               {selectedDayShortLabel()}
@@ -2255,32 +2011,6 @@ function buildFlashcardList(captures: Capture[]): WordEntry[] {
       || b.count - a.count
       || a.word.localeCompare(b.word)
     ));
-}
-
-function capturesToQuickStudyWords(captures: Capture[]): WordEntry[] {
-  return captures.flatMap((capture) => {
-    const word = flashcardPrompt(capture) || capture.text.trim() || (capture.imageData ? "Screenshot" : "");
-    const explanation = capture.explanation ?? "";
-    if (!word && !capture.imageData && !explanation) return [];
-    return [{
-      id: capture.id,
-      count: 1,
-      word,
-      explanation,
-      exampleText: capture.imageData ? "" : capture.text,
-      imageData: capture.imageData,
-      imagePreviewData: capture.imagePreviewData,
-      latestSavedAt: capture.savedAt,
-      captureIds: [capture.id],
-      fsrsStability: capture.fsrsStability ?? 0,
-      fsrsDifficulty: capture.fsrsDifficulty ?? 5,
-      fsrsLapses: capture.fsrsLapses ?? 0,
-      fsrsState: normalizeFsrsState(capture.fsrsState),
-      fsrsDueAt: fsrsDueAt(capture),
-      fsrsLastReviewedAt: capture.fsrsLastReviewedAt ?? null,
-      fsrsReviewCount: capture.fsrsReviewCount ?? 0,
-    }];
-  });
 }
 
 function stripInlineMarkdown(value: string) {
@@ -2543,7 +2273,7 @@ function FlashcardView({
     flipSwapTimerRef.current = window.setTimeout(() => {
       flipSwapTimerRef.current = null;
       setShowAnswer(nextShowAnswer);
-    }, Math.round(FLASHCARD_FLIP_MS * 0.38));
+    }, Math.round(FLASHCARD_FLIP_MS * 0.46));
     flipTimerRef.current = window.setTimeout(() => {
       flipTimerRef.current = null;
       setFlipAnimating(false);
@@ -2611,10 +2341,8 @@ function FlashcardView({
       <style>
         {`
           @keyframes clFlashcardShellFlip {
-            0% { opacity: 1; transform: rotateX(0deg); }
-            48% { opacity: 1; }
-            68% { opacity: 0; }
-            100% { opacity: 0; transform: rotateX(-180deg); }
+            from { transform: rotateX(0deg); }
+            to { transform: rotateX(-180deg); }
           }
           .cl-flashcard-stage {
             perspective: 2200px;
@@ -2666,6 +2394,9 @@ function FlashcardView({
             border: 1px solid ${flashcardBorder};
             box-shadow: ${flashcardShadow};
             box-sizing: border-box;
+          }
+          .cl-flashcard-stage[data-flipping="true"] .cl-flashcard-content {
+            opacity: 0;
           }
           .cl-flashcard-stage img {
             -webkit-user-drag: none;
@@ -2914,9 +2645,9 @@ function FlashcardView({
                           color: colors.text,
                           fontFamily: frontIsRtl ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK,
                           fontSize: `calc(${flashcardFrontFontSize(frontText, frontIsRtl)} * ${textScale})`,
-                          fontWeight: frontIsRtl ? 700 : 760,
-                          lineHeight: frontIsRtl ? 1.56 : 1.42,
-                          maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 28ch)",
+                          fontWeight: frontIsRtl ? 700 : 680,
+                          lineHeight: frontIsRtl ? 1.56 : 1.18,
+                          maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 24ch)",
                           overflowWrap: "break-word",
                           textAlign: "center",
                           unicodeBidi: "plaintext",
@@ -3020,184 +2751,6 @@ function FlashcardView({
           </div>
         </section>
       )}
-    </div>
-  );
-}
-
-function QuickStudyView({
-  words,
-  onClose,
-  colors,
-  accentColor,
-  lastUsedSetName,
-  onAddToLastSet,
-}: {
-  words: WordEntry[];
-  onClose: () => void;
-  colors: DashboardColors;
-  accentColor: string;
-  lastUsedSetName?: string;
-  onAddToLastSet: (words: WordEntry[]) => Promise<void>;
-}) {
-  const [deck, setDeck] = useState(words);
-  const [index, setIndex] = useState(0);
-  const [showAnswer, setShowAnswer] = useState(false);
-  const [wrongIds, setWrongIds] = useState<Set<string>>(new Set());
-  const [completed, setCompleted] = useState(false);
-  const [setAddStatus, setSetAddStatus] = useState<"idle" | "adding" | "added" | "error">("idle");
-  const activeCard = !completed ? deck[Math.min(index, deck.length - 1)] : null;
-  const imageSource = activeCard?.imagePreviewData ?? activeCard?.imageData;
-  const cardImage = useAuthenticatedImageSource(imageSource);
-  const progress = deck.length ? Math.round(((completed ? deck.length : index) / deck.length) * 100) : 0;
-
-  useEffect(() => {
-    setDeck(words);
-    setIndex(0);
-    setShowAnswer(false);
-    setWrongIds(new Set());
-    setCompleted(false);
-    setSetAddStatus("idle");
-  }, [words]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      } else if ((event.key === " " || event.key === "Enter") && !completed) {
-        event.preventDefault();
-        setShowAnswer((value) => !value);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [completed, onClose]);
-
-  function markAnswer(correct: boolean) {
-    const card = deck[index];
-    if (!card) return;
-    if (!correct) {
-      setWrongIds((current) => new Set(current).add(card.id));
-    }
-    if (index >= deck.length - 1) {
-      setCompleted(true);
-      setShowAnswer(false);
-      return;
-    }
-    setIndex((value) => value + 1);
-    setShowAnswer(false);
-  }
-
-  function studyWrongAgain() {
-    const nextDeck = deck.filter((word) => wrongIds.has(word.id));
-    if (nextDeck.length === 0) return;
-    setDeck(nextDeck);
-    setIndex(0);
-    setShowAnswer(false);
-    setWrongIds(new Set());
-    setCompleted(false);
-    setSetAddStatus("idle");
-  }
-
-  async function addToLastSet() {
-    if (!lastUsedSetName || setAddStatus === "adding") return;
-    setSetAddStatus("adding");
-    try {
-      await onAddToLastSet(deck);
-      setSetAddStatus("added");
-    } catch {
-      setSetAddStatus("error");
-    }
-  }
-
-  const wrongCount = wrongIds.size;
-
-  return (
-    <div style={{ minHeight: "100vh", background: colors.bg, color: colors.text, display: "grid", gridTemplateRows: "auto 1fr", padding: "22px clamp(18px, 4vw, 48px)", boxSizing: "border-box" }}>
-      <header style={{ display: "grid", gridTemplateColumns: "44px minmax(120px, 1fr)", gap: 16, alignItems: "center", maxWidth: 1180, width: "100%", margin: "0 auto 18px" }}>
-        <button type="button" onClick={onClose} aria-label="Back" style={{ width: 44, height: 44, borderRadius: 10, border: `1px solid ${colorWithAlpha(accentColor, 0.45)}`, background: colorWithAlpha(accentColor, 0.08), color: accentColor, cursor: "pointer", fontSize: 20, fontWeight: 900 }}>
-          ←
-        </button>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ height: 7, borderRadius: 999, background: colorWithAlpha(accentColor, 0.18), overflow: "hidden", border: `1px solid ${colorWithAlpha(accentColor, 0.35)}` }}>
-            <div style={{ width: `${progress}%`, height: "100%", background: accentColor, transition: "width 220ms ease" }} />
-          </div>
-          <p style={{ margin: 0, color: accentColor, fontSize: 15, fontWeight: 900, textAlign: "center" }}>
-            {completed ? deck.length : Math.min(index + 1, deck.length)} / {deck.length}
-          </p>
-        </div>
-      </header>
-
-      <main style={{ display: "grid", placeItems: "center", width: "100%", maxWidth: 1180, margin: "0 auto" }}>
-        {completed ? (
-          <section style={{ width: "min(720px, 100%)", background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 16, boxShadow: "0 22px 60px rgba(15, 23, 42, 0.10)", padding: "34px clamp(22px, 5vw, 48px)", display: "grid", gap: 16, textAlign: "center" }}>
-            <p style={{ margin: 0, color: colors.muted, fontSize: 13, fontWeight: 850, letterSpacing: "0.08em", textTransform: "uppercase" }}>Quick study complete</p>
-            <h1 style={{ margin: 0, color: colors.text, fontSize: "clamp(30px, 4vw, 44px)", lineHeight: 1.12, fontWeight: 900 }}>You got {deck.length - wrongCount} right and {wrongCount} wrong.</h1>
-            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-              {wrongCount > 0 && (
-                <button type="button" onClick={studyWrongAgain} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 999, padding: "11px 16px", fontSize: 14, fontWeight: 850, cursor: "pointer" }}>
-                  Study wrong again
-                </button>
-              )}
-              {lastUsedSetName && (
-                <button type="button" onClick={addToLastSet} disabled={setAddStatus === "adding" || setAddStatus === "added"} style={{ background: colorWithAlpha(accentColor, 0.1), color: accentColor, border: `1px solid ${colorWithAlpha(accentColor, 0.45)}`, borderRadius: 999, padding: "11px 16px", fontSize: 14, fontWeight: 850, cursor: setAddStatus === "adding" || setAddStatus === "added" ? "default" : "pointer", opacity: setAddStatus === "adding" ? 0.65 : 1 }}>
-                  {setAddStatus === "added" ? "Added" : setAddStatus === "adding" ? "Adding..." : `Keep practicing these? Add to ${lastUsedSetName}`}
-                </button>
-              )}
-              <button type="button" onClick={onClose} style={{ ...subtleButtonStyle(colors, 14), borderRadius: 999, padding: "11px 16px" }}>
-                Back
-              </button>
-            </div>
-            {setAddStatus === "error" && (
-              <p style={{ color: colors.danger, fontSize: 13, fontWeight: 750, margin: 0 }}>Could not add those cards to the set.</p>
-            )}
-          </section>
-        ) : activeCard ? (
-          <section style={{ width: "100%", display: "grid", gap: 18 }}>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => setShowAnswer((value) => !value)}
-              style={{ perspective: 1800, cursor: "pointer", userSelect: "none", width: "100%" }}
-            >
-              <div style={{ position: "relative", minHeight: "min(58dvh, 560px)", transformStyle: "preserve-3d", transition: "transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1)", transform: showAnswer ? "rotateX(-180deg)" : "rotateX(0deg)" }}>
-                {(["front", "back"] as const).map((side) => {
-                  const isBack = side === "back";
-                  return (
-                    <div key={side} style={{ position: "absolute", inset: 0, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", transform: isBack ? "rotateX(180deg)" : "rotateX(0deg)", background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 18, boxShadow: "0 24px 64px rgba(15, 23, 42, 0.12)", display: "grid", placeItems: "center", padding: "clamp(28px, 5vw, 58px)", boxSizing: "border-box", overflow: "auto" }}>
-                      {!isBack ? (
-                        <div style={{ display: "grid", justifyItems: "center", gap: 16, width: "min(940px, 100%)" }}>
-                          {imageSource && cardImage.src && (
-                            <img src={cardImage.src} alt="Card screenshot" loading="eager" decoding="async" style={{ maxWidth: "100%", maxHeight: "min(360px, 36dvh)", objectFit: "contain", borderRadius: 12, border: `1px solid ${colors.border}`, background: colors.surfaceAlt }} />
-                          )}
-                          <div dir={hasRtlText(activeCard.word) ? "rtl" : "ltr"} style={{ color: colors.text, fontFamily: hasRtlText(activeCard.word) ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK, fontSize: `calc(${flashcardFrontFontSize(activeCard.word, hasRtlText(activeCard.word))} * 0.88)`, fontWeight: hasRtlText(activeCard.word) ? 700 : 760, lineHeight: hasRtlText(activeCard.word) ? 1.55 : 1.42, maxWidth: hasRtlText(activeCard.word) ? "22ch" : "30ch", textAlign: "center", overflowWrap: "break-word", unicodeBidi: "plaintext" }}>
-                            {bidiSpan(activeCard.word || "Screenshot")}
-                          </div>
-                        </div>
-                      ) : (
-                        <div dir="ltr" style={{ width: "min(900px, 100%)", color: colors.text, fontFamily: FLASHCARD_LATIN_FONT_STACK, fontSize: "clamp(20px, 2.4vw, 30px)", lineHeight: 1.55, overflowWrap: "break-word", unicodeBidi: "plaintext" }}>
-                          {activeCard.explanation ? renderExplanation(activeCard.explanation, colors, { lineHeight: 1.55 }) : "No answer saved yet."}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
-              {showAnswer ? (
-                <>
-                  <button type="button" onClick={() => markAnswer(false)} style={{ minWidth: 160, borderRadius: 999, border: "1px solid #dc2626", background: "rgba(220, 38, 38, 0.07)", color: "#dc2626", padding: "13px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>Wrong</button>
-                  <button type="button" onClick={() => markAnswer(true)} style={{ minWidth: 160, borderRadius: 999, border: "1px solid #059669", background: "rgba(5, 150, 105, 0.08)", color: "#059669", padding: "13px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>Correct</button>
-                </>
-              ) : (
-                <button type="button" onClick={() => setShowAnswer(true)} style={{ minWidth: 180, borderRadius: 999, border: `1px solid ${colorWithAlpha(accentColor, 0.45)}`, background: colorWithAlpha(accentColor, 0.1), color: accentColor, padding: "13px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>Flip</button>
-              )}
-            </div>
-          </section>
-        ) : null}
-      </main>
     </div>
   );
 }
@@ -3316,7 +2869,6 @@ function FlashcardPopup({
 
 function WordsView({
   captures,
-  onUpdateCapture,
   onReviewFlashcard,
   colors,
   theme,
@@ -3324,7 +2876,6 @@ function WordsView({
   cardFontSize,
 }: {
   captures: Capture[];
-  onUpdateCapture: (id: string, patch: CaptureEditPatch) => void;
   onReviewFlashcard: (word: WordEntry, rating: FsrsRating) => void;
   colors: DashboardColors;
   theme: ThemeName;
@@ -3348,10 +2899,6 @@ function WordsView({
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
   const [modifyingSetId, setModifyingSetId] = useState<string | null>(null);
-  const [updateSetAddWordId, setUpdateSetAddWordId] = useState("");
-  const [editingSetWordId, setEditingSetWordId] = useState<string | null>(null);
-  const [setEditFront, setSetEditFront] = useState("");
-  const [setEditBack, setSetEditBack] = useState("");
   const [draggedSetId, setDraggedSetId] = useState<string | null>(null);
   const [dragOverSetId, setDragOverSetId] = useState<string | null>(null);
   const [hoveredSetId, setHoveredSetId] = useState<string | null>(null);
@@ -3644,43 +3191,6 @@ function WordsView({
     if (setDeleted) setModifyingSetId(null);
   }
 
-  function addWordToSet(setId: string, word: WordEntry) {
-    const now = new Date().toISOString();
-    storeSets(sets.map((set) => (
-      set.id === setId
-        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...word.captureIds])), updatedAt: now }
-        : set
-    )));
-    setUpdateSetAddWordId("");
-  }
-
-  function beginEditSetWord(word: WordEntry) {
-    setEditingSetWordId(word.id);
-    setSetEditFront(word.word);
-    setSetEditBack(word.explanation);
-  }
-
-  function cancelEditSetWord() {
-    setEditingSetWordId(null);
-    setSetEditFront("");
-    setSetEditBack("");
-  }
-
-  function saveSetWordEdit(word: WordEntry) {
-    const nextFront = setEditFront.trim();
-    const nextBack = setEditBack.trim();
-    const patch: CaptureEditPatch = {
-      context: nextFront,
-      explanation: nextBack || null,
-    };
-    if (nextBack) {
-      patch.status = "done";
-      patch.errorMessage = undefined;
-    }
-    word.captureIds.forEach((id) => onUpdateCapture(id, patch));
-    cancelEditSetWord();
-  }
-
   function pressExportButton(key: string) {
     setActiveExportButton(key);
     window.setTimeout(() => {
@@ -3888,7 +3398,7 @@ function WordsView({
                       onClick={() => { setModifyingSetId(set.id); setOpenSetMenuId(null); }}
                       style={setMenuButtonStyle(`${set.id}:modify`)}
                     >
-                      Update set
+                      Modify set
                     </button>
                     <button
                       type="button"
@@ -3930,11 +3440,6 @@ function WordsView({
   if (studyWords) return <FlashcardView words={studyWords} onClose={closeFlashcardQuiz} onReview={onReviewFlashcard} colors={colors} accentColor={accentColor} cardFontSize={cardFontSize} />;
 
   const modifyingWords = modifyingSet ? setFlashcards(modifyingSet) : [];
-  const modifyingCaptureIds = new Set(modifyingSet?.captureIds ?? []);
-  const availableWordsForModifyingSet = modifyingSet
-    ? buildFlashcardList(captures.filter((capture) => !modifyingCaptureIds.has(capture.id)))
-    : [];
-  const updateSetAddWord = availableWordsForModifyingSet.find((word) => word.id === updateSetAddWordId);
 
   const sourcePanel = source.kind === "set" && activeSet ? (
     <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 14, background: colors.surface, display: "grid", gap: 12 }}>
@@ -4123,94 +3628,42 @@ function WordsView({
       )}
 
       {modifyingSet && (
-        <FlashcardPopup title={`Update ${modifyingSet.name}`} onClose={() => { setModifyingSetId(null); cancelEditSetWord(); setUpdateSetAddWordId(""); }} colors={colors} width={760}>
+        <FlashcardPopup title={`Modify ${modifyingSet.name}`} onClose={() => setModifyingSetId(null)} colors={colors} width={680}>
           <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
-            {modifyingWords.length} {modifyingWords.length === 1 ? "card" : "cards"} in this set. Add, edit, or remove cards. Removing a card only removes it from this set.
+            {modifyingWords.length} {modifyingWords.length === 1 ? "card" : "cards"} in this set. Removing a card only removes it from this set.
           </p>
-          {availableWordsForModifyingSet.length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, padding: 10, marginBottom: 12 }}>
-              <select
-                value={updateSetAddWordId}
-                onChange={(event) => setUpdateSetAddWordId(event.target.value)}
-                style={{ width: "100%", minWidth: 0, border: `1px solid ${colors.border}`, borderRadius: 7, background: colors.surface, color: colors.text, padding: "8px 10px", fontSize: 13, fontWeight: 750 }}
-              >
-                <option value="">Add a saved card...</option>
-                {availableWordsForModifyingSet.map((word) => (
-                  <option key={word.id} value={word.id}>
-                    {previewText(word.word || word.exampleText || "Screenshot", 90)}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!updateSetAddWord}
-                onClick={() => updateSetAddWord && addWordToSet(modifyingSet.id, updateSetAddWord)}
-                style={{ background: updateSetAddWord ? colors.accent : colors.border, color: updateSetAddWord ? colors.selectedText : colors.muted, border: "none", borderRadius: 7, padding: "8px 12px", fontSize: 13, fontWeight: 850, cursor: updateSetAddWord ? "pointer" : "default" }}
-              >
-                Add
-              </button>
-            </div>
-          )}
           {modifyingWords.length === 0 ? (
             <p style={{ color: colors.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>No cards in this set.</p>
           ) : (
             <div style={{ display: "grid", gap: 10, maxHeight: "min(460px, 58vh)", overflow: "auto", paddingRight: 2 }}>
-              {modifyingWords.map((word) => {
-                const isEditingSetWord = editingSetWordId === word.id;
-                return (
-                  <div key={word.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "start", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, padding: 12 }}>
-                    {isEditingSetWord ? (
-                      <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
-                        <textarea value={setEditFront} onChange={(event) => setSetEditFront(event.target.value)} rows={3} placeholder="Front" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", border: `1px solid ${colors.border}`, borderRadius: 7, background: colors.surface, color: colors.text, padding: "9px 10px", font: "inherit", fontSize: 13, lineHeight: 1.45 }} />
-                        <textarea value={setEditBack} onChange={(event) => setSetEditBack(event.target.value)} rows={5} placeholder="Back" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", border: `1px solid ${colors.border}`, borderRadius: 7, background: colors.surface, color: colors.text, padding: "9px 10px", font: "inherit", fontSize: 13, lineHeight: 1.5 }} />
-                      </div>
-                    ) : (
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ color: colors.text, fontSize: 14, fontWeight: 850, lineHeight: 1.45, margin: "0 0 6px", overflowWrap: "break-word" }}>
-                          {word.word || "Screenshot"}
-                        </p>
-                        <p style={{ color: colors.muted, fontSize: 12, lineHeight: 1.5, margin: 0, overflowWrap: "break-word" }}>
-                          {previewText(word.explanation || word.exampleText || "No answer yet.", 180)}
-                        </p>
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {isEditingSetWord ? (
-                        <>
-                          <button type="button" onClick={() => saveSetWordEdit(word)} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "7px 10px", fontSize: 12, fontWeight: 850, cursor: "pointer" }}>
-                            Save
-                          </button>
-                          <button type="button" onClick={cancelEditSetWord} style={{ ...subtleButtonStyle(colors, 12), padding: "7px 10px" }}>
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button type="button" onClick={() => beginEditSetWord(word)} style={{ ...subtleButtonStyle(colors, 12), padding: "7px 10px" }}>
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeWordFromSet(modifyingSet.id, word)}
-                            style={{
-                              background: colors.surface,
-                              color: colors.danger,
-                              border: `1px solid ${colors.dangerBorder}`,
-                              borderRadius: 7,
-                              padding: "7px 10px",
-                              fontSize: 12,
-                              fontWeight: 800,
-                              cursor: "pointer",
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </>
-                      )}
-                    </div>
+              {modifyingWords.map((word) => (
+                <div key={word.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "start", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, padding: 12 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ color: colors.text, fontSize: 14, fontWeight: 850, lineHeight: 1.45, margin: "0 0 6px", overflowWrap: "break-word" }}>
+                      {word.word || "Screenshot"}
+                    </p>
+                    <p style={{ color: colors.muted, fontSize: 12, lineHeight: 1.5, margin: 0, overflowWrap: "break-word" }}>
+                      {previewText(word.explanation || word.exampleText || "No answer yet.", 180)}
+                    </p>
                   </div>
-                );
-              })}
+                  <button
+                    type="button"
+                    onClick={() => removeWordFromSet(modifyingSet.id, word)}
+                    style={{
+                      background: colors.surface,
+                      color: colors.danger,
+                      border: `1px solid ${colors.dangerBorder}`,
+                      borderRadius: 7,
+                      padding: "7px 10px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </FlashcardPopup>
@@ -5159,9 +4612,6 @@ function FlashcardDayCalendar({
 export default function App() {
   const [view, setView] = useState<View>(() => viewFromHash());
   const [captures, setCaptures] = useState<Capture[]>([]);
-  const [starredCaptureIds, setStarredCaptureIds] = useState<Set<string>>(() => new Set());
-  const [quickStudyWords, setQuickStudyWords] = useState<WordEntry[] | null>(null);
-  const [lastUsedFlashcardSet, setLastUsedFlashcardSet] = useState<FlashcardSet | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(todayKey());
   const [account, setAccount] = useState<ContextLensUser | null>(null);
   const [appMode, setAppMode] = useState<AppMode>("language_learning");
@@ -5174,7 +4624,7 @@ export default function App() {
   const [screenshotPreviewBackfillTick, setScreenshotPreviewBackfillTick] = useState(0);
 
   useEffect(() => {
-    chrome.storage.local.get(["captures", "starred_capture_ids", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
+    chrome.storage.local.get(["captures", "contextlens_user", "app_mode", "theme", "accent_color", "card_font_size"], (r) => {
       const storedCaptures: Capture[] = r.captures ?? [];
       const normalizedCaptures = storedCaptures.map((capture) => (
         capture.status === "error" && hasRawBackendError(capture.errorMessage)
@@ -5182,7 +4632,6 @@ export default function App() {
           : capture
       ));
       setCaptures(normalizedCaptures);
-      setStarredCaptureIds(new Set(Array.isArray(r.starred_capture_ids) ? r.starred_capture_ids.filter((id): id is string => typeof id === "string") : []));
       if (normalizedCaptures.some((capture, index) => capture.errorMessage !== storedCaptures[index]?.errorMessage)) {
         chrome.storage.local.set({ captures: normalizedCaptures });
       }
@@ -5201,12 +4650,6 @@ export default function App() {
     void sendRuntimeMessage<{ synced: number }>({ type: "SYNC_REMOTE_FLASHCARD_SETS" }).catch(() => {});
     const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.captures) setCaptures(changes.captures.newValue ?? []);
-      if (changes.starred_capture_ids) {
-        const nextIds = Array.isArray(changes.starred_capture_ids.newValue)
-          ? changes.starred_capture_ids.newValue.filter((id): id is string => typeof id === "string")
-          : [];
-        setStarredCaptureIds(new Set(nextIds));
-      }
       if (changes.contextlens_user) setAccount(changes.contextlens_user.newValue ?? null);
       if (changes.app_mode) setAppMode(changes.app_mode.newValue ?? "language_learning");
       if (changes.card_font_size) setCardFontSizeState(isCardFontSize(changes.card_font_size.newValue) ? changes.card_font_size.newValue : DEFAULT_CARD_FONT_SIZE);
@@ -5415,84 +4858,6 @@ export default function App() {
     void sendRuntimeMessage<{ deleted: number }>({ type: "DELETE_REMOTE_CAPTURES", ids: Array.from(idsToDelete) }).catch((error) => {
       console.warn("ContextLens remote delete skipped", error);
     });
-
-    setStarredCaptureIds((current) => {
-      const next = new Set(current);
-      idsToDelete.forEach((id) => next.delete(id));
-      chrome.storage.local.set({ starred_capture_ids: Array.from(next) });
-      return next;
-    });
-  }
-
-  function updateCaptureById(id: string, patch: CaptureEditPatch) {
-    setCaptures((current) => {
-      let updatedCapture: Capture | undefined;
-      const next = current.map((capture) => {
-        if (capture.id !== id) return capture;
-        updatedCapture = { ...capture, ...patch };
-        return updatedCapture;
-      });
-      chrome.storage.local.set({ captures: next }, () => {
-        if (!updatedCapture) return;
-        void sendRuntimeMessage<{ saved: boolean }>({ type: "UPSERT_REMOTE_CAPTURE", capture: updatedCapture }).catch((error) => {
-          console.warn("ContextLens edited save sync skipped", error);
-        });
-      });
-      return next;
-    });
-  }
-
-  function toggleStarredCapture(id: string) {
-    setStarredCaptureIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      chrome.storage.local.set({ starred_capture_ids: Array.from(next) });
-      return next;
-    });
-  }
-
-  function chooseLastUsedSet(sets: FlashcardSet[], preferredId?: string): FlashcardSet | null {
-    if (sets.length === 0) return null;
-    const preferred = preferredId ? sets.find((set) => set.id === preferredId) : undefined;
-    if (preferred) return preferred;
-    return [...sets].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
-  }
-
-  function refreshLastUsedFlashcardSet() {
-    chrome.storage.local.get(["flashcard_sets", LAST_USED_FLASHCARD_SET_ID_KEY], (result) => {
-      const sets = normalizeFlashcardSets(result.flashcard_sets);
-      const preferredId = typeof result[LAST_USED_FLASHCARD_SET_ID_KEY] === "string" ? result[LAST_USED_FLASHCARD_SET_ID_KEY] : undefined;
-      setLastUsedFlashcardSet(chooseLastUsedSet(sets, preferredId));
-    });
-  }
-
-  function startQuickStudyCaptures(nextCaptures: Capture[]) {
-    const words = capturesToQuickStudyWords(nextCaptures);
-    if (words.length === 0) return;
-    refreshLastUsedFlashcardSet();
-    setQuickStudyWords(words);
-  }
-
-  async function addQuickStudyWordsToLastSet(words: WordEntry[]) {
-    const result = await chrome.storage.local.get(["flashcard_sets", LAST_USED_FLASHCARD_SET_ID_KEY]);
-    const sets = normalizeFlashcardSets(result.flashcard_sets);
-    const preferredId = typeof result[LAST_USED_FLASHCARD_SET_ID_KEY] === "string" ? result[LAST_USED_FLASHCARD_SET_ID_KEY] : undefined;
-    const target = chooseLastUsedSet(sets, preferredId);
-    if (!target) throw new Error("No flashcard set available.");
-    const now = new Date().toISOString();
-    const captureIds = uniqueFlashcardCaptureIds(words);
-    const nextSets = normalizeFlashcardSets(sets.map((set) => (
-      set.id === target.id
-        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...captureIds])), updatedAt: now }
-        : set
-    )));
-    await chrome.storage.local.set({
-      flashcard_sets: nextSets,
-      [LAST_USED_FLASHCARD_SET_ID_KEY]: target.id,
-    });
-    setLastUsedFlashcardSet(nextSets.find((set) => set.id === target.id) ?? target);
-    await sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: nextSets });
   }
 
   function retryCaptureById(id: string) {
@@ -5550,19 +4915,6 @@ export default function App() {
       if (!confirmed) return;
     }
     deleteCapturesByIds(todayCaptures.map((capture) => capture.id));
-  }
-
-  if (quickStudyWords) {
-    return (
-      <QuickStudyView
-        words={quickStudyWords}
-        onClose={() => setQuickStudyWords(null)}
-        colors={colors}
-        accentColor={accentColor}
-        lastUsedSetName={lastUsedFlashcardSet?.name}
-        onAddToLastSet={addQuickStudyWordsToLastSet}
-      />
-    );
   }
 
   return (
@@ -5681,11 +5033,7 @@ export default function App() {
           <SavesView
             captures={todayCaptures}
             onDeleteCaptures={deleteCapturesByIds}
-            onUpdateCapture={updateCaptureById}
             onRetryCapture={retryCaptureById}
-            starredIds={starredCaptureIds}
-            onToggleStar={toggleStarredCapture}
-            onQuickStudyCaptures={startQuickStudyCaptures}
             headerAction={
               todayCaptures.length > 0 ? (
                 <button
@@ -5715,18 +5063,14 @@ export default function App() {
           <HistoryView
             captures={captures}
             onDeleteCaptures={deleteCapturesByIds}
-            onUpdateCapture={updateCaptureById}
             onRetryCapture={retryCaptureById}
-            starredIds={starredCaptureIds}
-            onToggleStar={toggleStarredCapture}
-            onQuickStudyCaptures={startQuickStudyCaptures}
             colors={colors}
             theme={theme}
             accentColor={accentColor}
             cardFontSize={cardFontSize}
           />
         )}
-        {view === "words" && <WordsView captures={captures} onUpdateCapture={updateCaptureById} onReviewFlashcard={reviewFlashcard} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
+        {view === "words" && <WordsView captures={captures} onReviewFlashcard={reviewFlashcard} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
         {view === "settings" && (
           <SettingsView
             account={account}

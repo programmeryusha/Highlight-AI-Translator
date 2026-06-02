@@ -433,12 +433,6 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
-  if (message.type === "UPSERT_REMOTE_CAPTURE") {
-    saveCaptureRemote(message.capture)
-      .then(() => sendResponse({ saved: true }))
-      .catch((error) => sendResponse({ error: errorMessage(error) }));
-    return true;
-  }
   if (message.type === "REVIEW_FLASHCARDS") {
     reviewFlashcardsRemote(message.ids, message.rating)
       .then(sendResponse)
@@ -551,15 +545,9 @@ async function fetchExplanation(
   deepDive = false,
   messages: ChatMessage[] = [],
 ): Promise<string> {
-  const account = await requireAccount();
+  const account = deepDive ? await getAccount() : null;
   const mode = deepDive ? "language_learning" : await getAppMode();
-  const body: Record<string, unknown> = {
-    text,
-    context,
-    image_base64: imageBase64 ?? null,
-    mode,
-    token: account.token,
-  };
+  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null, mode };
   if (messages.length > 0) {
     body.messages = messages.slice(-8);
   }
@@ -589,15 +577,9 @@ async function fetchExplanationStream(
   onChunk: (chunk: string) => void,
   deepDive = false,
 ): Promise<string> {
-  const account = await requireAccount();
+  const account = deepDive ? await getAccount() : null;
   const mode = deepDive ? "language_learning" : await getAppMode();
-  const body: Record<string, unknown> = {
-    text,
-    context,
-    image_base64: imageBase64 ?? null,
-    mode,
-    token: account.token,
-  };
+  const body: Record<string, unknown> = { text, context, image_base64: imageBase64 ?? null, mode };
   if (messages.length > 0) {
     body.messages = messages.slice(-8);
   }
@@ -655,12 +637,6 @@ async function fetchExplanationStream(
 async function getAccount(): Promise<ContextLensUser | null> {
   const storage = await chrome.storage.local.get("contextlens_user");
   return storage.contextlens_user ?? null;
-}
-
-async function requireAccount(): Promise<ContextLensUser> {
-  const account = await getAccount();
-  if (!account) throw new Error("Sign in to save highlights and get explanations.");
-  return account;
 }
 
 function remoteToCapture(remote: RemoteCapture): Capture {
@@ -1441,15 +1417,8 @@ async function resetPassword(email: string, code: string, newPassword: string): 
 }
 
 async function generateAnalogy(text: string): Promise<{ analogy: string }> {
-  const account = await requireAccount();
   const mode = await getAppMode();
-  const body: Record<string, unknown> = {
-    text,
-    context: "",
-    analogy: true,
-    mode,
-    token: account.token,
-  };
+  const body: Record<string, unknown> = { text, context: "", analogy: true, mode };
   const res = await fetch(`${BACKEND_URL}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -105,13 +105,6 @@ function ensureBaseStyles() {
     .cl-scroll::-webkit-scrollbar-track        { background: transparent; }
     .cl-scroll::-webkit-scrollbar-thumb        { background: rgba(148,163,184,0.55); border-radius: 2px; }
     .cl-scroll::-webkit-scrollbar-thumb:hover  { background: rgba(148,163,184,0.72); }
-    .cl-root :is(button, input, textarea, select, [role="button"]):focus-visible,
-    .cl-root.cl-scroll:focus-visible,
-    .cl-root .cl-scroll:focus-visible {
-      outline: 2px solid rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.82) !important;
-      outline-offset: 2px !important;
-      box-shadow: 0 0 0 4px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.18) !important;
-    }
   `;
   document.head.appendChild(style);
 
@@ -970,7 +963,6 @@ function showSaveBubble(target: RectLike, bounds: RectLike, selectedText: string
   const btnFont    = mobile ? "14.5px" : "15.5px";
 
   widget = document.createElement("div");
-  widget.className = "cl-root";
   widget.textContent = "Ask";
   widget.setAttribute(
     "style",
@@ -1045,7 +1037,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
   let top = initialPosition.top;
 
   widget = document.createElement("div");
-  widget.className = "cl-root";
   widget.setAttribute(
     "style",
     `
@@ -1177,7 +1168,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       left: ${left}px;
       top: ${top}px;
       background: ${colors.panel};
-      backdrop-filter: blur(14px);
+      backdrop-filter: blur(28px);
       border: 1px solid ${colors.border};
       border-radius: 10px;
       box-shadow: ${colors.shadow};
@@ -1484,7 +1475,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
       label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
       const body = document.createElement("div");
       body.textContent = loadingText;
-      body.setAttribute("data-cl-streaming-body", "widget");
       body.setAttribute("style", `color:${widgetDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
       loadingBlock.appendChild(label);
       loadingBlock.appendChild(body);
@@ -1575,10 +1565,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }, {
         onChunk: (chunk) => {
           streamed += chunk;
-          if (!updateWidgetStreamingText(streamed)) {
-            renderConversation(captureId, nextMessages, true, "Writing…");
-            updateWidgetStreamingText(streamed);
-          }
+          renderConversation(captureId, [...nextMessages, { role: "assistant", content: streamed }], true, "Writing…");
         },
       })
         .then((response) => renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
@@ -1612,24 +1599,15 @@ function showContextInput(x: number, y: number, selectedText: string) {
       margin-bottom: 16px;
     `);
     let analogyBox: HTMLElement | null = null;
-    const hardWordsBackground = appearanceTheme === "dark" ? "rgba(255,255,255,0.075)" : colorWithAlpha(accentColor, 0.08);
-    const hardWordsHoverBackground = appearanceTheme === "dark" ? "rgba(255,255,255,0.12)" : colorWithAlpha(accentColor, 0.13);
-    const hardWordsBorder = appearanceTheme === "dark" ? "rgba(255,255,255,0.2)" : colorWithAlpha(accentColor, 0.35);
-    const hardWordsHoverBorder = appearanceTheme === "dark" ? "rgba(255,255,255,0.32)" : colorWithAlpha(accentColor, 0.52);
-    const hardWordsColor = appearanceTheme === "dark" ? "#e5e7f0" : colors.text;
-    const analogyColor = appearanceTheme === "dark" ? "#fbbf24" : "#7c4a03";
-    const analogyBackground = appearanceTheme === "dark" ? "rgba(251,191,36,0.08)" : "rgba(146, 85, 0, 0.10)";
-    const analogyHoverBackground = appearanceTheme === "dark" ? "rgba(251,191,36,0.12)" : "rgba(146, 85, 0, 0.15)";
-    const analogyBorder = appearanceTheme === "dark" ? "rgba(251,191,36,0.35)" : "rgba(124, 74, 3, 0.38)";
 
     if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialHardWords.length > 0) {
       const hwBtn = document.createElement("button");
       hwBtn.textContent = hardWordsOpen ? "Back" : "📘 Hard Words";
       const hwBase = `
         align-self: flex-start;
-        background: ${hardWordsBackground};
-        color: ${hardWordsColor};
-        border: 1px solid ${hardWordsBorder};
+        background: rgba(255,255,255,0.075);
+        color: #e5e7f0;
+        border: 1px solid rgba(255,255,255,0.2);
         border-radius: 6px;
         padding: 5px 10px;
         font-size: 12px;
@@ -1639,12 +1617,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
       `;
       hwBtn.setAttribute("style", hwBase);
       hwBtn.addEventListener("mouseenter", () => {
-        hwBtn.style.background = hardWordsHoverBackground;
-        hwBtn.style.borderColor = hardWordsHoverBorder;
+        hwBtn.style.background = "rgba(255,255,255,0.12)";
+        hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
       });
       hwBtn.addEventListener("mouseleave", () => {
-        hwBtn.style.background = hardWordsBackground;
-        hwBtn.style.borderColor = hardWordsBorder;
+        hwBtn.style.background = "rgba(255,255,255,0.075)";
+        hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
       });
       hwBtn.addEventListener("click", () => {
         hardWordsOpen = !hardWordsOpen;
@@ -1664,10 +1642,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyBox.textContent = analogyText;
         analogyBox.setAttribute("style", `
           flex-shrink: 0;
-          background: ${analogyBackground};
-          border: 1px solid ${analogyBorder};
+          background: rgba(251,191,36,0.08);
+          border: 1px solid rgba(251,191,36,0.2);
           border-radius: 7px;
-          color: ${analogyColor};
+          color: #fbbf24;
           font-size: 14px;
           line-height: 1.6;
           padding: 9px 11px;
@@ -1678,9 +1656,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyBtn.textContent = "💡 Analogy";
         analogyBtn.setAttribute("style", `
           align-self: flex-start;
-          background: ${analogyBackground};
-          color: ${analogyColor};
-          border: 1px solid ${analogyBorder};
+          background: transparent;
+          color: #fbbf24;
+          border: 1px solid rgba(251,191,36,0.35);
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -1688,12 +1666,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
           cursor: pointer;
           letter-spacing: 0.02em;
         `);
-        analogyBtn.addEventListener("mouseenter", () => {
-          analogyBtn.style.background = analogyHoverBackground;
-        });
-        analogyBtn.addEventListener("mouseleave", () => {
-          analogyBtn.style.background = analogyBackground;
-        });
         analogyBtn.addEventListener("click", () => {
           analogyLoading = true;
           renderConversation(captureId, messages, false);
@@ -1750,10 +1722,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           }, {
             onChunk: (chunk) => {
               streamed += chunk;
-              if (!updateWidgetStreamingText(streamed)) {
-                renderConversation(captureId, messages, true, "Writing…");
-                updateWidgetStreamingText(streamed);
-              }
+              renderConversation(captureId, [...messages, { role: "assistant", content: streamed }], true, "Writing…");
             },
           }),
           timeout,
@@ -1797,22 +1766,6 @@ function showContextInput(x: number, y: number, selectedText: string) {
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
 
-  function updateWidgetStreamingText(text: string) {
-    const body = widget?.querySelector<HTMLElement>('[data-cl-streaming-body="widget"]');
-    const list = widget?.querySelector<HTMLElement>('[data-cl-conversation-list="widget"]');
-    if (!body || !list) return false;
-    const colors = uiColors();
-    body.textContent = text || "Writing…";
-    body.style.color = colors.text;
-    body.style.fontStyle = "normal";
-    body.style.fontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
-    rememberConversationScroll(widgetConversationScroll, list);
-    if (widgetConversationScroll.autoFollow || widgetConversationScroll.atBottom) {
-      setConversationScrollTop(widgetConversationScroll, list, conversationMaxScrollTop(list));
-    }
-    return true;
-  }
-
   function submitSaveMessage(message: Message, closeAfterSave: boolean) {
     submitted = true;
     window.getSelection()?.removeAllRanges();
@@ -1834,17 +1787,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
       let captureId = "";
       let streamed = "";
       streamRuntimeMessage<{ captureId: string; explanation: string }>({ ...message, type: "SAVE_HIGHLIGHT_STREAM" }, {
-        onStart: (id) => {
-          captureId = id;
-          renderConversation(captureId, [], true, "Writing…");
-        },
+        onStart: (id) => { captureId = id; },
         onChunk: (chunk) => {
           streamed += chunk;
           if (captureId) {
-            if (!updateWidgetStreamingText(streamed)) {
-              renderConversation(captureId, [], true, "Writing…");
-              updateWidgetStreamingText(streamed);
-            }
+            renderConversation(captureId, [{ role: "assistant", content: streamed }], true, "Writing…");
           }
         },
       })
@@ -2013,7 +1960,6 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
   if (restoreScroll) window.scrollTo(restoreScroll.x, restoreScroll.y);
 
   cropOverlay = document.createElement("div");
-  cropOverlay.className = "cl-root";
   cropOverlay.setAttribute("style", `
     position: fixed;
     left: 0;
@@ -2402,7 +2348,6 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
         const body = document.createElement("div");
         body.textContent = loadingText;
-        body.setAttribute("data-cl-streaming-body", "screenshot");
         body.setAttribute("style", `color:${panelDeepDiveActive ? colors.accent : colors.muted};font-size:14px;font-style:italic;line-height:1.65;margin-bottom:12px;`);
         loadingBlock.appendChild(label);
         loadingBlock.appendChild(body);
@@ -2493,10 +2438,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         }, {
           onChunk: (chunk) => {
             streamed += chunk;
-            if (!updatePanelStreamingText(streamed)) {
-              renderConversationPanel(captureId, nextMessages, true, "Writing…");
-              updatePanelStreamingText(streamed);
-            }
+            renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: streamed }], true, "Writing…");
           },
         })
           .then((response) => renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]))
@@ -2530,24 +2472,15 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         margin-bottom: 10px;
       `);
       let analogyBox: HTMLElement | null = null;
-      const hardWordsBackground = appearanceTheme === "dark" ? "rgba(255,255,255,0.075)" : colorWithAlpha(accentColor, 0.08);
-      const hardWordsHoverBackground = appearanceTheme === "dark" ? "rgba(255,255,255,0.12)" : colorWithAlpha(accentColor, 0.13);
-      const hardWordsBorder = appearanceTheme === "dark" ? "rgba(255,255,255,0.2)" : colorWithAlpha(accentColor, 0.35);
-      const hardWordsHoverBorder = appearanceTheme === "dark" ? "rgba(255,255,255,0.32)" : colorWithAlpha(accentColor, 0.52);
-      const hardWordsColor = appearanceTheme === "dark" ? "#e5e7f0" : colors.text;
-      const analogyColor = appearanceTheme === "dark" ? "#fbbf24" : "#7c4a03";
-      const analogyBackground = appearanceTheme === "dark" ? "rgba(251,191,36,0.08)" : "rgba(146, 85, 0, 0.10)";
-      const analogyHoverBackground = appearanceTheme === "dark" ? "rgba(251,191,36,0.12)" : "rgba(146, 85, 0, 0.15)";
-      const analogyBorder = appearanceTheme === "dark" ? "rgba(251,191,36,0.35)" : "rgba(124, 74, 3, 0.38)";
 
       if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialPanelHardWords.length > 0) {
         const hwBtn = document.createElement("button");
         hwBtn.textContent = panelHardWordsOpen ? "Back" : "📘 Hard Words";
         const hwBase = `
           align-self: flex-start;
-          background: ${hardWordsBackground};
-          color: ${hardWordsColor};
-          border: 1px solid ${hardWordsBorder};
+          background: rgba(255,255,255,0.075);
+          color: #e5e7f0;
+          border: 1px solid rgba(255,255,255,0.2);
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -2557,12 +2490,12 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         `;
         hwBtn.setAttribute("style", hwBase);
         hwBtn.addEventListener("mouseenter", () => {
-          hwBtn.style.background = hardWordsHoverBackground;
-          hwBtn.style.borderColor = hardWordsHoverBorder;
+          hwBtn.style.background = "rgba(255,255,255,0.12)";
+          hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
         });
         hwBtn.addEventListener("mouseleave", () => {
-          hwBtn.style.background = hardWordsBackground;
-          hwBtn.style.borderColor = hardWordsBorder;
+          hwBtn.style.background = "rgba(255,255,255,0.075)";
+          hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
         });
         hwBtn.addEventListener("click", () => {
           panelHardWordsOpen = !panelHardWordsOpen;
@@ -2582,10 +2515,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           analogyBox.textContent = panelAnalogyText;
           analogyBox.setAttribute("style", `
             flex-shrink: 0;
-            background: ${analogyBackground};
-            border: 1px solid ${analogyBorder};
+            background: rgba(251,191,36,0.08);
+            border: 1px solid rgba(251,191,36,0.2);
             border-radius: 7px;
-            color: ${analogyColor};
+            color: #fbbf24;
             font-size: 14px;
             line-height: 1.6;
             padding: 9px 11px;
@@ -2596,9 +2529,9 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           analogyBtn.textContent = "💡 Analogy";
           analogyBtn.setAttribute("style", `
             align-self: flex-start;
-            background: ${analogyBackground};
-            color: ${analogyColor};
-            border: 1px solid ${analogyBorder};
+            background: transparent;
+            color: #fbbf24;
+            border: 1px solid rgba(251,191,36,0.35);
             border-radius: 6px;
             padding: 5px 10px;
             font-size: 12px;
@@ -2606,12 +2539,6 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             cursor: pointer;
             letter-spacing: 0.02em;
           `);
-          analogyBtn.addEventListener("mouseenter", () => {
-            analogyBtn.style.background = analogyHoverBackground;
-          });
-          analogyBtn.addEventListener("mouseleave", () => {
-            analogyBtn.style.background = analogyBackground;
-          });
           analogyBtn.addEventListener("click", () => {
             panelAnalogyLoading = true;
             renderConversationPanel(captureId, messages, false);
@@ -2668,10 +2595,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             }, {
               onChunk: (chunk) => {
                 streamed += chunk;
-                if (!updatePanelStreamingText(streamed)) {
-                  renderConversationPanel(captureId, messages, true, "Writing…");
-                  updatePanelStreamingText(streamed);
-                }
+                renderConversationPanel(captureId, [...messages, { role: "assistant", content: streamed }], true, "Writing…");
               },
             }),
             timeout,
@@ -2714,22 +2638,6 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       closeContextPanelOnOutsideClick();
     }
 
-    function updatePanelStreamingText(text: string) {
-      const body = contextPanel?.querySelector<HTMLElement>('[data-cl-streaming-body="screenshot"]');
-      const list = contextPanel?.querySelector<HTMLElement>('[data-cl-conversation-list="screenshot"]');
-      if (!body || !list) return false;
-      const colors = uiColors();
-      body.textContent = text || "Writing…";
-      body.style.color = colors.text;
-      body.style.fontStyle = "normal";
-      body.style.fontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
-      rememberConversationScroll(contextPanelConversationScroll, list);
-      if (contextPanelConversationScroll.autoFollow || contextPanelConversationScroll.atBottom) {
-        setConversationScrollTop(contextPanelConversationScroll, list, conversationMaxScrollTop(list));
-      }
-      return true;
-    }
-
     function cropAndSend(context: string) {
       if (contextPanelSubmitted) return;
       const crop = cropSelection();
@@ -2758,17 +2666,11 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           let captureId = "";
           let streamed = "";
           streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: crop.imageData, imagePreviewData: crop.imagePreviewData, context }, {
-            onStart: (id) => {
-              captureId = id;
-              renderConversationPanel(captureId, [], true, "Writing…");
-            },
+            onStart: (id) => { captureId = id; },
             onChunk: (chunk) => {
               streamed += chunk;
               if (captureId) {
-                if (!updatePanelStreamingText(streamed)) {
-                  renderConversationPanel(captureId, [], true, "Writing…");
-                  updatePanelStreamingText(streamed);
-                }
+                renderConversationPanel(captureId, [{ role: "assistant", content: streamed }], true, "Writing…");
               }
             },
           })
@@ -2809,7 +2711,6 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }
 
       contextPanel = document.createElement("div");
-      contextPanel.className = "cl-root";
       contextPanel.setAttribute("style", `
         position: fixed;
         left: ${contextPanelLeft}px;
@@ -3004,13 +2905,15 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       if (!dragStart) return;
       if (!selection) {
         dragStart = null;
-        removeCropOverlay();
+        redraw();
         return;
       }
       if (selection.w < 10 || selection.h < 10) {
         dragStart = null;
         selection = null;
-        removeCropOverlay();
+        canvas.style.cursor = "crosshair";
+        cropOverlay!.style.cursor = "crosshair";
+        redraw();
         return;
       }
       dragStart = null;
