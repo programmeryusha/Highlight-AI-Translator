@@ -1883,6 +1883,7 @@ let cropOverlay: HTMLElement | null = null;
 let screenshotCapturePending = false;
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
+let screenshotCursorRestoreFrame: number | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
 
 function clearScreenshotReposition() {
@@ -1895,9 +1896,31 @@ function clearScreenshotReposition() {
 }
 
 function removeCropOverlay(showCamera = true) {
+  const hadCropOverlay = Boolean(cropOverlay);
   (cropOverlay as CropOverlayElement | null)?.__contextLensCleanup?.();
   if (cropOverlay) { cropOverlay.remove(); cropOverlay = null; }
+  if (showCamera && hadCropOverlay) restorePageCursorAfterScreenshotMode();
   if (showCamera && cameraBtn) cameraBtn.style.display = "";
+}
+
+function restorePageCursorAfterScreenshotMode() {
+  const root = document.documentElement;
+  const body = document.body;
+  if (screenshotCursorRestoreFrame !== null) {
+    window.cancelAnimationFrame(screenshotCursorRestoreFrame);
+    screenshotCursorRestoreFrame = null;
+  }
+
+  const previousRootCursor = root.style.cursor;
+  const previousBodyCursor = body?.style.cursor ?? "";
+  root.style.cursor = "auto";
+  if (body) body.style.cursor = "auto";
+
+  screenshotCursorRestoreFrame = window.requestAnimationFrame(() => {
+    screenshotCursorRestoreFrame = null;
+    root.style.cursor = previousRootCursor;
+    if (body) body.style.cursor = previousBodyCursor;
+  });
 }
 
 function recaptureScreenshotAfterScroll(delay = 450) {
