@@ -433,6 +433,12 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
       .catch((error) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
+  if (message.type === "UPSERT_REMOTE_CAPTURE") {
+    saveCaptureRemote(message.capture)
+      .then(() => sendResponse({ saved: true }))
+      .catch((error) => sendResponse({ error: errorMessage(error) }));
+    return true;
+  }
   if (message.type === "REVIEW_FLASHCARDS") {
     reviewFlashcardsRemote(message.ids, message.rating)
       .then(sendResponse)
