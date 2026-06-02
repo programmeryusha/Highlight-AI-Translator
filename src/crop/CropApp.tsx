@@ -4,7 +4,7 @@ import type { ChatMessage, Message } from "../types";
 type Rect = { x: number; y: number; w: number; h: number };
 type Stage = "selecting" | "context" | "saving" | "done";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
-const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
+const ARABIC_FONT_STACK = "'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, Arial, serif";
 const HONORIFIC_MARK = "ﷺ";
 const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";

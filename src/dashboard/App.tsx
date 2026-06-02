@@ -17,6 +17,7 @@ const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const DEFAULT_CARD_FONT_SIZE: CardFontSize = "default";
 const THEME_STORAGE_KEY = "contextlens_theme";
 const FLASHCARD_TEXT_SCALE_KEY = "contextlens_flashcard_text_scale";
+const LAST_USED_FLASHCARD_SET_KEY = "contextlens_last_used_flashcard_set_id";
 const FLASHCARD_RANGES: { value: FlashcardRange; label: string; days: number }[] = [
   { value: "pastDay", label: "Past day", days: 1 },
   { value: "past3", label: "Past 3 days", days: 3 },
@@ -39,9 +40,10 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
-const FLASHCARD_FLIP_MS = 520;
-const ARABIC_FONT_STACK = "'Amiri', 'Noto Naskh Arabic', ui-serif, Georgia, serif";
-const FLASHCARD_LATIN_FONT_STACK = "'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, ui-serif, serif";
+const FLASHCARD_FLIP_MS = 300;
+const LATIN_FONT_STACK = "'Satoshi', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const ARABIC_FONT_STACK = "'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, Arial, serif";
+const FLASHCARD_LATIN_FONT_STACK = LATIN_FONT_STACK;
 const HONORIFIC_MARK = "ﷺ";
 const FLASHCARD_PROMPT_LIMIT = 260;
 const FLASHCARD_EXPLANATION_LIMIT = 520;
@@ -1147,6 +1149,81 @@ function TrashIcon() {
   );
 }
 
+function PencilIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function StarIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m12 3 2.83 5.73 6.32.92-4.58 4.46 1.08 6.29L12 17.43 6.35 20.4l1.08-6.29-4.58-4.46 6.32-.92Z" />
+    </svg>
+  );
+}
+
+function CardActionIconButton({
+  label,
+  title,
+  onClick,
+  colors,
+  active = false,
+  danger = false,
+  children,
+}: {
+  label: string;
+  title?: string;
+  onClick: () => void;
+  colors: DashboardColors;
+  active?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const color = danger
+    ? hovered ? colors.danger : colors.muted
+    : active ? colors.accent : hovered ? colors.text : colors.muted;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title ?? label}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: 8,
+        border: "none",
+        background: hovered ? (danger ? colors.dangerSoft : colors.surfaceAlt) : "transparent",
+        color,
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        padding: 0,
+        transition: "background 120ms ease, color 120ms ease",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function SelectSaveButton({
   selected,
   onToggle,
@@ -1197,33 +1274,10 @@ function SelectSaveButton({
 }
 
 function SaveDeleteButton({ onDelete, colors }: { onDelete: () => void; colors: DashboardColors }) {
-  const [hovered, setHovered] = useState(false);
   return (
-    <button
-      type="button"
-      aria-label="Delete save"
-      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        width: 28,
-        height: 28,
-        borderRadius: 7,
-        border: `1px solid ${hovered ? colors.dangerBorder : colors.border}`,
-        background: hovered ? colors.dangerSoft : "transparent",
-        color: hovered ? colors.danger : colors.muted,
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        padding: 0,
-        transition: "background 120ms ease, border 120ms ease, color 120ms ease",
-      }}
-    >
+    <CardActionIconButton label="Delete save" title="Delete save" onClick={onDelete} colors={colors} danger>
       <TrashIcon />
-    </button>
+    </CardActionIconButton>
   );
 }
 
@@ -1388,10 +1442,433 @@ function CapturePreview({ capture, colors, typography }: { capture: Capture; col
   );
 }
 
+function QuickStudyView({
+  words,
+  title,
+  onClose,
+  colors,
+}: {
+  words: WordEntry[];
+  title: string;
+  onClose: () => void;
+  colors: DashboardColors;
+}) {
+  const [deck, setDeck] = useState(words);
+  const [index, setIndex] = useState(0);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [wrongIds, setWrongIds] = useState<Set<string>>(new Set());
+  const [completed, setCompleted] = useState(false);
+  const [sets, setSets] = useState<FlashcardSet[]>([]);
+  const [selectedSetId, setSelectedSetId] = useState("");
+  const [newSetName, setNewSetName] = useState("");
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    setDeck(words);
+    setIndex(0);
+    setShowAnswer(false);
+    setWrongIds(new Set());
+    setCompleted(false);
+    setStatus("");
+  }, [words]);
+
+  useEffect(() => {
+    chrome.storage.local.get(["flashcard_sets", LAST_USED_FLASHCARD_SET_KEY], (result) => {
+      const normalized = normalizeFlashcardSets(result.flashcard_sets);
+      setSets(normalized);
+      const lastId = typeof result[LAST_USED_FLASHCARD_SET_KEY] === "string" ? result[LAST_USED_FLASHCARD_SET_KEY] : "";
+      setSelectedSetId(normalized.some((set) => set.id === lastId) ? lastId : normalized[0]?.id ?? "");
+    });
+  }, [completed]);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (completed) return;
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault();
+        setShowAnswer((visible) => !visible);
+      } else if (showAnswer && (event.key === "1" || event.key.toLowerCase() === "x")) {
+        event.preventDefault();
+        mark(false);
+      } else if (showAnswer && (event.key === "2" || event.key.toLowerCase() === "c")) {
+        event.preventDefault();
+        mark(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  const active = deck[index];
+  const activeImageData = active?.imagePreviewData ?? active?.imageData;
+  const activeImage = useAuthenticatedImageSource(activeImageData);
+  const wrongWords = deck.filter((word) => wrongIds.has(word.id));
+  const captureIds = uniqueFlashcardCaptureIds(deck);
+  const lastSet = selectedSetId ? sets.find((set) => set.id === selectedSetId) : undefined;
+  const progress = completed ? 100 : Math.round(((index + 1) / Math.max(1, deck.length)) * 100);
+  const frontText = active ? (active.word || (!active.imageData ? active.exampleText : "")).trim() : "";
+  const frontIsRtl = hasRtlText(frontText);
+  const answer = active?.explanation || active?.exampleText || "No answer yet.";
+  const answerTypography = flashcardAnswerTypography(answer, 19, 1);
+  const accentSoft = colorWithAlpha(colors.accent, 0.14);
+  const accentFaint = colorWithAlpha(colors.accent, 0.08);
+  const accentStrong = colorWithAlpha(colors.accent, 0.42);
+  const flashcardSurface = colors.surface === "#fff" ? "#ffffff" : colors.surface;
+  const flashcardBorder = colors.surface === "#fff" ? "rgba(15, 23, 42, 0.09)" : colors.border;
+  const flashcardShadow = colors.surface === "#fff"
+    ? "0 26px 72px rgba(15, 23, 42, 0.11), 0 8px 24px rgba(15, 23, 42, 0.07)"
+    : "0 26px 72px rgba(0, 0, 0, 0.28)";
+
+  function mark(correct: boolean) {
+    if (completed || !active) return;
+    if (!correct) setWrongIds((current) => new Set(current).add(active.id));
+    if (index >= deck.length - 1) {
+      setCompleted(true);
+      setShowAnswer(false);
+      return;
+    }
+    setIndex((current) => current + 1);
+    setShowAnswer(false);
+  }
+
+  function restart(nextDeck = deck) {
+    setDeck(nextDeck);
+    setIndex(0);
+    setShowAnswer(false);
+    setWrongIds(new Set());
+    setCompleted(false);
+    setStatus("");
+  }
+
+  function storeSets(next: FlashcardSet[], lastUsedId: string) {
+    const normalized = normalizeFlashcardSets(next);
+    setSets(normalized);
+    setSelectedSetId(lastUsedId);
+    chrome.storage.local.set({ flashcard_sets: normalized, [LAST_USED_FLASHCARD_SET_KEY]: lastUsedId });
+    void sendRuntimeMessage<{ sets: FlashcardSet[] }>({ type: "UPSERT_REMOTE_FLASHCARD_SETS", sets: normalized }).catch((error) => {
+      console.warn("ContextLens flashcard set sync skipped", error);
+    });
+  }
+
+  function addToExistingSet(setId: string) {
+    if (!setId || captureIds.length === 0) return;
+    const now = new Date().toISOString();
+    const next = sets.map((set) => (
+      set.id === setId
+        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...captureIds])), updatedAt: now }
+        : set
+    ));
+    storeSets(next, setId);
+    setStatus(`Added to ${next.find((set) => set.id === setId)?.name ?? "set"}.`);
+  }
+
+  function createNewSet() {
+    const name = newSetName.trim();
+    if (!name || captureIds.length === 0) return;
+    const now = new Date().toISOString();
+    const nextSet: FlashcardSet = {
+      id: crypto.randomUUID(),
+      name,
+      captureIds,
+      createdAt: now,
+      updatedAt: now,
+    };
+    storeSets([nextSet, ...sets], nextSet.id);
+    setNewSetName("");
+    setStatus(`Created ${name}.`);
+  }
+
+  if (!active && !completed) return null;
+
+  return (
+    <div
+      aria-label={title}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        background: colors.bg,
+        color: colors.text,
+        padding: "12px 22px",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ width: "min(1120px, calc(100% - 28px))", display: "grid", gridTemplateColumns: "52px minmax(180px, 840px) 52px", justifyContent: "center", alignItems: "start", gap: 16, margin: "0 auto 12px" }}>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back"
+          title="Back"
+          style={{
+            width: 46,
+            height: 40,
+            borderRadius: 10,
+            border: `1px solid ${accentStrong}`,
+            background: accentFaint,
+            color: colors.accent,
+            boxShadow: `0 6px 18px ${colorWithAlpha(colors.accent, 0.12)}`,
+            cursor: "pointer",
+            fontSize: 20,
+            fontWeight: 850,
+            padding: "0 15px 0 12px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          ←
+        </button>
+        <div style={{ paddingTop: 15, minWidth: 0 }}>
+          <div style={{ height: 8, borderRadius: 999, background: colors.surfaceAlt, border: `1px solid ${accentStrong}`, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.max(5, progress)}%`, background: colors.accent, transition: "width 220ms cubic-bezier(0.2, 0, 0, 1)" }} />
+          </div>
+          <p style={{ color: colors.accent, fontSize: 14, fontWeight: 850, margin: "10px 0 0", textAlign: "center" }}>
+            {completed ? deck.length : index + 1} / {deck.length}
+          </p>
+        </div>
+        <div />
+      </div>
+
+      {completed ? (
+        <div style={{ maxWidth: 720, width: "100%", margin: "auto", border: `1px solid ${colors.border}`, borderRadius: 14, background: colors.surface, boxShadow: flashcardShadow, padding: 24, display: "grid", gap: 16 }}>
+          <div>
+            <p style={{ margin: "0 0 6px", color: colors.text, fontSize: 24, fontWeight: 900 }}>Quick Study complete</p>
+            <p style={{ margin: 0, color: colors.muted, fontSize: 14, lineHeight: 1.6 }}>
+              {wrongWords.length === 0 ? "Clean run." : `${wrongWords.length} ${wrongWords.length === 1 ? "card" : "cards"} marked wrong.`}
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {wrongWords.length > 0 && (
+              <button type="button" onClick={() => restart(wrongWords)} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 900, cursor: "pointer" }}>
+                Study wrong cards
+              </button>
+            )}
+            <button type="button" onClick={() => restart(deck)} style={{ ...subtleButtonStyle(colors, 14), padding: "10px 14px" }}>
+              Practice again
+            </button>
+          </div>
+
+          <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 16, display: "grid", gap: 10 }}>
+            <p style={{ margin: 0, color: colors.text, fontSize: 15, fontWeight: 850 }}>Want to keep these?</p>
+            {lastSet && (
+              <button type="button" onClick={() => addToExistingSet(lastSet.id)} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 900, cursor: "pointer", justifySelf: "start" }}>
+                Keep practicing these? Add to {lastSet.name}
+              </button>
+            )}
+            {sets.length > 0 && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={selectedSetId} onChange={(event) => setSelectedSetId(event.target.value)} style={{ minWidth: 220, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "9px 10px", fontSize: 14 }}>
+                  {sets.map((set) => <option key={set.id} value={set.id}>{set.name}</option>)}
+                </select>
+                <button type="button" onClick={() => addToExistingSet(selectedSetId)} style={{ ...subtleButtonStyle(colors, 14), padding: "9px 12px" }}>Add to existing set</button>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input value={newSetName} onChange={(event) => setNewSetName(event.target.value)} placeholder="New set name" style={{ minWidth: 220, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, outline: "none" }} />
+              <button type="button" disabled={!newSetName.trim()} onClick={createNewSet} style={{ ...subtleButtonStyle(colors, 14), padding: "10px 12px", opacity: newSetName.trim() ? 1 : 0.55, cursor: newSetName.trim() ? "pointer" : "default" }}>Create new set</button>
+            </div>
+            {status && <p style={{ margin: 0, color: colors.accent, fontSize: 13, fontWeight: 800 }}>{status}</p>}
+          </div>
+        </div>
+      ) : (
+        <section
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            width: "min(1540px, 100%)",
+            margin: "0 auto",
+            padding: "10px 24px",
+            boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "visible",
+          }}
+        >
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setShowAnswer((visible) => !visible)}
+            onKeyDown={(event) => {
+              if (event.key !== " " && event.key !== "Enter") return;
+              event.preventDefault();
+              setShowAnswer((visible) => !visible);
+            }}
+            style={{
+              flex: "1 1 auto",
+              minHeight: 0,
+              border: `1px solid ${flashcardBorder}`,
+              borderRadius: 20,
+              background: flashcardSurface,
+              boxShadow: flashcardShadow,
+              color: colors.text,
+              cursor: "pointer",
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+          >
+            <div
+              style={{
+                flex: "1 1 auto",
+                minHeight: 0,
+                overflowY: showAnswer ? "auto" : active?.imageData ? "auto" : "hidden",
+                display: "grid",
+                placeItems: "center",
+                padding: showAnswer
+                  ? "clamp(34px, 5dvh, 60px) clamp(20px, 3.6vw, 52px)"
+                  : active?.imageData
+                    ? "clamp(28px, 4.5dvh, 52px) clamp(18px, 3vw, 40px)"
+                    : "clamp(30px, 5dvh, 58px) clamp(18px, 3vw, 40px)",
+                boxSizing: "border-box",
+                background: flashcardSurface,
+              }}
+            >
+              {!showAnswer ? (
+                <div style={{ display: "grid", justifyItems: "center", gap: active?.imageData && frontText ? 16 : 0, width: "100%", maxWidth: 980 }}>
+                  {active?.imageData && activeImage.src ? (
+                    <img
+                      src={activeImage.src}
+                      alt="Card screenshot"
+                      loading="eager"
+                      decoding="async"
+                      fetchPriority="high"
+                      onError={() => {
+                        if (activeImageData && !activeImageData.startsWith("data:")) refreshRemoteImageUrls();
+                      }}
+                      style={{
+                        display: "block",
+                        maxWidth: "min(100%, 1180px)",
+                        maxHeight: frontText ? "min(620px, calc(100dvh - 260px))" : "min(720px, calc(100dvh - 220px))",
+                        width: "auto",
+                        objectFit: "contain",
+                        borderRadius: 14,
+                        border: `1px solid ${colors.border}`,
+                        background: colors.surfaceAlt,
+                        boxShadow: "0 12px 34px rgba(15,15,15,0.08)",
+                      }}
+                    />
+                  ) : active?.imageData ? (
+                    <div
+                      style={{
+                        minHeight: frontText ? 220 : 320,
+                        width: "min(100%, 760px)",
+                        display: "grid",
+                        placeItems: "center",
+                        color: colors.muted,
+                        fontSize: 14,
+                        fontWeight: 800,
+                        borderRadius: 14,
+                        border: `1px dashed ${colors.border}`,
+                        background: colors.surfaceAlt,
+                      }}
+                    >
+                      {activeImage.error ? "Screenshot preview unavailable" : "Loading screenshot…"}
+                    </div>
+                  ) : null}
+                  {frontText && (
+                    <div
+                      dir={frontIsRtl ? "rtl" : "ltr"}
+                      lang={frontIsRtl ? "ar" : undefined}
+                      style={{
+                        color: colors.text,
+                        fontFamily: frontIsRtl ? ARABIC_FONT_STACK : FLASHCARD_LATIN_FONT_STACK,
+                        fontSize: flashcardFrontFontSize(frontText, frontIsRtl),
+                        fontWeight: frontIsRtl ? 700 : 680,
+                        lineHeight: frontIsRtl ? 1.56 : 1.18,
+                        maxWidth: frontIsRtl ? "min(100%, 20ch)" : "min(100%, 24ch)",
+                        overflowWrap: "break-word",
+                        textAlign: "center",
+                        unicodeBidi: "plaintext",
+                      }}
+                    >
+                      {bidiSpan(frontText)}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div
+                  dir="ltr"
+                  style={{
+                    width: `min(100%, ${answerTypography.maxWidth}px)`,
+                    margin: "0 auto",
+                    color: colors.text,
+                    fontFamily: FLASHCARD_LATIN_FONT_STACK,
+                    fontSize: answerTypography.fontSize,
+                    lineHeight: answerTypography.lineHeight,
+                    overflowWrap: "break-word",
+                    textAlign: "left",
+                    unicodeBidi: "plaintext",
+                  }}
+                >
+                  {renderExplanation(answer, colors, { lineHeight: answerTypography.lineHeight })}
+                </div>
+              )}
+            </div>
+            <div
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                flex: "0 0 auto",
+                minHeight: "clamp(82px, 10dvh, 112px)",
+                borderTop: `1px solid ${colors.border}`,
+                padding: "14px clamp(18px, 3.6vw, 52px) 18px",
+                boxSizing: "border-box",
+                display: "grid",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: showAnswer ? "repeat(2, minmax(160px, 1fr))" : "minmax(180px, 360px)", justifyContent: "center", gap: 14, maxWidth: 760, margin: "0 auto", width: "100%" }}>
+                {!showAnswer ? (
+                  <button type="button" onClick={() => setShowAnswer(true)} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 999, minHeight: 48, padding: "12px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>
+                    Show answer
+                  </button>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => mark(false)} style={{ background: colors.surface, color: colors.danger, border: `1px solid ${colors.dangerBorder}`, borderRadius: 999, minHeight: 48, padding: "12px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>
+                      Wrong
+                    </button>
+                    <button type="button" onClick={() => mark(true)} style={{ background: accentSoft, color: colors.accent, border: `1px solid ${accentStrong}`, borderRadius: 999, minHeight: 48, padding: "12px 18px", fontSize: 16, fontWeight: 900, cursor: "pointer" }}>
+                      Correct
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function SavesView({
   captures,
   onDeleteCaptures,
   onRetryCapture,
+  onUpdateCapture,
   headerAction,
   toolbarSummary,
   sidePanel,
@@ -1402,6 +1879,7 @@ function SavesView({
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
+  onUpdateCapture: (id: string, patch: Partial<Capture>) => void;
   headerAction?: React.ReactNode;
   toolbarSummary?: React.ReactNode;
   sidePanel?: React.ReactNode;
@@ -1409,18 +1887,17 @@ function SavesView({
   colors: DashboardColors;
   cardFontSize: CardFontSize;
 }) {
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [lastRangeAnchorId, setLastRangeAnchorId] = useState<string | null>(null);
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
-  const [expandAll, setExpandAll] = useState(false);
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
+  const [editingCaptureId, setEditingCaptureId] = useState<string | null>(null);
+  const [editFront, setEditFront] = useState("");
+  const [editBack, setEditBack] = useState("");
+  const [quickStudyWords, setQuickStudyWords] = useState<WordEntry[] | null>(null);
+  const [quickStudyTitle, setQuickStudyTitle] = useState("Quick Study");
   const typography = CARD_TYPOGRAPHY[cardFontSize];
 
   useEffect(() => {
     const visibleIds = new Set(captures.map((capture) => capture.id));
-    setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
-    setLastRangeAnchorId((current) => current && visibleIds.has(current) ? current : null);
     setExpandedCardIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
   }, [captures]);
 
@@ -1429,45 +1906,42 @@ function SavesView({
   }
 
   const groups = groupByDay(captures);
-  const selectedCount = selectedIds.size;
+  const studyableCaptures = captures.filter((capture) => capture.status === "done");
+  const starredCaptures = studyableCaptures.filter((capture) => capture.starred);
+  const editingCapture = editingCaptureId ? captures.find((capture) => capture.id === editingCaptureId) : undefined;
 
-  function toggleSelectionMode() {
-    const nextMode = !selectionMode;
-    setSelectionMode(nextMode);
-    if (!nextMode) {
-      setSelectedIds(new Set());
-      setLastRangeAnchorId(null);
+  function startQuickStudy(nextCaptures: Capture[], title: string) {
+    const words = buildFlashcardList(nextCaptures.filter((capture) => capture.status === "done"));
+    if (words.length === 0) return;
+    setQuickStudyTitle(title);
+    setQuickStudyWords(words);
+  }
+
+  function openEditCapture(capture: Capture) {
+    setEditingCaptureId(capture.id);
+    setEditFront(capture.context || (capture.imageData ? "" : capture.text));
+    setEditBack(capture.explanation ?? "");
+  }
+
+  function saveEditedCapture() {
+    if (!editingCapture) return;
+    const front = editFront.trim();
+    const patch: Partial<Capture> = {
+      explanation: editBack.trim(),
+      status: "done",
+      errorMessage: undefined,
+    };
+    if (editingCapture.context || editingCapture.imageData) {
+      patch.context = front;
+    } else {
+      patch.text = front;
     }
+    onUpdateCapture(editingCapture.id, patch);
+    setEditingCaptureId(null);
   }
 
-  function toggleSelected(id: string, event: React.MouseEvent<HTMLButtonElement>) {
-    const index = captures.findIndex((capture) => capture.id === id);
-    const anchorIndex = lastRangeAnchorId ? captures.findIndex((capture) => capture.id === lastRangeAnchorId) : -1;
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (event.shiftKey && index !== -1 && anchorIndex !== -1) {
-        const [start, end] = [Math.min(index, anchorIndex), Math.max(index, anchorIndex)];
-        const rangeIds = captures.slice(start, end + 1).map((capture) => capture.id);
-        const shouldSelectRange = !next.has(id);
-        rangeIds.forEach((rangeId) => {
-          if (shouldSelectRange) next.add(rangeId);
-          else next.delete(rangeId);
-        });
-      } else if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-    setLastRangeAnchorId(id);
-  }
-
-  function deleteSelected() {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    onDeleteCaptures(ids);
-    setSelectedIds(new Set());
+  function toggleStarCapture(capture: Capture) {
+    onUpdateCapture(capture.id, { starred: !capture.starred });
   }
 
   function retryCapture(id: string) {
@@ -1506,20 +1980,15 @@ function SavesView({
             {group.items.map((c) => {
               const explanation = c.explanation ?? "";
               const explanationIsLong = explanation.trim().length > SAVED_CARD_EXPLANATION_LIMIT;
-              const cardExpanded = expandAll || expandedCardIds.has(c.id) || !explanationIsLong;
+              const cardExpanded = expandedCardIds.has(c.id) || !explanationIsLong;
               const explanationPreview = cardExpanded ? explanation : previewText(explanation, SAVED_CARD_EXPLANATION_LIMIT);
 
               return (
                 <div
                   key={c.id}
-                  style={savedCardStyle(colors, selectedIds.has(c.id))}
+                  style={savedCardStyle(colors)}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                    {selectionMode && (
-                      <div style={{ display: "flex", alignItems: "center", paddingTop: 5, flexShrink: 0 }}>
-                        <SelectSaveButton selected={selectedIds.has(c.id)} onToggle={(event) => toggleSelected(c.id, event)} colors={colors} />
-                      </div>
-                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <CapturePreview capture={c} colors={colors} typography={typography} />
 
@@ -1565,7 +2034,7 @@ function SavesView({
                           >
                             {renderExplanation(explanationPreview, colors)}
                           </div>
-                          {explanationIsLong && !expandAll && (
+                          {explanationIsLong && (
                             <button
                               type="button"
                               onClick={() => toggleCardExpanded(c.id)}
@@ -1577,12 +2046,24 @@ function SavesView({
                         </>
                       )}
                     </div>
-                    {!selectionMode && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <CardActionIconButton
+                        label={c.starred ? "Unstar card" : "Star card"}
+                        title={c.starred ? "Unstar card" : "Star card"}
+                        onClick={() => toggleStarCapture(c)}
+                        colors={colors}
+                        active={Boolean(c.starred)}
+                      >
+                        <StarIcon />
+                      </CardActionIconButton>
+                      <CardActionIconButton label="Edit card" title="Edit card" onClick={() => openEditCapture(c)} colors={colors}>
+                        <PencilIcon />
+                      </CardActionIconButton>
                       <SaveDeleteButton
                         onDelete={() => onDeleteCaptures([c.id])}
                         colors={colors}
                       />
-                    )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1594,7 +2075,48 @@ function SavesView({
   );
 
   return (
-    <div>
+    <>
+      {quickStudyWords && (
+        <QuickStudyView
+          words={quickStudyWords}
+          title={quickStudyTitle}
+          onClose={() => setQuickStudyWords(null)}
+          colors={colors}
+        />
+      )}
+      {editingCapture && (
+        <FlashcardPopup title="Edit card" onClose={() => setEditingCaptureId(null)} colors={colors} width={680}>
+          <div style={{ display: "grid", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ color: colors.muted, fontSize: 12, fontWeight: 850, textTransform: "uppercase", letterSpacing: "0.04em" }}>Front</span>
+              <textarea
+                value={editFront}
+                onChange={(event) => setEditFront(event.target.value)}
+                rows={3}
+                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 15, lineHeight: 1.5, resize: "vertical", fontFamily: "inherit", outline: "none" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ color: colors.muted, fontSize: 12, fontWeight: 850, textTransform: "uppercase", letterSpacing: "0.04em" }}>Back</span>
+              <textarea
+                value={editBack}
+                onChange={(event) => setEditBack(event.target.value)}
+                rows={7}
+                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 15, lineHeight: 1.55, resize: "vertical", fontFamily: "inherit", outline: "none" }}
+              />
+            </label>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={() => setEditingCaptureId(null)} style={{ ...subtleButtonStyle(colors, 13) }}>
+                Cancel
+              </button>
+              <button type="button" onClick={saveEditedCapture} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 850, cursor: "pointer" }}>
+                Save
+              </button>
+            </div>
+          </div>
+        </FlashcardPopup>
+      )}
+      <div>
       <div
         style={{
           display: "flex",
@@ -1605,44 +2127,41 @@ function SavesView({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button
-            type="button"
-            onClick={toggleSelectionMode}
-            style={{
-              ...subtleButtonStyle(colors, 13),
-              background: selectionMode ? colors.accent : colors.surfaceAlt,
-              color: selectionMode ? colors.selectedText : colors.text,
-              borderColor: selectionMode ? colors.accent : colors.border,
-            }}
-          >
-            {selectionMode ? "Done" : "Select"}
-          </button>
-          {selectionMode && selectedCount > 0 && (
+          {studyableCaptures.length > 0 && (
             <>
               <button
                 type="button"
-                onClick={deleteSelected}
-                style={{ background: colors.dangerFill, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                onClick={() => startQuickStudy(studyableCaptures, "Quick Study")}
+                style={{ ...subtleButtonStyle(colors, 13) }}
               >
-                Delete {selectedCount}
+                Quick Study
               </button>
+              {starredCaptures.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => startQuickStudy(starredCaptures, "Quick Study Selected")}
+                  style={{ ...subtleButtonStyle(colors, 13), borderColor: colors.accent, color: colors.accent }}
+                >
+                  Quick Study Selected
+                </button>
+              )}
               <button
                 type="button"
-                onClick={toggleSelectionMode}
-                style={{ background: "none", color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                onClick={() => exportFlashcards("anki", buildFlashcardList(studyableCaptures), "saved-cards")}
+                style={{ ...subtleButtonStyle(colors, 13) }}
               >
-                Cancel
+                Export
               </button>
+              {starredCaptures.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => exportFlashcards("anki", buildFlashcardList(starredCaptures), "starred-cards")}
+                  style={{ ...subtleButtonStyle(colors, 13) }}
+                >
+                  Export selected
+                </button>
+              )}
             </>
-          )}
-          {!selectionMode && (
-            <button
-              type="button"
-              onClick={() => setExpandAll((v) => !v)}
-              style={{ ...subtleButtonStyle(colors, 13) }}
-            >
-              {expandAll ? "Collapse" : "Expand all"}
-            </button>
           )}
           {toolbarSummary}
         </div>
@@ -1660,7 +2179,8 @@ function SavesView({
           </div>
         </div>
       ) : cards}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1689,6 +2209,7 @@ function HistoryView({
   captures,
   onDeleteCaptures,
   onRetryCapture,
+  onUpdateCapture,
   colors,
   theme,
   accentColor,
@@ -1697,6 +2218,7 @@ function HistoryView({
   captures: Capture[];
   onDeleteCaptures: (ids: string[]) => void;
   onRetryCapture: (id: string) => void;
+  onUpdateCapture: (id: string, patch: Partial<Capture>) => void;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
@@ -1762,9 +2284,10 @@ function HistoryView({
 
       {selectedCaptures.length > 0 ? (
         <SavesView
-          captures={selectedCaptures}
-          onDeleteCaptures={onDeleteCaptures}
-          onRetryCapture={onRetryCapture}
+            captures={selectedCaptures}
+            onDeleteCaptures={onDeleteCaptures}
+            onRetryCapture={onRetryCapture}
+            onUpdateCapture={onUpdateCapture}
           toolbarSummary={
             <span style={toolbarSummaryStyle(colors)}>
               {selectedDayShortLabel()}
@@ -2273,11 +2796,11 @@ function FlashcardView({
     flipSwapTimerRef.current = window.setTimeout(() => {
       flipSwapTimerRef.current = null;
       setShowAnswer(nextShowAnswer);
-    }, Math.round(FLASHCARD_FLIP_MS * 0.46));
+    }, Math.round(FLASHCARD_FLIP_MS * 0.32));
     flipTimerRef.current = window.setTimeout(() => {
       flipTimerRef.current = null;
       setFlipAnimating(false);
-    }, FLASHCARD_FLIP_MS + 80);
+    }, FLASHCARD_FLIP_MS);
   }
 
   function revealOrToggle() {
@@ -2870,6 +3393,7 @@ function FlashcardPopup({
 function WordsView({
   captures,
   onReviewFlashcard,
+  onUpdateCapture,
   colors,
   theme,
   accentColor,
@@ -2877,6 +3401,7 @@ function WordsView({
 }: {
   captures: Capture[];
   onReviewFlashcard: (word: WordEntry, rating: FsrsRating) => void;
+  onUpdateCapture: (id: string, patch: Partial<Capture>) => void;
   colors: DashboardColors;
   theme: ThemeName;
   accentColor: string;
@@ -2891,7 +3416,6 @@ function WordsView({
   const [newSetName, setNewSetName] = useState("");
   const [showCreateSet, setShowCreateSet] = useState(false);
   const calendarVisible = !useScrolledPast(360);
-  const [expandAll, setExpandAll] = useState(false);
   const [expandedWordIds, setExpandedWordIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
@@ -2899,6 +3423,10 @@ function WordsView({
   const [activeExportButton, setActiveExportButton] = useState<string | null>(null);
   const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
   const [modifyingSetId, setModifyingSetId] = useState<string | null>(null);
+  const [modifyingSetName, setModifyingSetName] = useState("");
+  const [editingSetWord, setEditingSetWord] = useState<WordEntry | null>(null);
+  const [editingSetFront, setEditingSetFront] = useState("");
+  const [editingSetBack, setEditingSetBack] = useState("");
   const [draggedSetId, setDraggedSetId] = useState<string | null>(null);
   const [dragOverSetId, setDragOverSetId] = useState<string | null>(null);
   const [hoveredSetId, setHoveredSetId] = useState<string | null>(null);
@@ -2979,6 +3507,15 @@ function WordsView({
     newSetName.trim()
       && createSetCaptureIds.length > 0,
   );
+
+  useEffect(() => {
+    if (!modifyingSet) {
+      setModifyingSetName("");
+      setEditingSetWord(null);
+      return;
+    }
+    setModifyingSetName(modifyingSet.name);
+  }, [modifyingSet?.id, modifyingSet?.name]);
 
   useEffect(() => {
     const visibleIds = new Set(words.map((word) => word.id));
@@ -3191,6 +3728,54 @@ function WordsView({
     if (setDeleted) setModifyingSetId(null);
   }
 
+  function renameSet(setId: string) {
+    const name = modifyingSetName.trim();
+    if (!name) return;
+    const now = new Date().toISOString();
+    storeSets(sets.map((set) => (
+      set.id === setId ? { ...set, name, updatedAt: now } : set
+    )));
+  }
+
+  function addCaptureIdsToSet(setId: string, ids: string[]) {
+    const captureIds = Array.from(new Set(ids.filter(Boolean)));
+    if (captureIds.length === 0) return;
+    const now = new Date().toISOString();
+    storeSets(sets.map((set) => (
+      set.id === setId
+        ? { ...set, captureIds: Array.from(new Set([...set.captureIds, ...captureIds])), updatedAt: now }
+        : set
+    )));
+  }
+
+  function openSetWordEdit(word: WordEntry) {
+    setEditingSetWord(word);
+    setEditingSetFront(word.word || "Screenshot");
+    setEditingSetBack(word.explanation || "");
+  }
+
+  function saveSetWordEdit() {
+    if (!editingSetWord) return;
+    const front = editingSetFront.trim();
+    const back = editingSetBack.trim();
+    editingSetWord.captureIds.forEach((id) => {
+      const capture = captureById.get(id);
+      if (!capture) return;
+      const patch: Partial<Capture> = {
+        explanation: back,
+        status: "done",
+        errorMessage: undefined,
+      };
+      if (capture.context || capture.imageData) {
+        patch.context = front === "Screenshot" ? "" : front;
+      } else {
+        patch.text = front;
+      }
+      onUpdateCapture(id, patch);
+    });
+    setEditingSetWord(null);
+  }
+
   function pressExportButton(key: string) {
     setActiveExportButton(key);
     window.setTimeout(() => {
@@ -3398,7 +3983,7 @@ function WordsView({
                       onClick={() => { setModifyingSetId(set.id); setOpenSetMenuId(null); }}
                       style={setMenuButtonStyle(`${set.id}:modify`)}
                     >
-                      Modify set
+                      Update set
                     </button>
                     <button
                       type="button"
@@ -3475,7 +4060,7 @@ function WordsView({
   ) : (
     <div>
       {words.map((word) => {
-        const wordExpanded = expandAll || expandedWordIds.has(word.id);
+        const wordExpanded = expandedWordIds.has(word.id);
         const promptIsLong = word.word.trim().length > FLASHCARD_PROMPT_LIMIT;
         const explanationIsLong = Boolean(word.explanation && word.explanation.trim().length > FLASHCARD_EXPLANATION_LIMIT);
         const canExpandCard = promptIsLong || explanationIsLong;
@@ -3516,7 +4101,7 @@ function WordsView({
                     {renderExplanation(explanationPreview, colors)}
                   </div>
                 )}
-                {canExpandCard && !expandAll && (
+                {canExpandCard && (
                   <button
                     type="button"
                     onClick={() => toggleWordExpanded(word.id)}
@@ -3628,8 +4213,34 @@ function WordsView({
       )}
 
       {modifyingSet && (
-        <FlashcardPopup title={`Modify ${modifyingSet.name}`} onClose={() => setModifyingSetId(null)} colors={colors} width={680}>
-          <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
+        <FlashcardPopup title={`Update ${modifyingSet.name}`} onClose={() => setModifyingSetId(null)} colors={colors} width={760}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ color: colors.muted, fontSize: 12, fontWeight: 850, textTransform: "uppercase", letterSpacing: "0.04em" }}>Set name</label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  value={modifyingSetName}
+                  onChange={(event) => setModifyingSetName(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") renameSet(modifyingSet.id); }}
+                  style={{ flex: "1 1 260px", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, outline: "none" }}
+                />
+                <button type="button" onClick={() => renameSet(modifyingSet.id)} style={{ ...subtleButtonStyle(colors, 13), padding: "9px 12px" }}>
+                  Rename
+                </button>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" disabled={sourceCaptures.length === 0} onClick={() => addCaptureIdsToSet(modifyingSet.id, uniqueCaptureIds(sourceCaptures))} style={{ ...subtleButtonStyle(colors, 13), opacity: sourceCaptures.length ? 1 : 0.55, cursor: sourceCaptures.length ? "pointer" : "default" }}>
+                Add current cards
+              </button>
+              {selectedCount > 0 && (
+                <button type="button" onClick={() => addCaptureIdsToSet(modifyingSet.id, uniqueFlashcardCaptureIds(selectedWords))} style={{ ...subtleButtonStyle(colors, 13) }}>
+                  Add selected cards
+                </button>
+              )}
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, margin: "16px 0 14px" }}>
             {modifyingWords.length} {modifyingWords.length === 1 ? "card" : "cards"} in this set. Removing a card only removes it from this set.
           </p>
           {modifyingWords.length === 0 ? (
@@ -3646,24 +4257,44 @@ function WordsView({
                       {previewText(word.explanation || word.exampleText || "No answer yet.", 180)}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => removeWordFromSet(modifyingSet.id, word)}
-                    style={{
-                      background: colors.surface,
-                      color: colors.danger,
-                      border: `1px solid ${colors.dangerBorder}`,
-                      borderRadius: 7,
-                      padding: "7px 10px",
-                      fontSize: 12,
-                      fontWeight: 800,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Remove
-                  </button>
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      onClick={() => openSetWordEdit(word)}
+                      style={{ background: colors.surface, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, padding: "7px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeWordFromSet(modifyingSet.id, word)}
+                      style={{
+                        background: colors.surface,
+                        color: colors.danger,
+                        border: `1px solid ${colors.dangerBorder}`,
+                        borderRadius: 7,
+                        padding: "7px 10px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
               ))}
+            </div>
+          )}
+          {editingSetWord && (
+            <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: 16, paddingTop: 16, display: "grid", gap: 10 }}>
+              <p style={{ color: colors.text, fontSize: 15, fontWeight: 850, margin: 0 }}>Edit card</p>
+              <textarea value={editingSetFront} onChange={(event) => setEditingSetFront(event.target.value)} rows={3} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, lineHeight: 1.5, resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+              <textarea value={editingSetBack} onChange={(event) => setEditingSetBack(event.target.value)} rows={6} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surfaceAlt, color: colors.text, padding: "10px 11px", fontSize: 14, lineHeight: 1.55, resize: "vertical", fontFamily: "inherit", outline: "none" }} />
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button type="button" onClick={() => setEditingSetWord(null)} style={{ ...subtleButtonStyle(colors, 13) }}>Cancel</button>
+                <button type="button" onClick={saveSetWordEdit} style={{ background: colors.accent, color: colors.selectedText, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13, fontWeight: 850, cursor: "pointer" }}>Save card</button>
+              </div>
             </div>
           )}
         </FlashcardPopup>
@@ -4881,6 +5512,25 @@ export default function App() {
     });
   }
 
+  function updateCaptureById(id: string, patch: Partial<Capture>) {
+    let updatedCapture: Capture | null = null;
+    setCaptures((current) => {
+      const next = current.map((capture) => {
+        if (capture.id !== id) return capture;
+        updatedCapture = { ...capture, ...patch };
+        return updatedCapture;
+      });
+      chrome.storage.local.set({ captures: next });
+      return next;
+    });
+
+    if (updatedCapture?.status === "done") {
+      void sendRuntimeMessage<{ saved: boolean }>({ type: "UPSERT_REMOTE_CAPTURE", capture: updatedCapture }).catch((error) => {
+        console.warn("ContextLens remote capture update skipped", error);
+      });
+    }
+  }
+
   function reviewFlashcard(word: WordEntry, rating: FsrsRating) {
     const ids = new Set(word.captureIds);
     const now = new Date();
@@ -5034,6 +5684,7 @@ export default function App() {
             captures={todayCaptures}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
+            onUpdateCapture={updateCaptureById}
             headerAction={
               todayCaptures.length > 0 ? (
                 <button
@@ -5064,13 +5715,14 @@ export default function App() {
             captures={captures}
             onDeleteCaptures={deleteCapturesByIds}
             onRetryCapture={retryCaptureById}
+            onUpdateCapture={updateCaptureById}
             colors={colors}
             theme={theme}
             accentColor={accentColor}
             cardFontSize={cardFontSize}
           />
         )}
-        {view === "words" && <WordsView captures={captures} onReviewFlashcard={reviewFlashcard} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
+        {view === "words" && <WordsView captures={captures} onReviewFlashcard={reviewFlashcard} onUpdateCapture={updateCaptureById} colors={colors} theme={theme} accentColor={accentColor} cardFontSize={cardFontSize} />}
         {view === "settings" && (
           <SettingsView
             account={account}

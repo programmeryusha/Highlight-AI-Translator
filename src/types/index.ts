@@ -17,6 +17,7 @@ export interface Capture {
   fsrsDueAt?: string;
   fsrsLastReviewedAt?: string | null;
   fsrsReviewCount?: number;
+  starred?: boolean;
 }
 
 export interface ChatMessage {
@@ -68,6 +69,7 @@ export type Message =
   | { type: "UPSERT_REMOTE_FLASHCARD_SETS"; sets: FlashcardSet[] }
   | { type: "DELETE_REMOTE_FLASHCARD_SETS"; ids: string[] }
   | { type: "DELETE_REMOTE_CAPTURES"; ids: string[] }
+  | { type: "UPSERT_REMOTE_CAPTURE"; capture: Capture }
   | { type: "REVIEW_FLASHCARDS"; ids: string[]; rating: "again" | "hard" | "good" | "easy" }
   | { type: "OPEN_DASHBOARD" }
   | { type: "ANALOGY"; text: string }

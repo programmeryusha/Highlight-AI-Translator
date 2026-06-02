@@ -869,7 +869,7 @@ async function syncCapturesWithRemote(accountOverride?: ContextLensUser, options
       const imagePreviewData = capture.imagePreviewData?.startsWith("data:")
         ? capture.imagePreviewData
         : (remote.imagePreviewData ?? capture.imagePreviewData);
-      merged.set(capture.id, { ...remote, imageData, imagePreviewData });
+      merged.set(capture.id, { ...remote, imageData, imagePreviewData, starred: capture.starred });
     }
   });
   const captures = Array.from(merged.values()).sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());

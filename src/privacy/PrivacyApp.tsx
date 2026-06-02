@@ -2,7 +2,7 @@ import React from "react";
 
 export default function PrivacyApp() {
   return (
-    <div style={{ maxWidth: 680, margin: "0 auto", padding: "48px 24px 80px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: "#37352f", lineHeight: 1.7 }}>
+    <div style={{ maxWidth: 680, margin: "0 auto", padding: "48px 24px 80px", fontFamily: "'Satoshi', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: "#37352f", lineHeight: 1.7 }}>
       <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>Privacy Policy</h1>
       <p style={{ fontSize: 13, color: "#9b9a97", marginBottom: 40 }}>Last updated: June 2026</p>
 

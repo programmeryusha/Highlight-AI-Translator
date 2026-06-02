@@ -1,8 +1,9 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-05-31-bidi-audio-flashcards-v3";
+const CONTENT_SCRIPT_VERSION = "2026-06-02-noto-satoshi-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
-const ARABIC_FONT_STACK = "'Amiri','Noto Naskh Arabic',ui-serif,Georgia,serif";
+const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
 const HONORIFIC_MARK = "ﷺ";
 const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
 const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
@@ -109,7 +110,7 @@ function ensureBaseStyles() {
   document.head.appendChild(style);
 
   if (!document.querySelector('[data-cl-font]')) {
-    fetch("https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&display=swap")
+    fetch("https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap")
       .then((r) => r.text())
       .then((css) => {
         if (document.querySelector("[data-cl-font]")) return;
@@ -978,7 +979,7 @@ function showSaveBubble(target: RectLike, bounds: RectLike, selectedText: string
     box-sizing: border-box;
     background: #202231;
     color: #f5f6ff;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: ${LATIN_FONT_STACK};
     font-size: ${btnFont};
     line-height: 1;
     font-weight: 700;
@@ -1049,7 +1050,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     box-shadow: ${colors.shadow};
     z-index: 2147483647;
     width: ${widgetWidth}px;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: ${LATIN_FONT_STACK};
     direction: ltr;
     text-align: left;
     overflow: hidden;
@@ -1175,7 +1176,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       z-index: 2147483647;
       width: ${widgetWidth}px;
       ${heightCss}
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: ${LATIN_FONT_STACK};
       direction: ltr;
       text-align: left;
       overflow: hidden;
@@ -2138,7 +2139,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         width: ${contextPanelWidth}px;
         max-height: ${maxHeight}px;
         box-shadow: ${colors.shadow};
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: ${LATIN_FONT_STACK};
         z-index: 2147483647;
         cursor: default;
         box-sizing: border-box;
@@ -2721,7 +2722,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         border-radius: 10px;
         width: ${contextPanelWidth}px;
         box-shadow: ${colors.shadow};
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: ${LATIN_FONT_STACK};
         z-index: 2147483647;
         cursor: default;
         overflow: hidden;
@@ -2905,15 +2906,13 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       if (!dragStart) return;
       if (!selection) {
         dragStart = null;
-        redraw();
+        removeCropOverlay();
         return;
       }
       if (selection.w < 10 || selection.h < 10) {
         dragStart = null;
         selection = null;
-        canvas.style.cursor = "crosshair";
-        cropOverlay!.style.cursor = "crosshair";
-        redraw();
+        removeCropOverlay();
         return;
       }
       dragStart = null;
