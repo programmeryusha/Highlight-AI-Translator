@@ -40,7 +40,7 @@ const CALENDAR_COLUMN_WIDTH = 332;
 const DASHBOARD_INNER_MAX_WIDTH = 1220;
 const EMPTY_STATE_PADDING = 16;
 const CALENDAR_TRANSITION = "240ms cubic-bezier(0.2, 0, 0, 1)";
-const FLASHCARD_FLIP_MS = 300;
+const FLASHCARD_FLIP_MS = 460;
 const LATIN_FONT_STACK = "'Satoshi', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, Arial, serif";
 const FLASHCARD_LATIN_FONT_STACK = LATIN_FONT_STACK;
@@ -300,12 +300,37 @@ function hasRtlText(text: string): boolean {
   return /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/.test(text);
 }
 
+function textScriptMetrics(value: string) {
+  let arabic = 0;
+  let latin = 0;
+  for (const character of value) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) arabic++;
+    else if (/[A-Za-z\u00C0-\u024F]/u.test(character)) latin++;
+  }
+  return { arabic, latin, totalStrong: arabic + latin };
+}
+
 function firstStrongTextDirection(value: string): "ltr" | "rtl" {
   for (const character of value.trim()) {
     if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
     if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
   }
   return "ltr";
+}
+
+function dashboardBlockDirection(value: string): "ltr" | "rtl" {
+  const metrics = textScriptMetrics(value);
+  if (metrics.arabic === 0) return "ltr";
+  if (metrics.latin === 0) return "rtl";
+  return metrics.arabic / Math.max(1, metrics.totalStrong) >= 0.65 ? "rtl" : "ltr";
+}
+
+function isCompactArabicDashboardQuestion(value: string): boolean {
+  const trimmed = value.trim();
+  const metrics = textScriptMetrics(trimmed);
+  if (metrics.arabic === 0 || metrics.latin > 0) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  return trimmed.length <= 32 && words.length <= 3;
 }
 
 function subtleButtonStyle(colors: DashboardColors, fontSize = 13): React.CSSProperties {
@@ -527,7 +552,7 @@ function renderMarkdown(text: string): React.ReactNode {
     }
 
     flushList();
-    const direction = firstStrongTextDirection(trimmed);
+    const direction = dashboardBlockDirection(trimmed);
     nodes.push(
       <p
         key={index}
@@ -650,10 +675,13 @@ function QuestionText({
   fontWeight?: React.CSSProperties["fontWeight"];
 }) {
   const [hovered, setHovered] = useState(false);
-  const direction = firstStrongTextDirection(text);
+  const compactArabicQuestion = isCompactArabicDashboardQuestion(text);
+  const naturalDirection = dashboardBlockDirection(text);
+  const direction = compactArabicQuestion ? "ltr" : naturalDirection;
   const isRtl = direction === "rtl";
-  const effectiveFontSize = isRtl ? Math.round(fontSize * 1.12) : fontSize;
-  const effectiveFontFamily = isRtl ? ARABIC_FONT_STACK : "inherit";
+  const hasArabic = hasRtlText(text);
+  const effectiveFontSize = hasArabic ? Math.round(fontSize * 1.12) : fontSize;
+  const effectiveFontFamily = hasArabic && (compactArabicQuestion || isRtl) ? ARABIC_FONT_STACK : "inherit";
   const baseStyle: React.CSSProperties = {
     fontSize: effectiveFontSize,
     fontFamily: effectiveFontFamily,
@@ -663,7 +691,7 @@ function QuestionText({
     fontWeight,
     direction,
     textAlign: isRtl ? "right" : "left",
-    unicodeBidi: "plaintext",
+    unicodeBidi: compactArabicQuestion ? "isolate" : "plaintext",
     overflowWrap: "break-word",
   };
   if (onClick) {
@@ -735,9 +763,10 @@ function renderExplanation(text: string, colors: DashboardColors, options: { lin
       const body = rest.trim();
       if (EXPL_SILENT.has(label)) {
         if (body) {
-          const isAr = ARABIC_RANGE.test(body);
+          const bodyDirection = dashboardBlockDirection(body);
+          const isAr = bodyDirection === "rtl";
           nodes.push(
-            <p key={i} dir={isAr ? "rtl" : "ltr"} style={{ margin: "3px 0 6px", lineHeight: isAr ? arabicLineHeight : proseLineHeight, direction: isAr ? "rtl" : "ltr", textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit", unicodeBidi: "plaintext" }}>
+            <p key={i} dir={bodyDirection} style={{ margin: "3px 0 6px", lineHeight: isAr ? arabicLineHeight : proseLineHeight, direction: bodyDirection, textAlign: isAr ? "right" : "left", fontFamily: isAr ? ARABIC_FONT_STACK : "inherit", fontSize: isAr ? "1.08em" : "inherit", unicodeBidi: "plaintext" }}>
               {bidiSpan(body)}
             </p>
           );
@@ -754,7 +783,7 @@ function renderExplanation(text: string, colors: DashboardColors, options: { lin
       return;
     }
 
-    const direction = firstStrongTextDirection(line);
+    const direction = dashboardBlockDirection(line);
     nodes.push(
       <p key={i} dir={direction} style={{ margin: "0 0 8px", lineHeight: direction === "rtl" ? arabicLineHeight : proseLineHeight, direction, textAlign: direction === "rtl" ? "right" : "left", unicodeBidi: "plaintext" }}>
         {inlineParts(line)}
@@ -2609,6 +2638,7 @@ function FlashcardView({
   const [revealed, setRevealed] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [flipAnimating, setFlipAnimating] = useState(false);
+  const [flipContentHidden, setFlipContentHidden] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [textScale, setTextScale] = useState(storedFlashcardTextScale);
@@ -2628,6 +2658,7 @@ function FlashcardView({
     setRevealed(false);
     setShowAnswer(false);
     setFlipAnimating(false);
+    setFlipContentHidden(false);
     setCompleted(false);
     setSettingsOpen(false);
   }, [words]);
@@ -2789,17 +2820,21 @@ function FlashcardView({
     clearFlipTimer();
     if (prefersReducedFlashcardMotion()) {
       setFlipAnimating(false);
+      setFlipContentHidden(false);
       setShowAnswer(nextShowAnswer);
       return;
     }
     setFlipAnimating(true);
+    setFlipContentHidden(true);
     flipSwapTimerRef.current = window.setTimeout(() => {
       flipSwapTimerRef.current = null;
       setShowAnswer(nextShowAnswer);
-    }, Math.round(FLASHCARD_FLIP_MS * 0.32));
+      setFlipContentHidden(false);
+    }, Math.round(FLASHCARD_FLIP_MS * 0.24));
     flipTimerRef.current = window.setTimeout(() => {
       flipTimerRef.current = null;
       setFlipAnimating(false);
+      setFlipContentHidden(false);
     }, FLASHCARD_FLIP_MS);
   }
 
@@ -2817,6 +2852,7 @@ function FlashcardView({
     setRevealed(false);
     setShowAnswer(false);
     setFlipAnimating(false);
+    setFlipContentHidden(false);
     setSettingsOpen(false);
   }
 
@@ -2827,6 +2863,7 @@ function FlashcardView({
     setRevealed(false);
     setShowAnswer(false);
     setFlipAnimating(false);
+    setFlipContentHidden(false);
     setSettingsOpen(false);
   }
 
@@ -2837,12 +2874,14 @@ function FlashcardView({
     onReview(currentCard, rating);
     if (index >= deck.length - 1) {
       setCompleted(true);
+      setFlipContentHidden(false);
       return;
     }
     setIndex((current) => current + 1);
     setRevealed(false);
     setShowAnswer(false);
     setFlipAnimating(false);
+    setFlipContentHidden(false);
     setSettingsOpen(false);
   }
 
@@ -2918,8 +2957,11 @@ function FlashcardView({
             box-shadow: ${flashcardShadow};
             box-sizing: border-box;
           }
-          .cl-flashcard-stage[data-flipping="true"] .cl-flashcard-content {
+          .cl-flashcard-stage[data-content-hidden="true"] .cl-flashcard-content {
             opacity: 0;
+          }
+          .cl-flashcard-stage[data-flipping="true"][data-content-hidden="false"] .cl-flashcard-content {
+            z-index: 4;
           }
           .cl-flashcard-stage img {
             -webkit-user-drag: none;
@@ -3076,6 +3118,7 @@ function FlashcardView({
           <div
             className="cl-flashcard-stage"
             data-flipping={String(flipAnimating)}
+            data-content-hidden={String(flipContentHidden)}
             onClick={revealOrToggle}
             style={{
               flex: "1 1 auto",
