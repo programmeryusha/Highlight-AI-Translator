@@ -1939,6 +1939,7 @@ function clearScreenshotReposition() {
 }
 
 function removeCropOverlay(showCamera = true) {
+  finishPendingScreenshotCursorRestore();
   const overlay = cropOverlay as CropOverlayElement | null;
   overlay?.__contextLensCleanup?.();
   cropOverlay = null;
@@ -1994,12 +1995,17 @@ function releaseScreenshotCursorBeforeRemovingOverlay(overlay: HTMLElement) {
   if (body) body.style.cursor = cursor;
   overlay.style.cursor = cursor;
   overlay.style.opacity = "0";
+  overlay.style.pointerEvents = "none";
   overlay.style.transition = "none";
   overlay.querySelectorAll<HTMLElement>("canvas").forEach((element) => {
     element.style.cursor = cursor;
+    element.style.pointerEvents = "none";
   });
 
+  let finished = false;
   const finish = () => {
+    if (finished) return;
+    finished = true;
     screenshotCursorRestoreFrame = null;
     screenshotCursorRestoreCleanup = null;
     overlay.remove();
