@@ -1257,7 +1257,7 @@ async function explainAndSaveScreenshotStream(
     const explanation = await fetchExplanationStream("", context, base64, [], onChunk);
     const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (capture) {
-      await saveCaptureRemoteBestEffort(capture);
+      void saveCaptureRemoteBestEffort(capture);
     }
     await seedChat(id, explanation);
     return { captureId: id, explanation };

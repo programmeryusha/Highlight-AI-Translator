@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-03-stream-ui-v3";
+const CONTENT_SCRIPT_VERSION = "2026-06-03-overlay-actions-v4";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -368,6 +368,29 @@ function streamRuntimeMessage<T>(
 function latestMessageHasAssistantContent(messages: ChatMessage[]) {
   const latest = messages[messages.length - 1];
   return latest?.role === "assistant" && latest.content.trim().length > 0;
+}
+
+function stopUiEventPropagation(event: Event) {
+  event.stopPropagation();
+}
+
+function isolateContextLensUiEvents(element: HTMLElement) {
+  ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup", "touchstart", "touchend"].forEach((eventName) => {
+    element.addEventListener(eventName, stopUiEventPropagation);
+  });
+}
+
+function actionButtonClick(button: HTMLButtonElement, handler: (event: MouseEvent) => void) {
+  button.type = "button";
+  button.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handler(event);
+  });
 }
 
 function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
@@ -1317,7 +1340,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Done";
     closeBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
-    closeBtn.addEventListener("click", removeWidget);
+    actionButtonClick(closeBtn, () => removeWidget());
     widget.replaceChildren(message, closeBtn);
   }
 
@@ -1331,11 +1354,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const signInBtn = document.createElement("button");
     signInBtn.textContent = "Sign In";
     signInBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;`);
-    signInBtn.addEventListener("click", () => { chrome.runtime.openOptionsPage(); removeWidget(); });
+    actionButtonClick(signInBtn, () => { chrome.runtime.openOptionsPage(); removeWidget(); });
     const closeBtn = document.createElement("button");
     closeBtn.textContent = "Dismiss";
     closeBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
-    closeBtn.addEventListener("click", removeWidget);
+    actionButtonClick(closeBtn, () => removeWidget());
     const row = document.createElement("div");
     row.setAttribute("style", "display:flex;gap:0;");
     row.appendChild(signInBtn);
@@ -1570,7 +1593,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       font-weight: 700;
       cursor: pointer;
     `);
-    doneBtn.addEventListener("click", removeWidget);
+    actionButtonClick(doneBtn, () => removeWidget());
 
     const row = document.createElement("div");
     row.setAttribute("style", "display:flex;gap:8px;align-items:center;flex-shrink:0;");
@@ -1617,7 +1640,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }
       if (event.key === "Escape") removeWidget();
     });
-    askBtn.addEventListener("click", askFollowup);
+    actionButtonClick(askBtn, () => askFollowup());
 
     const renderChildren: Node[] = [list];
     const actionRow = document.createElement("div");
@@ -1658,7 +1681,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         hwBtn.style.background = hardWordsColors.background;
         hwBtn.style.borderColor = hardWordsColors.border;
       });
-      hwBtn.addEventListener("click", () => {
+      actionButtonClick(hwBtn, () => {
         hardWordsOpen = !hardWordsOpen;
         renderConversation(captureId, messages, false, loadingText);
       });
@@ -1709,7 +1732,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           analogyBtn.style.background = "transparent";
           analogyBtn.style.borderColor = analogyColors.buttonBorder;
         });
-        analogyBtn.addEventListener("click", () => {
+        actionButtonClick(analogyBtn, () => {
           analogyLoading = true;
           renderConversation(captureId, messages, false);
           sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
@@ -1742,7 +1765,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.06);
         deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.35);
       });
-      deepDiveBtn.addEventListener("click", () => {
+      actionButtonClick(deepDiveBtn, () => {
         widgetDeepDiveActive = true;
         analogyText = "";
         analogyLoading = false;
@@ -2349,7 +2372,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Close";
       closeBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;`);
-      closeBtn.addEventListener("click", () => removeCropOverlay());
+      actionButtonClick(closeBtn, () => removeCropOverlay());
       contextPanel.replaceChildren(message, closeBtn);
     }
 
@@ -2363,11 +2386,11 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       const signInBtn = document.createElement("button");
       signInBtn.textContent = "Sign In";
       signInBtn.setAttribute("style", `background:${colors.accent};color:${colors.accentText};border:none;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;`);
-      signInBtn.addEventListener("click", () => { chrome.runtime.openOptionsPage(); removeCropOverlay(); });
+      actionButtonClick(signInBtn, () => { chrome.runtime.openOptionsPage(); removeCropOverlay(); });
       const closeBtn = document.createElement("button");
       closeBtn.textContent = "Dismiss";
       closeBtn.setAttribute("style", `background:${colors.subtle};color:${colors.text};border:1px solid ${colors.border};border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;`);
-      closeBtn.addEventListener("click", () => removeCropOverlay());
+      actionButtonClick(closeBtn, () => removeCropOverlay());
       const row = document.createElement("div");
       row.setAttribute("style", "display:flex;gap:0;");
       row.appendChild(signInBtn);
@@ -2578,7 +2601,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         font-weight: 600;
         cursor: pointer;
       `);
-      closeBtn.addEventListener("click", () => removeCropOverlay());
+      actionButtonClick(closeBtn, () => removeCropOverlay());
 
       const row = document.createElement("div");
       row.setAttribute("style", "display:flex;gap:8px;align-items:center;flex-shrink:0;");
@@ -2625,7 +2648,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         }
         if (event.key === "Escape") removeCropOverlay();
       });
-      askBtn.addEventListener("click", askFollowup);
+      actionButtonClick(askBtn, () => askFollowup());
 
       const panelChildren: Node[] = [list];
       const actionRow = document.createElement("div");
@@ -2666,7 +2689,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           hwBtn.style.background = hardWordsColors.background;
           hwBtn.style.borderColor = hardWordsColors.border;
         });
-        hwBtn.addEventListener("click", () => {
+        actionButtonClick(hwBtn, () => {
           panelHardWordsOpen = !panelHardWordsOpen;
           renderConversationPanel(captureId, messages, false, loadingText);
         });
@@ -2717,7 +2740,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             analogyBtn.style.background = "transparent";
             analogyBtn.style.borderColor = analogyColors.buttonBorder;
           });
-          analogyBtn.addEventListener("click", () => {
+          actionButtonClick(analogyBtn, () => {
             panelAnalogyLoading = true;
             renderConversationPanel(captureId, messages, false);
             sendRuntimeMessage<{ analogy: string }>({ type: "ANALOGY", text: messages[0].content })
@@ -2750,7 +2773,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           deepDiveBtn.style.background = colorWithAlpha(accentColor, 0.06);
           deepDiveBtn.style.borderColor = colorWithAlpha(accentColor, 0.35);
         });
-        deepDiveBtn.addEventListener("click", () => {
+        actionButtonClick(deepDiveBtn, () => {
           panelDeepDiveActive = true;
           panelAnalogyText = "";
           panelAnalogyLoading = false;
@@ -2889,6 +2912,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }
 
       contextPanel = document.createElement("div");
+      isolateContextLensUiEvents(contextPanel);
       contextPanel.setAttribute("style", `
         position: fixed;
         left: ${contextPanelLeft}px;
@@ -3019,7 +3043,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         cropAndSend(input.value.trim());
       }
 
-      cancelBtn.addEventListener("click", () => {
+      actionButtonClick(cancelBtn, () => {
         removeContextPanelOutsideHandler();
         removeCropOverlay();
       });
