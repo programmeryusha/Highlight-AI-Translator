@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-03-screenshot-retry-v2";
+const CONTENT_SCRIPT_VERSION = "2026-06-03-stream-ui-v3";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -363,6 +363,11 @@ function streamRuntimeMessage<T>(
 
     port.postMessage(message);
   });
+}
+
+function latestMessageHasAssistantContent(messages: ChatMessage[]) {
+  const latest = messages[messages.length - 1];
+  return latest?.role === "assistant" && latest.content.trim().length > 0;
 }
 
 function getShowAnswerImmediately(callback: (enabled: boolean) => void) {
@@ -1495,7 +1500,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
       });
     }
 
-    if (loading) {
+    const showLoadingIndicator = loading && !latestMessageHasAssistantContent(messages);
+    if (showLoadingIndicator) {
       const loadingBlock = document.createElement("div");
       const label = document.createElement("div");
       label.textContent = "AI";
@@ -2502,7 +2508,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         });
       }
 
-      if (loading) {
+      const showLoadingIndicator = loading && !latestMessageHasAssistantContent(messages);
+      if (showLoadingIndicator) {
         const loadingBlock = document.createElement("div");
         const label = document.createElement("div");
         label.textContent = "AI";

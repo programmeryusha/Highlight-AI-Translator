@@ -619,6 +619,7 @@ async function fetchExplanationStream(
   let buffer = "";
   let final = "";
   let streamed = "";
+  let receivedDone = false;
 
   function consumeLine(line: string) {
     if (!line.trim()) return;
@@ -628,6 +629,7 @@ async function fetchExplanationStream(
       onChunk(event.text);
     } else if (event.type === "done") {
       final = event.text ?? streamed;
+      receivedDone = true;
     } else if (event.type === "error") {
       throw new Error(event.text || "Streaming explanation failed.");
     }
@@ -641,10 +643,14 @@ async function fetchExplanationStream(
       buffer = lines.pop() ?? "";
       lines.forEach(consumeLine);
     }
+    if (receivedDone) {
+      void reader.cancel().catch(() => {});
+      break;
+    }
     if (done) break;
   }
 
-  if (buffer.trim()) consumeLine(buffer);
+  if (!receivedDone && buffer.trim()) consumeLine(buffer);
   return final || streamed;
 }
 
