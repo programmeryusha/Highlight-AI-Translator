@@ -249,15 +249,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-async function takeScreenshot(scrollX?: number, scrollY?: number, screenshotId?: number) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+async function takeScreenshot(scrollX?: number, scrollY?: number, screenshotId?: number, targetTabId?: number, targetTabUrl?: string) {
+  const tab = typeof targetTabId === "number"
+    ? await chrome.tabs.get(targetTabId).catch(() => undefined)
+    : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   if (!tab?.id) return;
   const dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
   const overlayMessage: Message = { type: "SHOW_CROP_OVERLAY", imageData: dataUrl, scrollX, scrollY, screenshotId };
   try {
     await chrome.tabs.sendMessage(tab.id, overlayMessage);
   } catch {
-    const injected = await injectContentScript(tab.id, tab.url);
+    const injected = await injectContentScript(tab.id, targetTabUrl ?? tab.url);
     if (injected) {
       try {
         await chrome.tabs.sendMessage(tab.id, overlayMessage);
@@ -316,7 +318,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 // Handle messages from content script and crop page
-chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   if (message.type === "SAVE_HIGHLIGHT") {
     saveHighlight(message.text, message.url, message.title, message.context, message.replaceCaptureId)
       .then(sendResponse)
@@ -324,7 +326,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "TAKE_SCREENSHOT") {
-    void takeScreenshot(message.scrollX, message.scrollY, message.screenshotId);
+    void takeScreenshot(message.scrollX, message.scrollY, message.screenshotId, sender.tab?.id, sender.tab?.url);
   }
   if (message.type === "SAVE_SCREENSHOT") {
     void saveScreenshot(message.imageData, message.context, message.imagePreviewData);

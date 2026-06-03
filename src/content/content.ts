@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-02-noto-satoshi-v1";
+const CONTENT_SCRIPT_VERSION = "2026-06-03-screenshot-retry-v2";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -229,6 +229,7 @@ let cameraButtonHoverScale = 1;
 let cameraButtonPositionFrame: number | null = null;
 const CAMERA_BUTTON_SIZE = 44;
 const CAMERA_BUTTON_MARGIN = 18;
+const CAMERA_BUTTON_SELECTOR = '[data-contextlens-ui="true"][title="Screenshot to explain"]';
 
 function appendToPage(element: HTMLElement) {
   element.setAttribute("data-contextlens-ui", "true");
@@ -844,8 +845,15 @@ function queueCameraButtonPosition() {
   cameraButtonPositionFrame = window.requestAnimationFrame(updateCameraButtonPosition);
 }
 
+function removeOrphanCameraButtons() {
+  document.querySelectorAll(CAMERA_BUTTON_SELECTOR).forEach((element) => {
+    if (element !== cameraBtn) element.remove();
+  });
+}
+
 function createCameraButton() {
   if (cameraBtn) return;
+  removeOrphanCameraButtons();
   const colors = uiColors();
   cameraBtn = document.createElement("div");
   cameraBtn.title = "Screenshot to explain";
@@ -886,6 +894,7 @@ function createCameraButton() {
 
 function removeCameraButton() {
   if (cameraBtn) { cameraBtn.remove(); cameraBtn = null; }
+  removeOrphanCameraButtons();
   cameraButtonHoverScale = 1;
   if (cameraButtonPositionFrame !== null) {
     window.cancelAnimationFrame(cameraButtonPositionFrame);
@@ -1910,6 +1919,7 @@ let cropOverlay: HTMLElement | null = null;
 let screenshotCapturePending = false;
 let screenshotCaptureRequestId: number | null = null;
 let screenshotCaptureSequence = 0;
+const cancelledScreenshotCaptureIds = new Set<number>();
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 let screenshotCursorResetCleanup: (() => void) | null = null;
@@ -1928,6 +1938,7 @@ function clearScreenshotReposition() {
 function removeCropOverlay(showCamera = true) {
   clearScreenshotCursorReset();
   if (showCamera) {
+    if (screenshotCaptureRequestId !== null) cancelledScreenshotCaptureIds.add(screenshotCaptureRequestId);
     screenshotCapturePending = false;
     screenshotCaptureRequestId = null;
   }
@@ -1948,6 +1959,7 @@ function nextScreenshotCaptureId() {
 
 function requestScreenshotCapture(delay = 0) {
   const screenshotId = nextScreenshotCaptureId();
+  cancelledScreenshotCaptureIds.delete(screenshotId);
   screenshotCapturePending = true;
   screenshotCaptureRequestId = screenshotId;
 
@@ -2080,10 +2092,17 @@ function startScreenshotReposition(initialWheel?: WheelEvent) {
 }
 
 function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number; y: number }, screenshotId?: number) {
-  if (typeof screenshotId === "number" && screenshotCaptureRequestId !== screenshotId) return;
+  if (
+    typeof screenshotId === "number"
+    && (cancelledScreenshotCaptureIds.has(screenshotId)
+      || (screenshotCaptureRequestId !== null && screenshotCaptureRequestId !== screenshotId))
+  ) {
+    return;
+  }
   const hadPendingScreenshotCapture = screenshotCapturePending;
   clearScreenshotReposition();
   screenshotCapturePending = false;
+  if (typeof screenshotId === "number") cancelledScreenshotCaptureIds.delete(screenshotId);
   screenshotCaptureRequestId = null;
   if (!hadPendingScreenshotCapture) screenshotLastCursorPoint = null;
   removeCropOverlay(false);
