@@ -446,7 +446,7 @@ function colorsForTheme(theme: ThemeName, accentColor: string): DashboardColors 
   return {
     bg: dark ? "#141413" : "#fff",
     text: dark ? "#f5f2ec" : "#37352f",
-    muted: dark ? "#a9a39a" : "#9b9a97",
+    muted: dark ? "#a9a39a" : "#73706a",
     softText: dark ? "#d4cec5" : "#6b6b6b",
     border: dark ? "#393631" : "#e3e2de",
     subtle: dark ? "#22211f" : "#f0efec",

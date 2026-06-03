@@ -96,6 +96,11 @@ function ensureBaseStyles() {
     }
     .cl-deep-dive-glow   { animation: clDeepDiveGlow 1.5s ease-in-out infinite; }
     .cl-deep-dive-active { filter: drop-shadow(0 0 6px rgba(var(--contextlens-accent-rgb, 37, 99, 235), 0.4)); }
+    [data-contextlens-ui]:focus-visible,
+    [data-contextlens-ui] :focus-visible {
+      outline: 2px solid rgb(var(--contextlens-accent-rgb, 37, 99, 235)) !important;
+      outline-offset: 2px !important;
+    }
     .cl-scroll {
       scrollbar-width: thin;
       scrollbar-color: rgba(148,163,184,0.55) transparent;
@@ -176,6 +181,30 @@ function uiColors() {
     error: dark ? "#fecaca" : "#b91c1c",
   };
 }
+type UiColors = ReturnType<typeof uiColors>;
+
+function neutralActionColors(colors: UiColors) {
+  const dark = appearanceTheme === "dark";
+  return {
+    background: colors.subtle,
+    color: colors.text,
+    border: colors.border,
+    hoverBackground: dark ? "rgba(255,255,255,0.12)" : "rgba(55,53,47,0.1)",
+    hoverBorder: dark ? "rgba(255,255,255,0.24)" : "rgba(55,53,47,0.24)",
+  };
+}
+
+function analogyActionColors() {
+  const dark = appearanceTheme === "dark";
+  return {
+    text: dark ? "#fbbf24" : "#92400e",
+    background: dark ? "rgba(251,191,36,0.08)" : "rgba(146,64,14,0.08)",
+    hoverBackground: dark ? "rgba(251,191,36,0.13)" : "rgba(146,64,14,0.12)",
+    border: dark ? "rgba(251,191,36,0.24)" : "rgba(146,64,14,0.28)",
+    buttonBorder: dark ? "rgba(251,191,36,0.35)" : "rgba(146,64,14,0.4)",
+    hoverButtonBorder: dark ? "rgba(251,191,36,0.5)" : "rgba(146,64,14,0.55)",
+  };
+}
 
 chrome.storage.local.get(["overlay_theme", "accent_color", "card_font_size"], (r) => {
   cardFontSize = r.card_font_size ?? "md";
@@ -202,6 +231,7 @@ const CAMERA_BUTTON_SIZE = 44;
 const CAMERA_BUTTON_MARGIN = 18;
 
 function appendToPage(element: HTMLElement) {
+  element.setAttribute("data-contextlens-ui", "true");
   (document.body ?? document.documentElement).appendChild(element);
 }
 
@@ -1605,11 +1635,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
     if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialHardWords.length > 0) {
       const hwBtn = document.createElement("button");
       hwBtn.textContent = hardWordsOpen ? "Back" : "📘 Hard Words";
+      const hardWordsColors = neutralActionColors(colors);
       const hwBase = `
         align-self: flex-start;
-        background: rgba(255,255,255,0.075);
-        color: #e5e7f0;
-        border: 1px solid rgba(255,255,255,0.2);
+        background: ${hardWordsColors.background};
+        color: ${hardWordsColors.color};
+        border: 1px solid ${hardWordsColors.border};
         border-radius: 6px;
         padding: 5px 10px;
         font-size: 12px;
@@ -1619,12 +1650,12 @@ function showContextInput(x: number, y: number, selectedText: string) {
       `;
       hwBtn.setAttribute("style", hwBase);
       hwBtn.addEventListener("mouseenter", () => {
-        hwBtn.style.background = "rgba(255,255,255,0.12)";
-        hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
+        hwBtn.style.background = hardWordsColors.hoverBackground;
+        hwBtn.style.borderColor = hardWordsColors.hoverBorder;
       });
       hwBtn.addEventListener("mouseleave", () => {
-        hwBtn.style.background = "rgba(255,255,255,0.075)";
-        hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
+        hwBtn.style.background = hardWordsColors.background;
+        hwBtn.style.borderColor = hardWordsColors.border;
       });
       hwBtn.addEventListener("click", () => {
         hardWordsOpen = !hardWordsOpen;
@@ -1634,6 +1665,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     }
 
     if (!loading && messages.length === 1 && messages[0].role === "assistant") {
+      const analogyColors = analogyActionColors();
       if (analogyLoading) {
         const analogyStatus = document.createElement("div");
         analogyStatus.textContent = "Finding an analogy…";
@@ -1644,10 +1676,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyBox.textContent = analogyText;
         analogyBox.setAttribute("style", `
           flex-shrink: 0;
-          background: rgba(251,191,36,0.08);
-          border: 1px solid rgba(251,191,36,0.2);
+          background: ${analogyColors.background};
+          border: 1px solid ${analogyColors.border};
           border-radius: 7px;
-          color: #fbbf24;
+          color: ${analogyColors.text};
           font-size: 14px;
           line-height: 1.6;
           padding: 9px 11px;
@@ -1659,8 +1691,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyBtn.setAttribute("style", `
           align-self: flex-start;
           background: transparent;
-          color: #fbbf24;
-          border: 1px solid rgba(251,191,36,0.35);
+          color: ${analogyColors.text};
+          border: 1px solid ${analogyColors.buttonBorder};
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -1668,6 +1700,14 @@ function showContextInput(x: number, y: number, selectedText: string) {
           cursor: pointer;
           letter-spacing: 0.02em;
         `);
+        analogyBtn.addEventListener("mouseenter", () => {
+          analogyBtn.style.background = analogyColors.hoverBackground;
+          analogyBtn.style.borderColor = analogyColors.hoverButtonBorder;
+        });
+        analogyBtn.addEventListener("mouseleave", () => {
+          analogyBtn.style.background = "transparent";
+          analogyBtn.style.borderColor = analogyColors.buttonBorder;
+        });
         analogyBtn.addEventListener("click", () => {
           analogyLoading = true;
           renderConversation(captureId, messages, false);
@@ -2563,11 +2603,12 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       if (!loading && messages.length === 1 && messages[0].role === "assistant" && initialPanelHardWords.length > 0) {
         const hwBtn = document.createElement("button");
         hwBtn.textContent = panelHardWordsOpen ? "Back" : "📘 Hard Words";
+        const hardWordsColors = neutralActionColors(colors);
         const hwBase = `
           align-self: flex-start;
-          background: rgba(255,255,255,0.075);
-          color: #e5e7f0;
-          border: 1px solid rgba(255,255,255,0.2);
+          background: ${hardWordsColors.background};
+          color: ${hardWordsColors.color};
+          border: 1px solid ${hardWordsColors.border};
           border-radius: 6px;
           padding: 5px 10px;
           font-size: 12px;
@@ -2577,12 +2618,12 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         `;
         hwBtn.setAttribute("style", hwBase);
         hwBtn.addEventListener("mouseenter", () => {
-          hwBtn.style.background = "rgba(255,255,255,0.12)";
-          hwBtn.style.borderColor = "rgba(255,255,255,0.32)";
+          hwBtn.style.background = hardWordsColors.hoverBackground;
+          hwBtn.style.borderColor = hardWordsColors.hoverBorder;
         });
         hwBtn.addEventListener("mouseleave", () => {
-          hwBtn.style.background = "rgba(255,255,255,0.075)";
-          hwBtn.style.borderColor = "rgba(255,255,255,0.2)";
+          hwBtn.style.background = hardWordsColors.background;
+          hwBtn.style.borderColor = hardWordsColors.border;
         });
         hwBtn.addEventListener("click", () => {
           panelHardWordsOpen = !panelHardWordsOpen;
@@ -2592,6 +2633,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }
 
       if (!loading && messages.length === 1 && messages[0].role === "assistant") {
+        const analogyColors = analogyActionColors();
         if (panelAnalogyLoading) {
           const analogyStatus = document.createElement("div");
           analogyStatus.textContent = "Finding an analogy…";
@@ -2602,10 +2644,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           analogyBox.textContent = panelAnalogyText;
           analogyBox.setAttribute("style", `
             flex-shrink: 0;
-            background: rgba(251,191,36,0.08);
-            border: 1px solid rgba(251,191,36,0.2);
+            background: ${analogyColors.background};
+            border: 1px solid ${analogyColors.border};
             border-radius: 7px;
-            color: #fbbf24;
+            color: ${analogyColors.text};
             font-size: 14px;
             line-height: 1.6;
             padding: 9px 11px;
@@ -2617,8 +2659,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           analogyBtn.setAttribute("style", `
             align-self: flex-start;
             background: transparent;
-            color: #fbbf24;
-            border: 1px solid rgba(251,191,36,0.35);
+            color: ${analogyColors.text};
+            border: 1px solid ${analogyColors.buttonBorder};
             border-radius: 6px;
             padding: 5px 10px;
             font-size: 12px;
@@ -2626,6 +2668,14 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             cursor: pointer;
             letter-spacing: 0.02em;
           `);
+          analogyBtn.addEventListener("mouseenter", () => {
+            analogyBtn.style.background = analogyColors.hoverBackground;
+            analogyBtn.style.borderColor = analogyColors.hoverButtonBorder;
+          });
+          analogyBtn.addEventListener("mouseleave", () => {
+            analogyBtn.style.background = "transparent";
+            analogyBtn.style.borderColor = analogyColors.buttonBorder;
+          });
           analogyBtn.addEventListener("click", () => {
             panelAnalogyLoading = true;
             renderConversationPanel(captureId, messages, false);

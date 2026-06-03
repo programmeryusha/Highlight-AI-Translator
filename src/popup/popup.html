@@ -11,6 +11,8 @@
       html[data-theme="light"] { background: #fff; color-scheme: light; }
       body { width: 280px; background: #171717; color: #f4f1ea; font-family: 'Satoshi', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
       html[data-theme="light"] body { background: #fff; color: #37352f; }
+      :focus-visible { outline: 2px solid #2563eb !important; outline-offset: 2px !important; }
+      html:not([data-theme="light"]) :focus-visible { outline-color: #38bdf8; }
     </style>
   </head>
   <body>
