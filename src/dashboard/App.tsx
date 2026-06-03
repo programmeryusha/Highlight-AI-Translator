@@ -2759,16 +2759,16 @@ function FlashcardView({
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         goNext();
-      } else if (event.key === "1" && revealed && showAnswer && !flipAnimating) {
+      } else if (event.key === "1" && revealed && showAnswer && !flipContentHidden) {
         event.preventDefault();
         rate("again");
-      } else if (event.key === "2" && revealed && showAnswer && !flipAnimating) {
+      } else if (event.key === "2" && revealed && showAnswer && !flipContentHidden) {
         event.preventDefault();
         rate("hard");
-      } else if (event.key === "3" && revealed && showAnswer && !flipAnimating) {
+      } else if (event.key === "3" && revealed && showAnswer && !flipContentHidden) {
         event.preventDefault();
         rate("good");
-      } else if (event.key === "4" && revealed && showAnswer && !flipAnimating) {
+      } else if (event.key === "4" && revealed && showAnswer && !flipContentHidden) {
         event.preventDefault();
         rate("easy");
       }
@@ -2794,8 +2794,8 @@ function FlashcardView({
   const flashcardSurface = colors.surface === "#fff" ? "#ffffff" : colors.surface;
   const flashcardBorder = colors.surface === "#fff" ? "rgba(15, 23, 42, 0.09)" : colors.border;
   const flashcardShadow = colors.surface === "#fff"
-    ? "0 4px 16px rgba(15, 23, 42, 0.04), 0 8px 32px rgba(15, 23, 42, 0.08)"
-    : "0 4px 16px rgba(0, 0, 0, 0.16), 0 8px 32px rgba(0, 0, 0, 0.22)";
+    ? "0 3px 12px rgba(15, 23, 42, 0.035), 0 6px 22px rgba(15, 23, 42, 0.06)"
+    : "0 3px 12px rgba(0, 0, 0, 0.12), 0 6px 22px rgba(0, 0, 0, 0.18)";
   const imageReady = !card.imageData || cardImage.ready || decodedImageUrls.has(card.imageData) || Boolean(imageCacheRef.current.get(card.imageData)?.complete && imageCacheRef.current.get(card.imageData)?.naturalWidth);
   const ratingStyles: Record<FsrsRating, { color: string; soft: string; label: string }> = {
     again: { color: "#dc2626", soft: "rgba(220, 38, 38, 0.07)", label: "Again" },
@@ -2803,7 +2803,7 @@ function FlashcardView({
     good: { color: "#059669", soft: "rgba(5, 150, 105, 0.08)", label: "Good" },
     easy: { color: "#2563eb", soft: "rgba(37, 99, 235, 0.07)", label: "Easy" },
   };
-  const ratingsVisible = revealed && showAnswer && !flipAnimating;
+  const ratingsVisible = revealed && showAnswer && !flipContentHidden;
 
   function clearFlipTimer() {
     if (flipSwapTimerRef.current !== null) {
@@ -2830,7 +2830,7 @@ function FlashcardView({
       flipSwapTimerRef.current = null;
       setShowAnswer(nextShowAnswer);
       setFlipContentHidden(false);
-    }, Math.round(FLASHCARD_FLIP_MS * 0.24));
+    }, Math.round(FLASHCARD_FLIP_MS * 0.38));
     flipTimerRef.current = window.setTimeout(() => {
       flipTimerRef.current = null;
       setFlipAnimating(false);
@@ -2868,7 +2868,7 @@ function FlashcardView({
   }
 
   function rate(rating: FsrsRating) {
-    if (completed || flipAnimating) return;
+    if (completed || flipContentHidden) return;
     clearFlipTimer();
     const currentCard = deck[index];
     onReview(currentCard, rating);
@@ -2907,7 +2907,7 @@ function FlashcardView({
             to { transform: rotateX(-180deg); }
           }
           .cl-flashcard-stage {
-            perspective: 2200px;
+            perspective: 2800px;
             overflow: visible;
             user-select: none;
             -webkit-user-select: none;
