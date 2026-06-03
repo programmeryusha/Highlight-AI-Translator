@@ -877,22 +877,8 @@ function createCameraButton() {
   });
   cameraBtn.addEventListener("click", (event) => {
     rememberScreenshotCursorPoint(event);
-    screenshotCapturePending = true;
     cameraBtn!.style.display = "none";
-    window.setTimeout(() => {
-      chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
-        if (chrome.runtime.lastError && cameraBtn) {
-          screenshotCapturePending = false;
-          cameraBtn.style.display = "";
-        }
-      });
-    }, 80);
-    window.setTimeout(() => {
-      if (screenshotCapturePending && !cropOverlay && cameraBtn) {
-        screenshotCapturePending = false;
-        cameraBtn.style.display = "";
-      }
-    }, 4000);
+    requestScreenshotCapture(80);
   });
   appendToPage(cameraBtn);
   queueCameraButtonPosition();
@@ -1922,6 +1908,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
 // Crop overlay state
 let cropOverlay: HTMLElement | null = null;
 let screenshotCapturePending = false;
+let screenshotCaptureRequestId: number | null = null;
+let screenshotCaptureSequence = 0;
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 let screenshotCursorResetCleanup: (() => void) | null = null;
@@ -1939,6 +1927,10 @@ function clearScreenshotReposition() {
 
 function removeCropOverlay(showCamera = true) {
   clearScreenshotCursorReset();
+  if (showCamera) {
+    screenshotCapturePending = false;
+    screenshotCaptureRequestId = null;
+  }
   const overlay = cropOverlay as CropOverlayElement | null;
   overlay?.__contextLensCleanup?.();
   if (overlay) {
@@ -1947,6 +1939,39 @@ function removeCropOverlay(showCamera = true) {
   }
   if (showCamera && cameraBtn) cameraBtn.style.display = "";
   if (showCamera && overlay) resetCursorAfterScreenshotMode();
+}
+
+function nextScreenshotCaptureId() {
+  screenshotCaptureSequence = screenshotCaptureSequence >= Number.MAX_SAFE_INTEGER ? 1 : screenshotCaptureSequence + 1;
+  return screenshotCaptureSequence;
+}
+
+function requestScreenshotCapture(delay = 0) {
+  const screenshotId = nextScreenshotCaptureId();
+  screenshotCapturePending = true;
+  screenshotCaptureRequestId = screenshotId;
+
+  window.setTimeout(() => {
+    if (screenshotCaptureRequestId !== screenshotId) return;
+    chrome.runtime.sendMessage({
+      type: "TAKE_SCREENSHOT",
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      screenshotId,
+    } as Message, () => {
+      if (!chrome.runtime.lastError || screenshotCaptureRequestId !== screenshotId) return;
+      screenshotCapturePending = false;
+      screenshotCaptureRequestId = null;
+      if (cameraBtn) cameraBtn.style.display = "";
+    });
+  }, delay);
+
+  window.setTimeout(() => {
+    if (screenshotCaptureRequestId !== screenshotId || !screenshotCapturePending || cropOverlay || !cameraBtn) return;
+    screenshotCapturePending = false;
+    screenshotCaptureRequestId = null;
+    cameraBtn.style.display = "";
+  }, 4000);
 }
 
 function rememberScreenshotCursorPoint(event: Pick<MouseEvent, "clientX" | "clientY">) {
@@ -2020,19 +2045,7 @@ function recaptureScreenshotAfterScroll(delay = 450) {
     screenshotRepositionCleanup?.();
     screenshotRepositionCleanup = null;
     if (cameraBtn) cameraBtn.style.display = "none";
-    screenshotCapturePending = true;
-    chrome.runtime.sendMessage({ type: "TAKE_SCREENSHOT", scrollX: window.scrollX, scrollY: window.scrollY } as Message, () => {
-      if (chrome.runtime.lastError && cameraBtn) {
-        screenshotCapturePending = false;
-        cameraBtn.style.display = "";
-      }
-    });
-    window.setTimeout(() => {
-      if (screenshotCapturePending && !cropOverlay && cameraBtn) {
-        screenshotCapturePending = false;
-        cameraBtn.style.display = "";
-      }
-    }, 4000);
+    requestScreenshotCapture();
   }, delay);
 }
 
@@ -2066,10 +2079,12 @@ function startScreenshotReposition(initialWheel?: WheelEvent) {
   recaptureScreenshotAfterScroll();
 }
 
-function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number; y: number }) {
+function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number; y: number }, screenshotId?: number) {
+  if (typeof screenshotId === "number" && screenshotCaptureRequestId !== screenshotId) return;
   const hadPendingScreenshotCapture = screenshotCapturePending;
   clearScreenshotReposition();
   screenshotCapturePending = false;
+  screenshotCaptureRequestId = null;
   if (!hadPendingScreenshotCapture) screenshotLastCursorPoint = null;
   removeCropOverlay(false);
   if (cameraBtn) cameraBtn.style.display = "none";
@@ -2211,7 +2226,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
 
     cropCleanupTasks.push(removeContextPanelOutsideHandler);
 
-    function getPos(e: MouseEvent) {
+    function getPos(e: Pick<MouseEvent, "clientX" | "clientY">) {
       const rect = canvas.getBoundingClientRect();
       return {
         x: (e.clientX - rect.left) * (canvas.width / rect.width),
@@ -3018,17 +3033,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       }, 50);
     }
 
-    canvas.addEventListener("mousedown", (e) => {
-      if (contextPanel) return;
-      e.preventDefault();
-      dragStart = getPos(e);
-      selection = null;
-      redraw();
-    });
+    let dragPointerId: number | null = null;
 
-    canvas.addEventListener("mousemove", (e) => {
-      if (!dragStart || contextPanel) return;
-      const pos = getPos(e);
+    function updateSelection(pos: { x: number; y: number }) {
+      if (!dragStart) return;
       selection = {
         x: Math.min(dragStart.x, pos.x),
         y: Math.min(dragStart.y, pos.y),
@@ -3036,9 +3044,9 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         h: Math.abs(pos.y - dragStart.y),
       };
       redraw();
-    });
+    }
 
-    canvas.addEventListener("mouseup", () => {
+    function finishSelection() {
       if (!dragStart) return;
       if (!selection) {
         dragStart = null;
@@ -3055,6 +3063,52 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       canvas.style.cursor = "default";
       cropOverlay!.style.cursor = "default";
       showContextPanel(selection);
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      if (contextPanel || !e.isPrimary || e.button !== 0) return;
+      e.preventDefault();
+      dragPointerId = e.pointerId;
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture can fail if the page changes underneath the event.
+      }
+      dragStart = getPos(e);
+      selection = null;
+      redraw();
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      if (dragPointerId !== e.pointerId || !dragStart || contextPanel) return;
+      e.preventDefault();
+      updateSelection(getPos(e));
+    });
+
+    canvas.addEventListener("pointerup", (e) => {
+      if (dragPointerId !== e.pointerId) return;
+      e.preventDefault();
+      updateSelection(getPos(e));
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignore release failures from already-cancelled captures.
+      }
+      dragPointerId = null;
+      finishSelection();
+    });
+
+    canvas.addEventListener("pointercancel", (e) => {
+      if (dragPointerId !== e.pointerId) return;
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignore release failures from already-cancelled captures.
+      }
+      dragPointerId = null;
+      dragStart = null;
+      selection = null;
+      redraw();
     });
   };
   img.src = screenshotDataUrl;
@@ -3075,6 +3129,7 @@ const runtimeMessageHandler = (message: Message) => {
       typeof message.scrollX === "number" && typeof message.scrollY === "number"
         ? { x: message.scrollX, y: message.scrollY }
         : undefined,
+      message.screenshotId,
     );
   }
 };

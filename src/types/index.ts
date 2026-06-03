@@ -52,8 +52,8 @@ export interface ContextLensUser {
 export type Message =
   | { type: "SAVE_HIGHLIGHT"; text: string; url: string; title: string; context: string; replaceCaptureId?: string }
   | { type: "SHOW_CONTEXT_INPUT"; text: string }
-  | { type: "TAKE_SCREENSHOT"; scrollX?: number; scrollY?: number }
-  | { type: "SHOW_CROP_OVERLAY"; imageData: string; scrollX?: number; scrollY?: number }
+  | { type: "TAKE_SCREENSHOT"; scrollX?: number; scrollY?: number; screenshotId?: number }
+  | { type: "SHOW_CROP_OVERLAY"; imageData: string; scrollX?: number; scrollY?: number; screenshotId?: number }
   | { type: "SAVE_SCREENSHOT"; imageData: string; imagePreviewData?: string; context: string }
   | { type: "EXPLAIN_SCREENSHOT"; imageData: string; imagePreviewData?: string; context: string; replaceCaptureId?: string }
   | { type: "RETRY_CAPTURE"; captureId: string }

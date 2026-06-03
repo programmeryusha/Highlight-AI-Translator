@@ -249,11 +249,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-async function takeScreenshot(scrollX?: number, scrollY?: number) {
+async function takeScreenshot(scrollX?: number, scrollY?: number, screenshotId?: number) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   const dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
-  const overlayMessage = { type: "SHOW_CROP_OVERLAY", imageData: dataUrl, scrollX, scrollY };
+  const overlayMessage: Message = { type: "SHOW_CROP_OVERLAY", imageData: dataUrl, scrollX, scrollY, screenshotId };
   try {
     await chrome.tabs.sendMessage(tab.id, overlayMessage);
   } catch {
@@ -324,7 +324,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     return true;
   }
   if (message.type === "TAKE_SCREENSHOT") {
-    void takeScreenshot(message.scrollX, message.scrollY);
+    void takeScreenshot(message.scrollX, message.scrollY, message.screenshotId);
   }
   if (message.type === "SAVE_SCREENSHOT") {
     void saveScreenshot(message.imageData, message.context, message.imagePreviewData);
