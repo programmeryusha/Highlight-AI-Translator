@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-03-stream-render-v5";
+const CONTENT_SCRIPT_VERSION = "2026-06-03-stream-render-v6";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -393,19 +393,46 @@ function actionButtonClick(button: HTMLButtonElement, handler: (event: MouseEven
   });
 }
 
-type StreamRenderScheduler = ((text: string) => void) & { cancel: () => void };
+type StreamRenderScheduler = ((text: string) => void) & {
+  cancel: () => void;
+  finish: (afterStreamPaint: () => void) => void;
+};
 
 function createStreamRenderScheduler(render: (text: string) => void): StreamRenderScheduler {
   let frame: number | null = null;
-  let latest = "";
+  let finalFrame: number | null = null;
+  let finishing: (() => void) | null = null;
+  const queue: string[] = [];
+
+  const requestPump = () => {
+    if (frame !== null) return;
+    frame = requestAnimationFrame(pump);
+  };
+
+  const pump = () => {
+    frame = null;
+    const next = queue.shift();
+    if (next !== undefined) render(next);
+
+    if (queue.length > 0) {
+      requestPump();
+      return;
+    }
+
+    const finish = finishing;
+    finishing = null;
+    if (finish) {
+      finalFrame = requestAnimationFrame(() => {
+        finalFrame = null;
+        finish();
+      });
+    }
+  };
 
   const schedule = ((text: string) => {
-    latest = text;
-    if (frame !== null) return;
-    frame = requestAnimationFrame(() => {
-      frame = null;
-      render(latest);
-    });
+    if (queue[queue.length - 1] === text) return;
+    queue.push(text);
+    requestPump();
   }) as StreamRenderScheduler;
 
   schedule.cancel = () => {
@@ -413,6 +440,23 @@ function createStreamRenderScheduler(render: (text: string) => void): StreamRend
       cancelAnimationFrame(frame);
       frame = null;
     }
+    if (finalFrame !== null) {
+      cancelAnimationFrame(finalFrame);
+      finalFrame = null;
+    }
+    queue.length = 0;
+    finishing = null;
+  };
+
+  schedule.finish = (afterStreamPaint) => {
+    finishing = afterStreamPaint;
+    if (queue.length > 0 || frame !== null) {
+      requestPump();
+      return;
+    }
+
+    finishing = null;
+    afterStreamPaint();
   };
 
   return schedule;
@@ -1663,8 +1707,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
         },
       })
         .then((response) => {
-          renderStream.cancel();
-          renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
+          renderStream.finish(() => {
+            renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
+          });
         })
         .catch((error) => {
           renderStream.cancel();
@@ -1841,10 +1886,11 @@ function showContextInput(x: number, y: number, selectedText: string) {
           timeout,
         ])
           .then((response) => {
-            renderStream.cancel();
-            widget?.classList.remove("cl-deep-dive-glow");
-            widget?.classList.add("cl-deep-dive-active");
-            renderConversation(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
+            renderStream.finish(() => {
+              widget?.classList.remove("cl-deep-dive-glow");
+              widget?.classList.add("cl-deep-dive-active");
+              renderConversation(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
+            });
           })
           .catch((error: Error) => {
             renderStream.cancel();
@@ -1914,8 +1960,9 @@ function showContextInput(x: number, y: number, selectedText: string) {
         },
       })
         .then((response) => {
-          renderStream.cancel();
-          renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]);
+          renderStream.finish(() => {
+            renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]);
+          });
         })
         .catch((error) => {
           renderStream.cancel();
@@ -2694,8 +2741,9 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           },
         })
           .then((response) => {
-            renderStream.cancel();
-            renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
+            renderStream.finish(() => {
+              renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
+            });
           })
           .catch((error) => {
             renderStream.cancel();
@@ -2872,10 +2920,11 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             timeout,
           ])
             .then((response) => {
-              renderStream.cancel();
-              contextPanel?.classList.remove("cl-deep-dive-glow");
-              contextPanel?.classList.add("cl-deep-dive-active");
-              renderConversationPanel(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
+              renderStream.finish(() => {
+                contextPanel?.classList.remove("cl-deep-dive-glow");
+                contextPanel?.classList.add("cl-deep-dive-active");
+                renderConversationPanel(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
+              });
             })
             .catch((error: Error) => {
               renderStream.cancel();
@@ -2951,8 +3000,9 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             },
           })
             .then((response) => {
-              renderStream.cancel();
-              renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]);
+              renderStream.finish(() => {
+                renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]);
+              });
             })
             .catch((error) => {
               renderStream.cancel();
