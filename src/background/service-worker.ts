@@ -58,6 +58,13 @@ interface ExplainOptions {
   messages?: ChatMessage[];
 }
 
+function replaceAssistantMessages(messages: ChatMessage[], assistantContent: string): ChatMessage[] {
+  return [
+    ...messages.filter((message) => message.role === "user"),
+    { role: "assistant", content: assistantContent },
+  ];
+}
+
 function normalizePageUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -1401,9 +1408,7 @@ async function deepDive(captureId: string, fallback: CaptureFallback = {}): Prom
   if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
   await markDeepDiveCapture(captureId);
 
-  const messages: ChatMessage[] = hasFollowup
-    ? [...prior, { role: "assistant", content: explanation }]
-    : [{ role: "assistant", content: explanation }];
+  const messages = replaceAssistantMessages(hasFollowup ? prior : [], explanation);
   await chrome.storage.local.set({ [chatKey]: messages });
 
   return { explanation, messages };
@@ -1436,9 +1441,7 @@ async function deepDiveStream(
   if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
   await markDeepDiveCapture(captureId);
 
-  const messages: ChatMessage[] = hasFollowup
-    ? [...prior, { role: "assistant", content: explanation }]
-    : [{ role: "assistant", content: explanation }];
+  const messages = replaceAssistantMessages(hasFollowup ? prior : [], explanation);
   await chrome.storage.local.set({ [chatKey]: messages });
 
   return { explanation, messages };
