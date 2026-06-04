@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v4";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-baseline-click-no-autoscroll-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -2165,8 +2165,6 @@ const cancelledScreenshotCaptureIds = new Set<number>();
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 let screenshotCursorResetCleanup: (() => void) | null = null;
-let activeScreenshotCursorCleanup: (() => void) | null = null;
-let pendingScreenshotCancelCleanup: (() => void) | null = null;
 let screenshotLastCursorPoint: { x: number; y: number } | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
 
@@ -2179,62 +2177,7 @@ function clearScreenshotReposition() {
   screenshotRepositionCleanup = null;
 }
 
-function clearPendingScreenshotCancel() {
-  pendingScreenshotCancelCleanup?.();
-  pendingScreenshotCancelCleanup = null;
-}
-
-function clearActiveScreenshotCursor() {
-  activeScreenshotCursorCleanup?.();
-  activeScreenshotCursorCleanup = null;
-}
-
-function showActiveScreenshotCursor() {
-  clearScreenshotCursorReset();
-  clearActiveScreenshotCursor();
-
-  const layer = document.createElement("div");
-  layer.setAttribute("aria-hidden", "true");
-  layer.setAttribute("style", `
-    position: fixed;
-    inset: 0;
-    z-index: 2147483646;
-    background: transparent;
-    cursor: crosshair !important;
-    pointer-events: auto;
-    user-select: none;
-    touch-action: none;
-  `);
-
-  let pointerStart: { x: number; y: number } | null = null;
-  let pointerMoved = false;
-  layer.addEventListener("pointerdown", (event) => {
-    pointerStart = { x: event.clientX, y: event.clientY };
-    pointerMoved = false;
-  });
-  layer.addEventListener("pointermove", (event) => {
-    if (!pointerStart) return;
-    pointerMoved ||= Math.abs(event.clientX - pointerStart.x) > 6 || Math.abs(event.clientY - pointerStart.y) > 6;
-  });
-  layer.addEventListener("click", (event) => {
-    if (pointerMoved) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    rememberScreenshotCursorPoint(event);
-    cancelPendingScreenshotCapture();
-  });
-
-  appendToPage(layer);
-  activeScreenshotCursorCleanup = () => {
-    layer.remove();
-    activeScreenshotCursorCleanup = null;
-  };
-}
-
 function removeCropOverlay(showCamera = true) {
-  const hadPendingScreenshotCapture = screenshotCapturePending || screenshotCaptureRequestId !== null;
-  clearPendingScreenshotCancel();
-  clearActiveScreenshotCursor();
   clearScreenshotCursorReset();
   if (showCamera) {
     if (screenshotCaptureRequestId !== null) cancelledScreenshotCaptureIds.add(screenshotCaptureRequestId);
@@ -2248,7 +2191,7 @@ function removeCropOverlay(showCamera = true) {
     cropOverlay = null;
   }
   if (showCamera && cameraBtn) cameraBtn.style.display = "";
-  if (showCamera && (overlay || hadPendingScreenshotCapture)) resetCursorAfterScreenshotMode();
+  if (showCamera && overlay) resetCursorAfterScreenshotMode();
 }
 
 function nextScreenshotCaptureId() {
@@ -2256,69 +2199,11 @@ function nextScreenshotCaptureId() {
   return screenshotCaptureSequence;
 }
 
-function finishPendingScreenshotCapture(
-  screenshotId: number,
-  options: { markCancelled?: boolean; resetCursor?: boolean } = {},
-) {
-  if (screenshotCaptureRequestId !== screenshotId) return false;
-  if (options.markCancelled) cancelledScreenshotCaptureIds.add(screenshotId);
-  screenshotCapturePending = false;
-  screenshotCaptureRequestId = null;
-  clearPendingScreenshotCancel();
-  clearActiveScreenshotCursor();
-  if (cameraBtn) cameraBtn.style.display = "";
-  if (options.resetCursor) resetCursorAfterScreenshotMode();
-  return true;
-}
-
-function cancelPendingScreenshotCapture() {
-  const screenshotId = screenshotCaptureRequestId;
-  if (screenshotId === null || cropOverlay) return;
-  finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
-}
-
-function armPendingScreenshotCancel(screenshotId: number) {
-  clearPendingScreenshotCancel();
-
-  let armed = false;
-  let armTimer: number | null = window.setTimeout(() => {
-    armTimer = null;
-    armed = true;
-    document.addEventListener("keydown", handleKeydown, true);
-  }, 0);
-
-  const isActiveRequest = () =>
-    screenshotCapturePending && screenshotCaptureRequestId === screenshotId && !cropOverlay;
-
-  function cleanup() {
-    if (armTimer !== null) {
-      window.clearTimeout(armTimer);
-      armTimer = null;
-    }
-    if (armed) {
-      document.removeEventListener("keydown", handleKeydown, true);
-      armed = false;
-    }
-    if (pendingScreenshotCancelCleanup === cleanup) pendingScreenshotCancelCleanup = null;
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape" || !isActiveRequest()) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    cancelPendingScreenshotCapture();
-  }
-
-  pendingScreenshotCancelCleanup = cleanup;
-}
-
 function requestScreenshotCapture(delay = 0) {
   const screenshotId = nextScreenshotCaptureId();
   cancelledScreenshotCaptureIds.delete(screenshotId);
   screenshotCapturePending = true;
   screenshotCaptureRequestId = screenshotId;
-  showActiveScreenshotCursor();
-  armPendingScreenshotCancel(screenshotId);
 
   window.setTimeout(() => {
     if (screenshotCaptureRequestId !== screenshotId) return;
@@ -2329,13 +2214,17 @@ function requestScreenshotCapture(delay = 0) {
       screenshotId,
     } as Message, () => {
       if (!chrome.runtime.lastError || screenshotCaptureRequestId !== screenshotId) return;
-      finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
+      screenshotCapturePending = false;
+      screenshotCaptureRequestId = null;
+      if (cameraBtn) cameraBtn.style.display = "";
     });
   }, delay);
 
   window.setTimeout(() => {
     if (screenshotCaptureRequestId !== screenshotId || !screenshotCapturePending || cropOverlay || !cameraBtn) return;
-    finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
+    screenshotCapturePending = false;
+    screenshotCaptureRequestId = null;
+    cameraBtn.style.display = "";
   }, 4000);
 }
 
