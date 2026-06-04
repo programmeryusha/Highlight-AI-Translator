@@ -4416,6 +4416,7 @@ function SettingsView({
   const [forgotStatus, setForgotStatus] = useState("");
   const [accentDraft, setAccentDraft] = useState(accentColor);
   const [overlayTheme, setOverlayTheme] = useState<ThemeName>("dark");
+  const accountAuthInFlight = useRef(false);
 
   useEffect(() => {
     chrome.storage.local.get("overlay_theme", (r) => {
@@ -4474,7 +4475,9 @@ function SettingsView({
 
   async function handleAuth() {
     const email = authEmail.trim().toLowerCase();
+    if (accountAuthInFlight.current || accountLoading) return;
     if (!email.includes("@") || authPassword.length < 6) return;
+    accountAuthInFlight.current = true;
     setAccountLoading(true);
     setAccountStatus("");
     try {
@@ -4486,6 +4489,7 @@ function SettingsView({
     } catch (error) {
       setAccountStatus(friendlyAccountError(error));
     } finally {
+      accountAuthInFlight.current = false;
       setAccountLoading(false);
     }
   }
@@ -4716,7 +4720,12 @@ function SettingsView({
                 onChange={(e) => setAuthPassword(e.target.value)}
                 placeholder="Password"
                 autoComplete="current-password"
-                onKeyDown={(e) => { if (e.key === "Enter") handleAuth(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleAuth();
+                  }
+                }}
                 style={inputStyle}
               />
               <button

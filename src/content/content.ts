@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-03-stream-render-v6";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-token-auth-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -22,6 +22,11 @@ function normalizeHexColor(value: unknown, fallback = DEFAULT_ACCENT_COLOR): str
   if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
   if (/^[0-9a-fA-F]{6}$/.test(trimmed)) return `#${trimmed.toLowerCase()}`;
   return fallback;
+}
+
+function isAuthRefreshRequiredError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /sign in again to refresh|invalid token|authentication required|http\s*40[13]|unauthorized/i.test(message);
 }
 
 function rgbTriplet(hex: string): string {
@@ -1966,6 +1971,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         })
         .catch((error) => {
           renderStream.cancel();
+          if (isAuthRefreshRequiredError(error)) {
+            renderSignInRequired();
+            return;
+          }
           renderError(error.message);
         });
     });
@@ -3006,6 +3015,11 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             })
             .catch((error) => {
               renderStream.cancel();
+              if (isAuthRefreshRequiredError(error)) {
+                contextPanelSubmitted = false;
+                renderSignInRequiredPanel();
+                return;
+              }
               renderErrorPanel(error.message);
             });
         });

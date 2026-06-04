@@ -10,6 +10,8 @@ const REMOTE_CAPTURE_SIGNATURES_KEY = "remote_capture_signatures";
 const REMOTE_SYNC_COMPLETED_AT_KEY = "remote_sync_completed_at";
 const REMOTE_SYNC_FRESH_MS = 15 * 60_000;
 
+let authMutationQueue: Promise<unknown> = Promise.resolve();
+
 interface RemoteCapture {
   id: string;
   text: string;
@@ -147,6 +149,33 @@ function backendResourceUrl(path: string): string {
     url.hash = "";
   }
   return url.toString();
+}
+
+function accountFromAuthResponse(data: unknown, fallbackEmail: string): ContextLensUser {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const email = typeof record.email === "string" ? record.email.trim().toLowerCase() : fallbackEmail.trim().toLowerCase();
+  const token = typeof record.token === "string" ? record.token.trim() : "";
+  if (!email || !token) {
+    throw new Error("Auth response did not include an account token. Try signing in again.");
+  }
+  return { email, token };
+}
+
+function enqueueAuthMutation<T>(task: () => Promise<T>): Promise<T> {
+  const run = authMutationQueue.then(task, task);
+  authMutationQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function throwStoredTokenRejectedError(label: string, res: Response): Promise<never> {
+  await chrome.storage.local.remove("contextlens_user");
+  let message = `${label}: HTTP ${res.status}`;
+  try {
+    await throwResponseError(label, res);
+  } catch (error) {
+    message = errorMessage(error);
+  }
+  throw new Error(`${message}. Sign in again to refresh your account token.`);
 }
 
 async function throwResponseError(label: string, res: Response): Promise<never> {
@@ -572,6 +601,7 @@ async function fetchExplanation(
     const data = await res.json().catch(() => ({}));
     if (data.detail === "deep_dive_limit_reached") throw new Error("DEEP_DIVE_LIMIT_REACHED");
   }
+  if (res.status === 401 || res.status === 403) await throwStoredTokenRejectedError("Backend error", res);
   if (!res.ok) await throwResponseError("Backend error", res);
   const data = await res.json();
   return data.explanation ?? "";
@@ -611,6 +641,7 @@ async function fetchExplanationStream(
     const data = await res.json().catch(() => ({}));
     if (data.detail === "deep_dive_limit_reached") throw new Error("DEEP_DIVE_LIMIT_REACHED");
   }
+  if (res.status === 401 || res.status === 403) await throwStoredTokenRejectedError("Backend error", res);
   if (!res.ok) await throwResponseError("Backend error", res);
   if (!res.body) return fetchExplanation(text, context, imageBase64, deepDive, messages);
 
@@ -726,22 +757,25 @@ async function signIn(email: string, password: string): Promise<ContextLensUser>
 }
 
 async function authRequest(paths: string[], label: string, email: string, password: string): Promise<ContextLensUser> {
-  let sawNotFound = false;
-  for (const path of paths) {
-    const res = await fetch(`${BACKEND_URL}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-    });
-    if (res.status === 404 && paths.length > 1) {
-      sawNotFound = true;
-      continue;
+  return enqueueAuthMutation(async () => {
+    let sawNotFound = false;
+    for (const path of paths) {
+      const res = await fetch(`${BACKEND_URL}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      });
+      if (res.status === 404 && paths.length > 1) {
+        sawNotFound = true;
+        continue;
+      }
+      if (!res.ok) await throwResponseError(label, res);
+      const data = await res.json();
+      const account = accountFromAuthResponse(data, email);
+      return storeAccount(account.email, account.token);
     }
-    if (!res.ok) await throwResponseError(label, res);
-    const data = await res.json();
-    return storeAccount(data.email, data.token);
-  }
-  throw new Error(sawNotFound ? `${label}: auth endpoint not found. Please update the backend deployment.` : label);
+    throw new Error(sawNotFound ? `${label}: auth endpoint not found. Please update the backend deployment.` : label);
+  });
 }
 
 async function storeAccount(email: string, token: string): Promise<ContextLensUser> {
@@ -758,17 +792,12 @@ async function storeAccount(email: string, token: string): Promise<ContextLensUs
 
 async function signInOrSignUp(email: string, password: string): Promise<ContextLensUser> {
   try {
-    return await authRequest(["/auth/login-or-signup"], "Sign in error", email, password);
-  } catch (combinedError) {
-    if (!/not found/i.test(errorMessage(combinedError))) {
-      throw combinedError;
-    }
-  }
-
-  try {
     return await signIn(email, password);
   } catch (signInError) {
     const signInMessage = errorMessage(signInError);
+    if (/auth endpoint not found|not found/i.test(signInMessage)) {
+      return authRequest(["/auth/login-or-signup"], "Sign in error", email, password);
+    }
     if (!/invalid email or password/i.test(signInMessage)) throw signInError;
     try {
       return await signUp(email, password);
@@ -1432,14 +1461,17 @@ async function forgotPassword(email: string): Promise<{ sent: boolean }> {
 }
 
 async function resetPassword(email: string, code: string, newPassword: string): Promise<ContextLensUser> {
-  const res = await fetch(`${BACKEND_URL}/auth/reset-password`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase(), code, new_password: newPassword }),
+  return enqueueAuthMutation(async () => {
+    const res = await fetch(`${BACKEND_URL}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), code, new_password: newPassword }),
+    });
+    if (!res.ok) await throwResponseError("Reset password error", res);
+    const data = await res.json();
+    const account = accountFromAuthResponse(data, email);
+    return storeAccount(account.email, account.token);
   });
-  if (!res.ok) await throwResponseError("Reset password error", res);
-  const data = await res.json();
-  return storeAccount(data.email, data.token);
 }
 
 async function generateAnalogy(text: string): Promise<{ analogy: string }> {
@@ -1457,6 +1489,7 @@ async function generateAnalogy(text: string): Promise<{ analogy: string }> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 401 || res.status === 403) await throwStoredTokenRejectedError("Analogy error", res);
   if (!res.ok) await throwResponseError("Analogy error", res);
   const data = await res.json();
   return { analogy: data.explanation ?? "" };
