@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v2";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v3";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -2256,7 +2256,6 @@ function armPendingScreenshotCancel(screenshotId: number) {
   let armTimer: number | null = window.setTimeout(() => {
     armTimer = null;
     armed = true;
-    document.addEventListener("click", handleClick, true);
     document.addEventListener("keydown", handleKeydown, true);
   }, 0);
 
@@ -2269,19 +2268,10 @@ function armPendingScreenshotCancel(screenshotId: number) {
       armTimer = null;
     }
     if (armed) {
-      document.removeEventListener("click", handleClick, true);
       document.removeEventListener("keydown", handleKeydown, true);
       armed = false;
     }
     if (pendingScreenshotCancelCleanup === cleanup) pendingScreenshotCancelCleanup = null;
-  }
-
-  function handleClick(event: MouseEvent) {
-    if (!isActiveRequest()) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    rememberScreenshotCursorPoint(event);
-    cancelPendingScreenshotCapture();
   }
 
   function handleKeydown(event: KeyboardEvent) {
