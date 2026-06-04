@@ -53,6 +53,11 @@ interface SyncOptions {
   force?: boolean;
 }
 
+interface ExplainOptions {
+  deepDive?: boolean;
+  messages?: ChatMessage[];
+}
+
 function normalizePageUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -569,14 +574,14 @@ async function getAppMode(): Promise<string> {
   return storage.app_mode ?? "language_learning";
 }
 
-async function fetchExplanation(
+async function buildExplainPayload(
   text: string,
   context: string,
   imageBase64?: string,
-  deepDive = false,
-  messages: ChatMessage[] = [],
-): Promise<string> {
+  options: ExplainOptions = {},
+): Promise<Record<string, unknown>> {
   const account = await requireAccount();
+  const deepDive = options.deepDive === true;
   const mode = deepDive ? "language_learning" : await getAppMode();
   const body: Record<string, unknown> = {
     text,
@@ -584,14 +589,22 @@ async function fetchExplanation(
     image_base64: imageBase64 ?? null,
     mode,
     token: account.token,
+    deep_dive: deepDive,
   };
+  const messages = options.messages ?? [];
   if (messages.length > 0) {
     body.messages = messages.slice(-8);
   }
-  if (deepDive) {
-    body.deep_dive = true;
-    body.token = account?.token ?? null;
-  }
+  return body;
+}
+
+async function fetchExplanation(
+  text: string,
+  context: string,
+  imageBase64?: string,
+  options: ExplainOptions = {},
+): Promise<string> {
+  const body = await buildExplainPayload(text, context, imageBase64, options);
   const res = await fetch(`${BACKEND_URL}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -611,26 +624,10 @@ async function fetchExplanationStream(
   text: string,
   context: string,
   imageBase64: string | undefined,
-  messages: ChatMessage[],
+  options: ExplainOptions,
   onChunk: (chunk: string) => void,
-  deepDive = false,
 ): Promise<string> {
-  const account = await requireAccount();
-  const mode = deepDive ? "language_learning" : await getAppMode();
-  const body: Record<string, unknown> = {
-    text,
-    context,
-    image_base64: imageBase64 ?? null,
-    mode,
-    token: account.token,
-  };
-  if (messages.length > 0) {
-    body.messages = messages.slice(-8);
-  }
-  if (deepDive) {
-    body.deep_dive = true;
-    body.token = account?.token ?? null;
-  }
+  const body = await buildExplainPayload(text, context, imageBase64, options);
 
   const res = await fetch(`${BACKEND_URL}/explain/stream`, {
     method: "POST",
@@ -643,7 +640,7 @@ async function fetchExplanationStream(
   }
   if (res.status === 401 || res.status === 403) await throwStoredTokenRejectedError("Backend error", res);
   if (!res.ok) await throwResponseError("Backend error", res);
-  if (!res.body) return fetchExplanation(text, context, imageBase64, deepDive, messages);
+  if (!res.body) throw new Error("Streaming explanation failed: backend did not return a readable stream.");
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -1257,7 +1254,7 @@ async function explainAndSaveScreenshot(imageData: string, context: string, imag
 
   try {
     const base64 = imageData.split(",")[1];
-    const explanation = await fetchExplanation("", context, base64);
+    const explanation = await fetchExplanation("", context, base64, { deepDive: false });
     const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (capture) {
       await saveCaptureRemoteBestEffort(capture);
@@ -1283,7 +1280,7 @@ async function explainAndSaveScreenshotStream(
 
   try {
     const base64 = imageData.split(",")[1];
-    const explanation = await fetchExplanationStream("", context, base64, [], onChunk);
+    const explanation = await fetchExplanationStream("", context, base64, { deepDive: false }, onChunk);
     const capture = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (capture) {
       void saveCaptureRemoteBestEffort(capture);
@@ -1318,8 +1315,7 @@ async function askFollowup(captureId: string, question: string, _deepDiveRequest
     capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
     capture?.context ?? fallback.context ?? "",
     imageBase64,
-    false,
-    updated,
+    { deepDive: false, messages: updated },
   );
   const messages: ChatMessage[] = [...updated, { role: "assistant", content: reply }];
   await chrome.storage.local.set({ [key]: messages });
@@ -1349,7 +1345,7 @@ async function askFollowupStream(
     capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
     capture?.context ?? fallback.context ?? "",
     imageBase64,
-    updated,
+    { deepDive: false, messages: updated },
     onChunk,
   );
 
@@ -1368,7 +1364,7 @@ async function retryCapture(captureId: string): Promise<{ captureId: string; exp
 
   try {
     const imageBase64 = capture.imageData?.split(",")[1];
-    const explanation = await fetchExplanation(capture.imageData ? "" : capture.text, capture.context, imageBase64);
+    const explanation = await fetchExplanation(capture.imageData ? "" : capture.text, capture.context, imageBase64, { deepDive: false });
     const updated = await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
       if (updated.imageData) await saveCaptureRemoteBestEffort(updated);
@@ -1399,8 +1395,7 @@ async function deepDive(captureId: string, fallback: CaptureFallback = {}): Prom
     capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
     capture?.context ?? fallback.context ?? "",
     imageBase64,
-    true,
-    hasFollowup || !capture ? prior : [],
+    { deepDive: true, messages: hasFollowup || !capture ? prior : [] },
   );
 
   if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
@@ -1434,9 +1429,8 @@ async function deepDiveStream(
     capture?.imageData ? "" : capture?.text ?? fallback.text ?? "",
     capture?.context ?? fallback.context ?? "",
     imageBase64,
-    hasFollowup || !capture ? prior : [],
+    { deepDive: true, messages: hasFollowup || !capture ? prior : [] },
     onChunk,
-    true,
   );
 
   if (capture) await updateCapture(captureId, { explanation, status: "done", errorMessage: undefined });
@@ -1475,15 +1469,8 @@ async function resetPassword(email: string, code: string, newPassword: string): 
 }
 
 async function generateAnalogy(text: string): Promise<{ analogy: string }> {
-  const account = await requireAccount();
-  const mode = await getAppMode();
-  const body: Record<string, unknown> = {
-    text,
-    context: "",
-    analogy: true,
-    mode,
-    token: account.token,
-  };
+  const body = await buildExplainPayload(text, "", undefined, { deepDive: false });
+  body.analogy = true;
   const res = await fetch(`${BACKEND_URL}/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1499,7 +1486,7 @@ async function generateAnalogy(text: string): Promise<{ analogy: string }> {
 async function explainPendingHighlight(capture: Capture, replaceChat = false): Promise<{ captureId: string; explanation: string }> {
   const id = capture.id;
   try {
-    const explanation = await fetchExplanation(capture.text, capture.context);
+    const explanation = await fetchExplanation(capture.text, capture.context, undefined, { deepDive: false });
     const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
       void saveCaptureRemoteBestEffort(updated);
@@ -1575,7 +1562,7 @@ async function saveHighlightStream(
   onStart(id);
 
   try {
-    const explanation = await fetchExplanationStream(capture.text, capture.context, undefined, [], onChunk);
+    const explanation = await fetchExplanationStream(capture.text, capture.context, undefined, { deepDive: false }, onChunk);
     const updated = await updateCapture(id, { explanation, status: "done", errorMessage: undefined });
     if (updated) {
       void saveCaptureRemoteBestEffort(updated);

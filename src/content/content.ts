@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-token-auth-v1";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-stream-stabilize-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -10,6 +10,11 @@ const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
 const SCREENSHOT_PREVIEW_QUALITY = 0.82;
 type ThemeName = "light" | "dark";
 type ScreenshotCrop = { imageData: string; imagePreviewData?: string };
+type StreamMessage =
+  | { type: "SAVE_HIGHLIGHT_STREAM"; text: string; url: string; title: string; context: string; replaceCaptureId?: string }
+  | { type: "EXPLAIN_SCREENSHOT_STREAM"; imageData: string; imagePreviewData?: string; context: string }
+  | { type: "ASK_FOLLOWUP_STREAM"; captureId: string; question: string; deepDive?: boolean; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackImagePreviewData?: string; fallbackUrl?: string; fallbackTitle?: string }
+  | { type: "DEEP_DIVE_STREAM"; captureId: string; fallbackText?: string; fallbackContext?: string; fallbackImageData?: string; fallbackImagePreviewData?: string; fallbackUrl?: string; fallbackTitle?: string };
 const contextLensGlobal = globalThis as typeof globalThis & {
   __contextLensContentLoaded?: boolean;
   __contextLensContentVersion?: string;
@@ -144,6 +149,7 @@ function initContextLensContentScript() {
 let widget: HTMLElement | null = null;
 let widgetMode: "bubble" | "input" | null = null;
 let widgetDeepDiveActive = false;
+let activeWidgetStreamSession = 0;
 let cardFontSize: "sm" | "md" | "lg" = "md";
 let appearanceTheme: ThemeName = "light";
 let accentColor = DEFAULT_ACCENT_COLOR;
@@ -153,6 +159,19 @@ let selectionCheckTimer: number | null = null;
 let pointerIsDown = false;
 let lastSelectionAnchor: { clientX: number; clientY: number; detail: number; timestamp: number } | null = null;
 let suppressSaveBubbleUntil = 0;
+
+function nextWidgetStreamSession() {
+  activeWidgetStreamSession += 1;
+  return activeWidgetStreamSession;
+}
+
+function isWidgetStreamCurrent(session: number) {
+  return activeWidgetStreamSession === session;
+}
+
+function invalidateWidgetStream(session: number) {
+  if (activeWidgetStreamSession === session) activeWidgetStreamSession += 1;
+}
 const SAVE_BUBBLE_DISMISS_SUPPRESS_MS = 700;
 const cleanupTasks: Array<() => void> = [];
 
@@ -260,66 +279,8 @@ function sendRuntimeMessage<T>(message: Message): Promise<T> {
 
 const STREAM_DISCONNECTED_MESSAGE = "Explanation stream disconnected.";
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function fallbackForDisconnectedStream(message: Record<string, unknown>, startedCaptureId: string): Message | null {
-  if (message.type === "SAVE_HIGHLIGHT_STREAM") {
-    const replaceCaptureId = startedCaptureId || optionalString(message.replaceCaptureId);
-    return {
-      type: "SAVE_HIGHLIGHT",
-      text: String(message.text ?? ""),
-      url: String(message.url ?? location.href),
-      title: String(message.title ?? document.title),
-      context: String(message.context ?? ""),
-      ...(replaceCaptureId ? { replaceCaptureId } : {}),
-    };
-  }
-
-  if (message.type === "ASK_FOLLOWUP_STREAM") {
-    return {
-      type: "ASK_FOLLOWUP",
-      captureId: String(message.captureId ?? ""),
-      question: String(message.question ?? ""),
-      deepDive: Boolean(message.deepDive),
-      fallbackText: optionalString(message.fallbackText),
-      fallbackContext: optionalString(message.fallbackContext),
-      fallbackImageData: optionalString(message.fallbackImageData),
-      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
-      fallbackUrl: optionalString(message.fallbackUrl),
-      fallbackTitle: optionalString(message.fallbackTitle),
-    };
-  }
-
-  if (message.type === "EXPLAIN_SCREENSHOT_STREAM") {
-    return {
-      type: "EXPLAIN_SCREENSHOT",
-      imageData: String(message.imageData ?? ""),
-      imagePreviewData: optionalString(message.imagePreviewData),
-      context: String(message.context ?? ""),
-      replaceCaptureId: startedCaptureId || undefined,
-    };
-  }
-
-  if (message.type === "DEEP_DIVE_STREAM") {
-    return {
-      type: "DEEP_DIVE",
-      captureId: String(message.captureId ?? ""),
-      fallbackText: optionalString(message.fallbackText),
-      fallbackContext: optionalString(message.fallbackContext),
-      fallbackImageData: optionalString(message.fallbackImageData),
-      fallbackImagePreviewData: optionalString(message.fallbackImagePreviewData),
-      fallbackUrl: optionalString(message.fallbackUrl),
-      fallbackTitle: optionalString(message.fallbackTitle),
-    };
-  }
-
-  return null;
-}
-
 function streamRuntimeMessage<T>(
-  message: Record<string, unknown>,
+  message: StreamMessage,
   handlers: {
     onStart?: (captureId: string) => void;
     onChunk?: (chunk: string) => void;
@@ -328,11 +289,9 @@ function streamRuntimeMessage<T>(
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: "contextlens-explain-stream" });
     let settled = false;
-    let startedCaptureId = "";
 
     port.onMessage.addListener((event: Record<string, unknown>) => {
       if (event.type === "started" && typeof event.captureId === "string") {
-        startedCaptureId = event.captureId;
         handlers.onStart?.(event.captureId);
         return;
       }
@@ -356,13 +315,6 @@ function streamRuntimeMessage<T>(
     port.onDisconnect.addListener(() => {
       if (settled) return;
       settled = true;
-
-      const fallbackMessage = fallbackForDisconnectedStream(message, startedCaptureId);
-      if (fallbackMessage) {
-        sendRuntimeMessage<T>(fallbackMessage).then(resolve).catch(reject);
-        return;
-      }
-
       reject(new Error(STREAM_DISCONNECTED_MESSAGE));
     });
 
@@ -1046,6 +998,7 @@ cleanupTasks.push(() => {
 });
 
 function removeWidget() {
+  activeWidgetStreamSession += 1;
   if (widgetOutsideHandler) {
     document.removeEventListener("mousedown", widgetOutsideHandler, true);
     widgetOutsideHandler = null;
@@ -1692,8 +1645,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
       startConversationAutoFollow(widgetConversationScroll, "latest-user");
       renderConversation(captureId, nextMessages, true, "Thinking…");
+      const streamSession = nextWidgetStreamSession();
       let streamed = "";
       const renderStream = createStreamRenderScheduler((text) => {
+        if (!isWidgetStreamCurrent(streamSession)) return;
         renderConversation(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
       });
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1707,16 +1662,21 @@ function showContextInput(x: number, y: number, selectedText: string) {
         fallbackTitle: document.title,
       }, {
         onChunk: (chunk) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
           streamed += chunk;
           renderStream(streamed);
         },
       })
         .then((response) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
           renderStream.finish(() => {
+            if (!isWidgetStreamCurrent(streamSession)) return;
             renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
           });
         })
         .catch((error) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
+          invalidateWidgetStream(streamSession);
           renderStream.cancel();
           renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]);
         });
@@ -1870,8 +1830,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
         );
+        const streamSession = nextWidgetStreamSession();
         let streamed = "";
         const renderStream = createStreamRenderScheduler((text) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
           renderConversation(captureId, [...messages, { role: "assistant", content: text }], true, "Writing…");
         });
         Promise.race([
@@ -1884,6 +1846,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
             fallbackTitle: document.title,
           }, {
             onChunk: (chunk) => {
+              if (!isWidgetStreamCurrent(streamSession)) return;
               streamed += chunk;
               renderStream(streamed);
             },
@@ -1891,13 +1854,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
           timeout,
         ])
           .then((response) => {
+            if (!isWidgetStreamCurrent(streamSession)) return;
             renderStream.finish(() => {
+              if (!isWidgetStreamCurrent(streamSession)) return;
               widget?.classList.remove("cl-deep-dive-glow");
               widget?.classList.add("cl-deep-dive-active");
               renderConversation(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
             });
           })
           .catch((error: Error) => {
+            if (!isWidgetStreamCurrent(streamSession)) return;
+            invalidateWidgetStream(streamSession);
             renderStream.cancel();
             widget?.classList.remove("cl-deep-dive-glow");
             widgetDeepDiveActive = false;
@@ -1932,7 +1899,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     setTimeout(() => followupInput.focus({ preventScroll: true }), 50);
   }
 
-  function submitSaveMessage(message: Message, closeAfterSave: boolean) {
+  function submitSaveMessage(message: Extract<Message, { type: "SAVE_HIGHLIGHT" }>, closeAfterSave: boolean) {
     submitted = true;
     window.getSelection()?.removeAllRanges();
 
@@ -1950,26 +1917,36 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }
 
       renderLoading();
+      const streamSession = nextWidgetStreamSession();
       let captureId = "";
       let streamed = "";
       const renderStream = createStreamRenderScheduler((text) => {
-        if (captureId) {
+        if (captureId && isWidgetStreamCurrent(streamSession)) {
           renderConversation(captureId, [{ role: "assistant", content: text }], true, "Writing…");
         }
       });
-      streamRuntimeMessage<{ captureId: string; explanation: string }>({ ...message, type: "SAVE_HIGHLIGHT_STREAM" }, {
-        onStart: (id) => { captureId = id; },
+      const streamMessage: StreamMessage = { ...message, type: "SAVE_HIGHLIGHT_STREAM" };
+      streamRuntimeMessage<{ captureId: string; explanation: string }>(streamMessage, {
+        onStart: (id) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
+          captureId = id;
+        },
         onChunk: (chunk) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
           streamed += chunk;
           renderStream(streamed);
         },
       })
         .then((response) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
           renderStream.finish(() => {
+            if (!isWidgetStreamCurrent(streamSession)) return;
             renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]);
           });
         })
         .catch((error) => {
+          if (!isWidgetStreamCurrent(streamSession)) return;
+          invalidateWidgetStream(streamSession);
           renderStream.cancel();
           if (isAuthRefreshRequiredError(error)) {
             renderSignInRequired();
@@ -1996,7 +1973,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       }
 
       const context = input.value.trim();
-      const message: Message = {
+      const message: Extract<Message, { type: "SAVE_HIGHLIGHT" }> = {
         type: "SAVE_HIGHLIGHT",
         text: selectedText,
         url: location.href,
@@ -2324,8 +2301,23 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
   let panelAnalogyLoading = false;
   let activePanelImageData = "";
   let activePanelContext = "";
+  let activePanelStreamSession = 0;
   let userPlacedContextPanel = false;
   const contextPanelConversationScroll = createConversationScrollState();
+  cropCleanupTasks.push(() => { activePanelStreamSession += 1; });
+
+  function nextPanelStreamSession() {
+    activePanelStreamSession += 1;
+    return activePanelStreamSession;
+  }
+
+  function isPanelStreamCurrent(session: number) {
+    return activePanelStreamSession === session;
+  }
+
+  function invalidatePanelStream(session: number) {
+    if (activePanelStreamSession === session) activePanelStreamSession += 1;
+  }
 
   cropOverlay.addEventListener("wheel", (event) => {
     if (event.target instanceof Element && event.target.closest(".cl-scroll")) return;
@@ -2730,8 +2722,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
         startConversationAutoFollow(contextPanelConversationScroll, "latest-user");
         renderConversationPanel(captureId, nextMessages, true, "Thinking…");
+        const streamSession = nextPanelStreamSession();
         let streamed = "";
         const renderStream = createStreamRenderScheduler((text) => {
+          if (!isPanelStreamCurrent(streamSession)) return;
           renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
         });
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -2745,16 +2739,21 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           fallbackTitle: document.title,
         }, {
           onChunk: (chunk) => {
+            if (!isPanelStreamCurrent(streamSession)) return;
             streamed += chunk;
             renderStream(streamed);
           },
         })
           .then((response) => {
+            if (!isPanelStreamCurrent(streamSession)) return;
             renderStream.finish(() => {
+              if (!isPanelStreamCurrent(streamSession)) return;
               renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
             });
           })
           .catch((error) => {
+            if (!isPanelStreamCurrent(streamSession)) return;
+            invalidatePanelStream(streamSession);
             renderStream.cancel();
             renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]);
           });
@@ -2908,8 +2907,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           const timeout = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("Deep Dive timed out. Please try again.")), 90_000)
           );
+          const streamSession = nextPanelStreamSession();
           let streamed = "";
           const renderStream = createStreamRenderScheduler((text) => {
+            if (!isPanelStreamCurrent(streamSession)) return;
             renderConversationPanel(captureId, [...messages, { role: "assistant", content: text }], true, "Writing…");
           });
           Promise.race([
@@ -2922,6 +2923,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
               fallbackTitle: document.title,
             }, {
               onChunk: (chunk) => {
+                if (!isPanelStreamCurrent(streamSession)) return;
                 streamed += chunk;
                 renderStream(streamed);
               },
@@ -2929,13 +2931,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             timeout,
           ])
             .then((response) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
               renderStream.finish(() => {
+                if (!isPanelStreamCurrent(streamSession)) return;
                 contextPanel?.classList.remove("cl-deep-dive-glow");
                 contextPanel?.classList.add("cl-deep-dive-active");
                 renderConversationPanel(captureId, response.messages ?? [{ role: "assistant", content: response.explanation }]);
               });
             })
             .catch((error: Error) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
+              invalidatePanelStream(streamSession);
               renderStream.cancel();
               contextPanel?.classList.remove("cl-deep-dive-glow");
               panelDeepDiveActive = false;
@@ -2994,26 +3000,35 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           }
 
           renderLoadingPanel();
+          const streamSession = nextPanelStreamSession();
           let captureId = "";
           let streamed = "";
           const renderStream = createStreamRenderScheduler((text) => {
-            if (captureId) {
+            if (captureId && isPanelStreamCurrent(streamSession)) {
               renderConversationPanel(captureId, [{ role: "assistant", content: text }], true, "Writing…");
             }
           });
           streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: crop.imageData, imagePreviewData: crop.imagePreviewData, context }, {
-            onStart: (id) => { captureId = id; },
+            onStart: (id) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
+              captureId = id;
+            },
             onChunk: (chunk) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
               streamed += chunk;
               renderStream(streamed);
             },
           })
             .then((response) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
               renderStream.finish(() => {
+                if (!isPanelStreamCurrent(streamSession)) return;
                 renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]);
               });
             })
             .catch((error) => {
+              if (!isPanelStreamCurrent(streamSession)) return;
+              invalidatePanelStream(streamSession);
               renderStream.cancel();
               if (isAuthRefreshRequiredError(error)) {
                 contextPanelSubmitted = false;
