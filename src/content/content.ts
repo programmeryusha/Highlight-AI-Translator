@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v3";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v4";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -2193,12 +2193,40 @@ function showActiveScreenshotCursor() {
   clearScreenshotCursorReset();
   clearActiveScreenshotCursor();
 
-  const style = document.createElement("style");
-  style.setAttribute("data-contextlens-active-screenshot-cursor", "true");
-  style.textContent = "html, body, body * { cursor: crosshair !important; }";
-  (document.head ?? document.documentElement).appendChild(style);
+  const layer = document.createElement("div");
+  layer.setAttribute("aria-hidden", "true");
+  layer.setAttribute("style", `
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    background: transparent;
+    cursor: crosshair !important;
+    pointer-events: auto;
+    user-select: none;
+    touch-action: none;
+  `);
+
+  let pointerStart: { x: number; y: number } | null = null;
+  let pointerMoved = false;
+  layer.addEventListener("pointerdown", (event) => {
+    pointerStart = { x: event.clientX, y: event.clientY };
+    pointerMoved = false;
+  });
+  layer.addEventListener("pointermove", (event) => {
+    if (!pointerStart) return;
+    pointerMoved ||= Math.abs(event.clientX - pointerStart.x) > 6 || Math.abs(event.clientY - pointerStart.y) > 6;
+  });
+  layer.addEventListener("click", (event) => {
+    if (pointerMoved) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    rememberScreenshotCursorPoint(event);
+    cancelPendingScreenshotCapture();
+  });
+
+  appendToPage(layer);
   activeScreenshotCursorCleanup = () => {
-    style.remove();
+    layer.remove();
     activeScreenshotCursorCleanup = null;
   };
 }
