@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v1";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v2";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -2165,6 +2165,7 @@ const cancelledScreenshotCaptureIds = new Set<number>();
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 let screenshotCursorResetCleanup: (() => void) | null = null;
+let activeScreenshotCursorCleanup: (() => void) | null = null;
 let pendingScreenshotCancelCleanup: (() => void) | null = null;
 let screenshotLastCursorPoint: { x: number; y: number } | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
@@ -2183,9 +2184,29 @@ function clearPendingScreenshotCancel() {
   pendingScreenshotCancelCleanup = null;
 }
 
+function clearActiveScreenshotCursor() {
+  activeScreenshotCursorCleanup?.();
+  activeScreenshotCursorCleanup = null;
+}
+
+function showActiveScreenshotCursor() {
+  clearScreenshotCursorReset();
+  clearActiveScreenshotCursor();
+
+  const style = document.createElement("style");
+  style.setAttribute("data-contextlens-active-screenshot-cursor", "true");
+  style.textContent = "html, body, body * { cursor: crosshair !important; }";
+  (document.head ?? document.documentElement).appendChild(style);
+  activeScreenshotCursorCleanup = () => {
+    style.remove();
+    activeScreenshotCursorCleanup = null;
+  };
+}
+
 function removeCropOverlay(showCamera = true) {
   const hadPendingScreenshotCapture = screenshotCapturePending || screenshotCaptureRequestId !== null;
   clearPendingScreenshotCancel();
+  clearActiveScreenshotCursor();
   clearScreenshotCursorReset();
   if (showCamera) {
     if (screenshotCaptureRequestId !== null) cancelledScreenshotCaptureIds.add(screenshotCaptureRequestId);
@@ -2216,6 +2237,7 @@ function finishPendingScreenshotCapture(
   screenshotCapturePending = false;
   screenshotCaptureRequestId = null;
   clearPendingScreenshotCancel();
+  clearActiveScreenshotCursor();
   if (cameraBtn) cameraBtn.style.display = "";
   if (options.resetCursor) resetCursorAfterScreenshotMode();
   return true;
@@ -2277,6 +2299,7 @@ function requestScreenshotCapture(delay = 0) {
   cancelledScreenshotCaptureIds.delete(screenshotId);
   screenshotCapturePending = true;
   screenshotCaptureRequestId = screenshotId;
+  showActiveScreenshotCursor();
   armPendingScreenshotCancel(screenshotId);
 
   window.setTimeout(() => {
