@@ -1,6 +1,6 @@
 import type { Capture, ChatMessage, Message } from "../types";
 
-const CONTENT_SCRIPT_VERSION = "2026-06-04-stream-stabilize-v1";
+const CONTENT_SCRIPT_VERSION = "2026-06-04-calm-stream-v1";
 const DEFAULT_ACCENT_COLOR = "#38bdf8";
 const LATIN_FONT_STACK = "'Satoshi',ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 const ARABIC_FONT_STACK = "'Noto Naskh Arabic','Noto Sans Arabic',Tahoma,Arial,serif";
@@ -8,7 +8,8 @@ const HONORIFIC_MARK = "ﷺ";
 const SCREENSHOT_PREVIEW_MAX_WIDTH = 760;
 const SCREENSHOT_PREVIEW_MAX_HEIGHT = 520;
 const SCREENSHOT_PREVIEW_QUALITY = 0.82;
-const DEEP_DIVE_INITIAL_RENDER_DELAY_MS = 500;
+const DEEP_DIVE_FIRST_PAINT_DELAY_MS = 250;
+const DEEP_DIVE_FIRST_PAINT_MIN_CHARS = 140;
 type ThemeName = "light" | "dark";
 type ScreenshotCrop = { imageData: string; imagePreviewData?: string };
 type StreamMessage =
@@ -363,20 +364,39 @@ type StreamRenderScheduler = ((text: string) => void) & {
   finish: (afterStreamPaint: () => void) => void;
 };
 
-function createStreamRenderScheduler(render: (text: string) => void, options: { initialDelayMs?: number } = {}): StreamRenderScheduler {
+type StreamRenderOptions = {
+  firstPaintDelayMs?: number;
+  firstPaintMinChars?: number;
+};
+
+function createStreamRenderScheduler(render: (text: string) => void, options: StreamRenderOptions = {}): StreamRenderScheduler {
   let frame: number | null = null;
   let finalFrame: number | null = null;
   let finishing: (() => void) | null = null;
   let latestText: string | null = null;
-  let initialDelayTimer: number | null = options.initialDelayMs
-    ? window.setTimeout(() => {
-        initialDelayTimer = null;
-        requestPump();
-      }, options.initialDelayMs)
-    : null;
+  let hasPainted = false;
+  let firstPaintTimer: number | null = null;
 
-  const requestPump = () => {
-    if (initialDelayTimer !== null) return;
+  const clearFirstPaintTimer = () => {
+    if (firstPaintTimer === null) return;
+    window.clearTimeout(firstPaintTimer);
+    firstPaintTimer = null;
+  };
+
+  const requestPump = (force = false) => {
+    const delayMs = options.firstPaintDelayMs ?? 0;
+    const minChars = options.firstPaintMinChars ?? 0;
+    if (!force && !hasPainted && delayMs > 0 && (latestText?.length ?? 0) < minChars) {
+      if (firstPaintTimer === null) {
+        firstPaintTimer = window.setTimeout(() => {
+          firstPaintTimer = null;
+          requestPump(true);
+        }, delayMs);
+      }
+      return;
+    }
+
+    clearFirstPaintTimer();
     if (frame !== null) return;
     frame = requestAnimationFrame(pump);
   };
@@ -385,7 +405,10 @@ function createStreamRenderScheduler(render: (text: string) => void, options: { 
     frame = null;
     const next = latestText;
     latestText = null;
-    if (next !== null) render(next);
+    if (next !== null) {
+      hasPainted = true;
+      render(next);
+    }
 
     if (latestText !== null) {
       requestPump();
@@ -417,22 +440,15 @@ function createStreamRenderScheduler(render: (text: string) => void, options: { 
       cancelAnimationFrame(finalFrame);
       finalFrame = null;
     }
-    if (initialDelayTimer !== null) {
-      window.clearTimeout(initialDelayTimer);
-      initialDelayTimer = null;
-    }
+    clearFirstPaintTimer();
     latestText = null;
     finishing = null;
   };
 
   schedule.finish = (afterStreamPaint) => {
     finishing = afterStreamPaint;
-    if (initialDelayTimer !== null) {
-      window.clearTimeout(initialDelayTimer);
-      initialDelayTimer = null;
-    }
     if (latestText !== null || frame !== null) {
-      requestPump();
+      requestPump(true);
       return;
     }
 
@@ -623,12 +639,23 @@ type ConversationScrollState = {
   atBottom: boolean;
   pendingAnchor: "none" | "latest-user" | "latest-assistant";
   autoFollow: boolean;
+  streaming: boolean;
+  streamBottomFollow: boolean;
   programmaticScroll: boolean;
   lastTouchY: number | null;
 };
 
 function createConversationScrollState(): ConversationScrollState {
-  return { top: 0, atBottom: false, pendingAnchor: "none", autoFollow: false, programmaticScroll: false, lastTouchY: null };
+  return {
+    top: 0,
+    atBottom: false,
+    pendingAnchor: "none",
+    autoFollow: false,
+    streaming: false,
+    streamBottomFollow: false,
+    programmaticScroll: false,
+    lastTouchY: null,
+  };
 }
 
 function conversationMaxScrollTop(element: HTMLElement) {
@@ -643,6 +670,9 @@ function rememberConversationScroll(state: ConversationScrollState, element: HTM
   }
   state.top = Math.max(0, Math.min(element.scrollTop, maxTop));
   state.atBottom = maxTop > 0 && maxTop - element.scrollTop <= 16;
+  if (state.streaming && !state.programmaticScroll) {
+    state.streamBottomFollow = state.atBottom;
+  }
 }
 
 function setConversationScrollTop(state: ConversationScrollState, element: HTMLElement, top: number) {
@@ -661,6 +691,24 @@ function startConversationAutoFollow(state: ConversationScrollState, anchor: Con
 
 function stopConversationAutoFollow(state: ConversationScrollState) {
   state.autoFollow = false;
+}
+
+function beginConversationStream(state: ConversationScrollState, element: HTMLElement | null) {
+  if (element) {
+    rememberConversationScroll(state, element);
+  } else {
+    state.top = 0;
+    state.atBottom = false;
+  }
+  state.pendingAnchor = "none";
+  state.autoFollow = false;
+  state.streaming = true;
+  state.streamBottomFollow = false;
+}
+
+function endConversationStream(state: ConversationScrollState) {
+  state.streaming = false;
+  state.streamBottomFollow = false;
 }
 
 function trackConversationScroll(state: ConversationScrollState, element: HTMLElement) {
@@ -703,6 +751,32 @@ function restoreConversationScroll(
   } else {
     setConversationScrollTop(state, element, Math.max(0, Math.min(state.top, maxTop)));
   }
+}
+
+const streamingBodyText = new WeakMap<HTMLElement, string>();
+
+function updateStreamingAssistantBody(
+  root: HTMLElement | null,
+  listName: "widget" | "screenshot",
+  state: ConversationScrollState,
+  text: string,
+) {
+  const list = root?.querySelector<HTMLElement>(`[data-cl-conversation-list="${listName}"]`);
+  const body = list?.querySelector<HTMLElement>('[data-cl-stream-assistant-body="1"]');
+  if (!list || !body) return false;
+
+  const previous = streamingBodyText.get(body) ?? "";
+  if (text.startsWith(previous)) {
+    appendBidiText(body, text.slice(previous.length));
+  } else {
+    body.replaceChildren();
+    appendBidiText(body, text);
+  }
+  streamingBodyText.set(body, text);
+  if (state.streamBottomFollow) {
+    setConversationScrollTop(state, list, conversationMaxScrollTop(list));
+  }
+  return true;
 }
 
 function autosizeTextarea(textarea: HTMLTextAreaElement, maxHeight = 120) {
@@ -1563,6 +1637,10 @@ function showContextInput(x: number, y: number, selectedText: string) {
         label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:700;margin:0 0 4px;`);
 
         const body = document.createElement("div");
+        if (loading && message.role === "assistant" && index === messages.length - 1) {
+          body.setAttribute("data-cl-stream-assistant-body", "1");
+          streamingBodyText.set(body, message.content);
+        }
         appendMessageBody(body, message, index, messages, loading);
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
         const messageDirection = firstStrongTextDirection(message.content);
@@ -1669,12 +1747,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
       if (!question || loading) return;
       hardWordsOpen = false;
       const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+      beginConversationStream(widgetConversationScroll, widget?.querySelector<HTMLElement>('[data-cl-conversation-list="widget"]') ?? null);
       renderConversation(captureId, nextMessages, true, "Thinking…");
       const streamSession = nextWidgetStreamSession();
       let streamed = "";
+      let streamRendered = false;
       const renderStream = createStreamRenderScheduler((text) => {
         if (!isWidgetStreamCurrent(streamSession)) return;
-        renderConversation(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
+        if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
+          renderConversation(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
+          streamRendered = true;
+        }
       });
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
         type: "ASK_FOLLOWUP_STREAM",
@@ -1696,6 +1779,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           if (!isWidgetStreamCurrent(streamSession)) return;
           renderStream.finish(() => {
             if (!isWidgetStreamCurrent(streamSession)) return;
+            endConversationStream(widgetConversationScroll);
             renderConversation(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
           });
         })
@@ -1703,6 +1787,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           if (!isWidgetStreamCurrent(streamSession)) return;
           invalidateWidgetStream(streamSession);
           renderStream.cancel();
+          endConversationStream(widgetConversationScroll);
           renderConversation(captureId, [...nextMessages, { role: "assistant", content: error.message }]);
         });
     }
@@ -1850,6 +1935,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         analogyLoading = false;
         ensureDeepDiveStyles();
         const deepDiveMessages = deepDiveDisplayMessages(messages);
+        beginConversationStream(widgetConversationScroll, widget?.querySelector<HTMLElement>('[data-cl-conversation-list="widget"]') ?? null);
         renderConversation(captureId, deepDiveMessages, true, "Thinking through a deeper answer…");
         widget?.classList.add("cl-deep-dive-glow");
         const timeout = new Promise<never>((_, reject) =>
@@ -1857,10 +1943,17 @@ function showContextInput(x: number, y: number, selectedText: string) {
         );
         const streamSession = nextWidgetStreamSession();
         let streamed = "";
+        let streamRendered = false;
         const renderStream = createStreamRenderScheduler((text) => {
           if (!isWidgetStreamCurrent(streamSession)) return;
-          renderConversation(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
-        }, { initialDelayMs: DEEP_DIVE_INITIAL_RENDER_DELAY_MS });
+          if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
+            renderConversation(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
+            streamRendered = true;
+          }
+        }, {
+          firstPaintDelayMs: DEEP_DIVE_FIRST_PAINT_DELAY_MS,
+          firstPaintMinChars: DEEP_DIVE_FIRST_PAINT_MIN_CHARS,
+        });
         Promise.race([
           streamRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
             type: "DEEP_DIVE_STREAM",
@@ -1884,6 +1977,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
               if (!isWidgetStreamCurrent(streamSession)) return;
               widget?.classList.remove("cl-deep-dive-glow");
               widget?.classList.add("cl-deep-dive-active");
+              endConversationStream(widgetConversationScroll);
               renderConversation(captureId, deepDiveDisplayMessages(response.messages ?? deepDiveMessages, response.explanation));
             });
           })
@@ -1893,6 +1987,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
             renderStream.cancel();
             widget?.classList.remove("cl-deep-dive-glow");
             widgetDeepDiveActive = false;
+            endConversationStream(widgetConversationScroll);
             if (error.message === "DEEP_DIVE_LIMIT_REACHED") {
               renderConversation(captureId, deepDiveDisplayMessages(messages, "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer."));
             } else {
@@ -1935,13 +2030,18 @@ function showContextInput(x: number, y: number, selectedText: string) {
         return;
       }
 
+      beginConversationStream(widgetConversationScroll, widget?.querySelector<HTMLElement>('[data-cl-conversation-list="widget"]') ?? null);
       renderLoading();
       const streamSession = nextWidgetStreamSession();
       let captureId = "";
       let streamed = "";
+      let streamRendered = false;
       const renderStream = createStreamRenderScheduler((text) => {
         if (captureId && isWidgetStreamCurrent(streamSession)) {
-          renderConversation(captureId, [{ role: "assistant", content: text }], true, "Writing…");
+          if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
+            renderConversation(captureId, [{ role: "assistant", content: text }], true, "Writing…");
+            streamRendered = true;
+          }
         }
       });
       const streamMessage: StreamMessage = { ...message, type: "SAVE_HIGHLIGHT_STREAM" };
@@ -1949,17 +2049,19 @@ function showContextInput(x: number, y: number, selectedText: string) {
         onStart: (id) => {
           if (!isWidgetStreamCurrent(streamSession)) return;
           captureId = id;
+          if (streamed) renderStream(streamed);
         },
         onChunk: (chunk) => {
           if (!isWidgetStreamCurrent(streamSession)) return;
           streamed += chunk;
-          renderStream(streamed);
+          if (captureId) renderStream(streamed);
         },
       })
         .then((response) => {
           if (!isWidgetStreamCurrent(streamSession)) return;
           renderStream.finish(() => {
             if (!isWidgetStreamCurrent(streamSession)) return;
+            endConversationStream(widgetConversationScroll);
             renderConversation(response.captureId, [{ role: "assistant", content: response.explanation }]);
           });
         })
@@ -1967,6 +2069,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           if (!isWidgetStreamCurrent(streamSession)) return;
           invalidateWidgetStream(streamSession);
           renderStream.cancel();
+          endConversationStream(widgetConversationScroll);
           if (isAuthRefreshRequiredError(error)) {
             renderSignInRequired();
             return;
@@ -2062,6 +2165,7 @@ const cancelledScreenshotCaptureIds = new Set<number>();
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
 let screenshotCursorResetCleanup: (() => void) | null = null;
+let pendingScreenshotCancelCleanup: (() => void) | null = null;
 let screenshotLastCursorPoint: { x: number; y: number } | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
 
@@ -2074,7 +2178,14 @@ function clearScreenshotReposition() {
   screenshotRepositionCleanup = null;
 }
 
+function clearPendingScreenshotCancel() {
+  pendingScreenshotCancelCleanup?.();
+  pendingScreenshotCancelCleanup = null;
+}
+
 function removeCropOverlay(showCamera = true) {
+  const hadPendingScreenshotCapture = screenshotCapturePending || screenshotCaptureRequestId !== null;
+  clearPendingScreenshotCancel();
   clearScreenshotCursorReset();
   if (showCamera) {
     if (screenshotCaptureRequestId !== null) cancelledScreenshotCaptureIds.add(screenshotCaptureRequestId);
@@ -2088,7 +2199,7 @@ function removeCropOverlay(showCamera = true) {
     cropOverlay = null;
   }
   if (showCamera && cameraBtn) cameraBtn.style.display = "";
-  if (showCamera && overlay) resetCursorAfterScreenshotMode();
+  if (showCamera && (overlay || hadPendingScreenshotCapture)) resetCursorAfterScreenshotMode();
 }
 
 function nextScreenshotCaptureId() {
@@ -2096,11 +2207,77 @@ function nextScreenshotCaptureId() {
   return screenshotCaptureSequence;
 }
 
+function finishPendingScreenshotCapture(
+  screenshotId: number,
+  options: { markCancelled?: boolean; resetCursor?: boolean } = {},
+) {
+  if (screenshotCaptureRequestId !== screenshotId) return false;
+  if (options.markCancelled) cancelledScreenshotCaptureIds.add(screenshotId);
+  screenshotCapturePending = false;
+  screenshotCaptureRequestId = null;
+  clearPendingScreenshotCancel();
+  if (cameraBtn) cameraBtn.style.display = "";
+  if (options.resetCursor) resetCursorAfterScreenshotMode();
+  return true;
+}
+
+function cancelPendingScreenshotCapture() {
+  const screenshotId = screenshotCaptureRequestId;
+  if (screenshotId === null || cropOverlay) return;
+  finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
+}
+
+function armPendingScreenshotCancel(screenshotId: number) {
+  clearPendingScreenshotCancel();
+
+  let armed = false;
+  let armTimer: number | null = window.setTimeout(() => {
+    armTimer = null;
+    armed = true;
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("keydown", handleKeydown, true);
+  }, 0);
+
+  const isActiveRequest = () =>
+    screenshotCapturePending && screenshotCaptureRequestId === screenshotId && !cropOverlay;
+
+  function cleanup() {
+    if (armTimer !== null) {
+      window.clearTimeout(armTimer);
+      armTimer = null;
+    }
+    if (armed) {
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("keydown", handleKeydown, true);
+      armed = false;
+    }
+    if (pendingScreenshotCancelCleanup === cleanup) pendingScreenshotCancelCleanup = null;
+  }
+
+  function handleClick(event: MouseEvent) {
+    if (!isActiveRequest()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    rememberScreenshotCursorPoint(event);
+    cancelPendingScreenshotCapture();
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !isActiveRequest()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    cancelPendingScreenshotCapture();
+  }
+
+  pendingScreenshotCancelCleanup = cleanup;
+}
+
 function requestScreenshotCapture(delay = 0) {
   const screenshotId = nextScreenshotCaptureId();
   cancelledScreenshotCaptureIds.delete(screenshotId);
   screenshotCapturePending = true;
   screenshotCaptureRequestId = screenshotId;
+  armPendingScreenshotCancel(screenshotId);
 
   window.setTimeout(() => {
     if (screenshotCaptureRequestId !== screenshotId) return;
@@ -2111,17 +2288,13 @@ function requestScreenshotCapture(delay = 0) {
       screenshotId,
     } as Message, () => {
       if (!chrome.runtime.lastError || screenshotCaptureRequestId !== screenshotId) return;
-      screenshotCapturePending = false;
-      screenshotCaptureRequestId = null;
-      if (cameraBtn) cameraBtn.style.display = "";
+      finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
     });
   }, delay);
 
   window.setTimeout(() => {
     if (screenshotCaptureRequestId !== screenshotId || !screenshotCapturePending || cropOverlay || !cameraBtn) return;
-    screenshotCapturePending = false;
-    screenshotCaptureRequestId = null;
-    cameraBtn.style.display = "";
+    finishPendingScreenshotCapture(screenshotId, { markCancelled: true, resetCursor: true });
   }, 4000);
 }
 
@@ -2633,6 +2806,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           label.setAttribute("style", `color:${colors.muted};font-size:11px;font-weight:600;margin:0 0 3px;`);
 
           const body = document.createElement("div");
+          if (loading && message.role === "assistant" && index === messages.length - 1) {
+            body.setAttribute("data-cl-stream-assistant-body", "1");
+            streamingBodyText.set(body, message.content);
+          }
           appendMessageBody(body, message, index, messages, loading);
           const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
           const messageDirection = firstStrongTextDirection(message.content);
@@ -2739,12 +2916,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         if (!question || loading) return;
         panelHardWordsOpen = false;
         const nextMessages: ChatMessage[] = [...messages, { role: "user", content: question }];
+        beginConversationStream(contextPanelConversationScroll, contextPanel?.querySelector<HTMLElement>('[data-cl-conversation-list="screenshot"]') ?? null);
         renderConversationPanel(captureId, nextMessages, true, "Thinking…");
         const streamSession = nextPanelStreamSession();
         let streamed = "";
+        let streamRendered = false;
         const renderStream = createStreamRenderScheduler((text) => {
           if (!isPanelStreamCurrent(streamSession)) return;
-          renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
+          if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
+            renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
+            streamRendered = true;
+          }
         });
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
           type: "ASK_FOLLOWUP_STREAM",
@@ -2766,6 +2948,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             if (!isPanelStreamCurrent(streamSession)) return;
             renderStream.finish(() => {
               if (!isPanelStreamCurrent(streamSession)) return;
+              endConversationStream(contextPanelConversationScroll);
               renderConversationPanel(captureId, response.messages ?? [...nextMessages, { role: "assistant", content: response.reply }]);
             });
           })
@@ -2773,6 +2956,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             if (!isPanelStreamCurrent(streamSession)) return;
             invalidatePanelStream(streamSession);
             renderStream.cancel();
+            endConversationStream(contextPanelConversationScroll);
             renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: error.message }]);
           });
       }
@@ -2920,6 +3104,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           panelAnalogyLoading = false;
           ensureDeepDiveStyles();
           const deepDiveMessages = deepDiveDisplayMessages(messages);
+          beginConversationStream(contextPanelConversationScroll, contextPanel?.querySelector<HTMLElement>('[data-cl-conversation-list="screenshot"]') ?? null);
           renderConversationPanel(captureId, deepDiveMessages, true, "Thinking through a deeper answer…");
           contextPanel?.classList.add("cl-deep-dive-glow");
           const timeout = new Promise<never>((_, reject) =>
@@ -2927,10 +3112,17 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           );
           const streamSession = nextPanelStreamSession();
           let streamed = "";
+          let streamRendered = false;
           const renderStream = createStreamRenderScheduler((text) => {
             if (!isPanelStreamCurrent(streamSession)) return;
-            renderConversationPanel(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
-          }, { initialDelayMs: DEEP_DIVE_INITIAL_RENDER_DELAY_MS });
+            if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
+              renderConversationPanel(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
+              streamRendered = true;
+            }
+          }, {
+            firstPaintDelayMs: DEEP_DIVE_FIRST_PAINT_DELAY_MS,
+            firstPaintMinChars: DEEP_DIVE_FIRST_PAINT_MIN_CHARS,
+          });
           Promise.race([
             streamRuntimeMessage<{ explanation: string; messages: ChatMessage[] }>({
               type: "DEEP_DIVE_STREAM",
@@ -2954,6 +3146,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
                 if (!isPanelStreamCurrent(streamSession)) return;
                 contextPanel?.classList.remove("cl-deep-dive-glow");
                 contextPanel?.classList.add("cl-deep-dive-active");
+                endConversationStream(contextPanelConversationScroll);
                 renderConversationPanel(captureId, deepDiveDisplayMessages(response.messages ?? deepDiveMessages, response.explanation));
               });
             })
@@ -2963,6 +3156,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
               renderStream.cancel();
               contextPanel?.classList.remove("cl-deep-dive-glow");
               panelDeepDiveActive = false;
+              endConversationStream(contextPanelConversationScroll);
               if (error.message === "DEEP_DIVE_LIMIT_REACHED") {
                 renderConversationPanel(captureId, deepDiveDisplayMessages(messages, "Deep Dive is in beta — you've used all your free sessions. We'll open up more as we grow. Thanks for being an early explorer."));
               } else {
@@ -3011,30 +3205,37 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             return;
           }
 
+          beginConversationStream(contextPanelConversationScroll, contextPanel?.querySelector<HTMLElement>('[data-cl-conversation-list="screenshot"]') ?? null);
           renderLoadingPanel();
           const streamSession = nextPanelStreamSession();
           let captureId = "";
           let streamed = "";
+          let streamRendered = false;
           const renderStream = createStreamRenderScheduler((text) => {
             if (captureId && isPanelStreamCurrent(streamSession)) {
-              renderConversationPanel(captureId, [{ role: "assistant", content: text }], true, "Writing…");
+              if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
+                renderConversationPanel(captureId, [{ role: "assistant", content: text }], true, "Writing…");
+                streamRendered = true;
+              }
             }
           });
           streamRuntimeMessage<{ captureId: string; explanation: string }>({ type: "EXPLAIN_SCREENSHOT_STREAM", imageData: crop.imageData, imagePreviewData: crop.imagePreviewData, context }, {
             onStart: (id) => {
               if (!isPanelStreamCurrent(streamSession)) return;
               captureId = id;
+              if (streamed) renderStream(streamed);
             },
             onChunk: (chunk) => {
               if (!isPanelStreamCurrent(streamSession)) return;
               streamed += chunk;
-              renderStream(streamed);
+              if (captureId) renderStream(streamed);
             },
           })
             .then((response) => {
               if (!isPanelStreamCurrent(streamSession)) return;
               renderStream.finish(() => {
                 if (!isPanelStreamCurrent(streamSession)) return;
+                endConversationStream(contextPanelConversationScroll);
                 renderConversationPanel(response.captureId, [{ role: "assistant", content: response.explanation }]);
               });
             })
@@ -3042,6 +3243,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
               if (!isPanelStreamCurrent(streamSession)) return;
               invalidatePanelStream(streamSession);
               renderStream.cancel();
+              endConversationStream(contextPanelConversationScroll);
               if (isAuthRefreshRequiredError(error)) {
                 contextPanelSubmitted = false;
                 renderSignInRequiredPanel();
