@@ -460,12 +460,10 @@ function createStreamRenderScheduler(render: (text: string) => void, options: St
 }
 
 function appendMessageBody(container: HTMLElement, message: ChatMessage, index: number, messages: ChatMessage[], loading: boolean) {
-  const isStreamingAssistant = loading && message.role === "assistant" && index === messages.length - 1;
-  if (isStreamingAssistant) {
-    appendBidiText(container, message.content);
-    return;
-  }
-
+  // Render markdown for both the streaming and final passes so the live view matches the
+  // finished formatting — no end-of-stream "snap" from raw **markdown** to formatted text.
+  void messages;
+  void loading;
   appendMarkdownText(container, message.content, index === 0, false);
 }
 
@@ -753,8 +751,6 @@ function restoreConversationScroll(
   }
 }
 
-const streamingBodyText = new WeakMap<HTMLElement, string>();
-
 function updateStreamingAssistantBody(
   root: HTMLElement | null,
   listName: "widget" | "screenshot",
@@ -765,14 +761,12 @@ function updateStreamingAssistantBody(
   const body = list?.querySelector<HTMLElement>('[data-cl-stream-assistant-body="1"]');
   if (!list || !body) return false;
 
-  const previous = streamingBodyText.get(body) ?? "";
-  if (text.startsWith(previous)) {
-    appendBidiText(body, text.slice(previous.length));
-  } else {
-    body.replaceChildren();
-    appendBidiText(body, text);
-  }
-  streamingBodyText.set(body, text);
+  // Re-render the whole accumulated answer as markdown each tick. Re-parsing the full text
+  // (rather than appending plain-text deltas) keeps formatting correct across chunk boundaries
+  // — a half-typed **bold** just stays literal until its closing ** streams in.
+  const renderChips = body.getAttribute("data-cl-stream-chips") === "1";
+  body.replaceChildren();
+  appendMarkdownText(body, text, renderChips, false);
   if (state.streamBottomFollow) {
     setConversationScrollTop(state, list, conversationMaxScrollTop(list));
   }
@@ -1639,7 +1633,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         const body = document.createElement("div");
         if (loading && message.role === "assistant" && index === messages.length - 1) {
           body.setAttribute("data-cl-stream-assistant-body", "1");
-          streamingBodyText.set(body, message.content);
+          body.setAttribute("data-cl-stream-chips", index === 0 ? "1" : "0");
         }
         appendMessageBody(body, message, index, messages, loading);
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
@@ -1757,6 +1751,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
         if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
           renderConversation(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
           streamRendered = true;
+        } else {
+          settleExpandedWidgetPosition();
         }
       });
       streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -1949,6 +1945,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
           if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
             renderConversation(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
             streamRendered = true;
+          } else {
+            settleExpandedWidgetPosition();
           }
         }, {
           firstPaintDelayMs: DEEP_DIVE_FIRST_PAINT_DELAY_MS,
@@ -2041,6 +2039,8 @@ function showContextInput(x: number, y: number, selectedText: string) {
           if (!streamRendered || !updateStreamingAssistantBody(widget, "widget", widgetConversationScroll, text)) {
             renderConversation(captureId, [{ role: "assistant", content: text }], true, "Writing…");
             streamRendered = true;
+          } else {
+            settleExpandedWidgetPosition();
           }
         }
       });
@@ -2738,7 +2738,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           const body = document.createElement("div");
           if (loading && message.role === "assistant" && index === messages.length - 1) {
             body.setAttribute("data-cl-stream-assistant-body", "1");
-            streamingBodyText.set(body, message.content);
+            body.setAttribute("data-cl-stream-chips", index === 0 ? "1" : "0");
           }
           appendMessageBody(body, message, index, messages, loading);
           const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
@@ -2856,6 +2856,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
             renderConversationPanel(captureId, [...nextMessages, { role: "assistant", content: text }], true, "Writing…");
             streamRendered = true;
+          } else {
+            settleAnswerPanelPosition();
           }
         });
         streamRuntimeMessage<{ reply: string; messages: ChatMessage[] }>({
@@ -3048,6 +3050,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
               renderConversationPanel(captureId, deepDiveDisplayMessages(messages, text), true, "Writing…");
               streamRendered = true;
+            } else {
+              settleAnswerPanelPosition();
             }
           }, {
             firstPaintDelayMs: DEEP_DIVE_FIRST_PAINT_DELAY_MS,
@@ -3146,6 +3150,8 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
               if (!streamRendered || !updateStreamingAssistantBody(contextPanel, "screenshot", contextPanelConversationScroll, text)) {
                 renderConversationPanel(captureId, [{ role: "assistant", content: text }], true, "Writing…");
                 streamRendered = true;
+              } else {
+                settleAnswerPanelPosition();
               }
             }
           });
