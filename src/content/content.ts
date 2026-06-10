@@ -2164,7 +2164,6 @@ let screenshotCaptureSequence = 0;
 const cancelledScreenshotCaptureIds = new Set<number>();
 let screenshotRepositionTimer: number | null = null;
 let screenshotRepositionCleanup: (() => void) | null = null;
-let screenshotCursorResetCleanup: (() => void) | null = null;
 let screenshotLastCursorPoint: { x: number; y: number } | null = null;
 type CropOverlayElement = HTMLElement & { __contextLensCleanup?: () => void };
 
@@ -2178,20 +2177,23 @@ function clearScreenshotReposition() {
 }
 
 function removeCropOverlay(showCamera = true) {
-  clearScreenshotCursorReset();
   if (showCamera) {
     if (screenshotCaptureRequestId !== null) cancelledScreenshotCaptureIds.add(screenshotCaptureRequestId);
     screenshotCapturePending = false;
     screenshotCaptureRequestId = null;
   }
   const overlay = cropOverlay as CropOverlayElement | null;
-  overlay?.__contextLensCleanup?.();
-  if (overlay) {
-    overlay.remove();
-    cropOverlay = null;
+  cropOverlay = null;
+  if (showCamera && overlay) {
+    // User-facing cancel (single click, Escape, outside-click): settle the cursor while the overlay
+    // is still under the pointer, then drop it. This restores the normal cursor instantly instead of
+    // leaving a stale crosshair until the next mouse-move, and it adds NO global listeners.
+    settleScreenshotCursorThenRemove(overlay);
+  } else {
+    overlay?.__contextLensCleanup?.();
+    overlay?.remove();
   }
   if (showCamera && cameraBtn) cameraBtn.style.display = "";
-  if (showCamera && overlay) resetCursorAfterScreenshotMode();
 }
 
 function nextScreenshotCaptureId() {
@@ -2232,11 +2234,6 @@ function rememberScreenshotCursorPoint(event: Pick<MouseEvent, "clientX" | "clie
   screenshotLastCursorPoint = { x: event.clientX, y: event.clientY };
 }
 
-function clearScreenshotCursorReset() {
-  screenshotCursorResetCleanup?.();
-  screenshotCursorResetCleanup = null;
-}
-
 function normalizedCursor(value: string) {
   const cursors = new Set([
     "alias", "all-scroll", "cell", "col-resize", "context-menu", "copy",
@@ -2263,33 +2260,23 @@ function cursorAtLastScreenshotPoint() {
   return isPageEditableTarget(target) ? "text" : "default";
 }
 
-function resetCursorAfterScreenshotMode() {
-  clearScreenshotCursorReset();
-
+function settleScreenshotCursorThenRemove(overlay: CropOverlayElement) {
+  // Paint the page's real cursor onto the overlay while it is still the element under the pointer.
+  // Restyling the already-hovered element updates the displayed cursor immediately — no mouse-move
+  // needed — unlike removing the overlay first and waiting for the browser to re-evaluate the cursor
+  // (the old behaviour, which left a crosshair stuck until you moved the mouse).
+  const prevPointerEvents = overlay.style.pointerEvents;
+  overlay.style.pointerEvents = "none"; // look past our own overlay when sampling the page cursor
   const cursor = cursorAtLastScreenshotPoint();
-  const style = document.createElement("style");
-  style.setAttribute("data-contextlens-cursor-reset", "true");
-  style.textContent = `html, body, body * { cursor: ${cursor} !important; }`;
-  (document.head ?? document.documentElement).appendChild(style);
+  overlay.style.pointerEvents = prevPointerEvents;
+  overlay.style.cursor = cursor;
 
-  const cleanup = () => {
-    document.removeEventListener("pointermove", cleanup, true);
-    document.removeEventListener("mousedown", cleanup, true);
-    document.removeEventListener("wheel", cleanup, true);
-    document.removeEventListener("touchstart", cleanup, true);
-    document.removeEventListener("keydown", cleanup, true);
-    window.removeEventListener("scroll", cleanup, true);
-    style.remove();
-    screenshotCursorResetCleanup = null;
-  };
-
-  screenshotCursorResetCleanup = cleanup;
-  document.addEventListener("pointermove", cleanup, true);
-  document.addEventListener("mousedown", cleanup, true);
-  document.addEventListener("wheel", cleanup, true);
-  document.addEventListener("touchstart", cleanup, true);
-  document.addEventListener("keydown", cleanup, true);
-  window.addEventListener("scroll", cleanup, true);
+  // Remove the overlay a couple of frames later, after the new cursor has painted, so the cursor
+  // stays at the page value instead of snapping back to the stale crosshair on removal.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    overlay.__contextLensCleanup?.();
+    overlay.remove();
+  }));
 }
 
 function recaptureScreenshotAfterScroll(delay = 450) {
@@ -3425,6 +3412,10 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       showContextPanel(selection);
     }
 
+    // REGRESSION GUARD: cancelling screenshot mode (single click / Escape) is decided ONLY on
+    // pointerup in finishSelection — never here on pointerdown. Tearing the overlay down during
+    // pointerdown releases the pointer capture mid-gesture and leaves the next screenshot unable
+    // to select anything. Keep teardown out of pointerdown.
     canvas.addEventListener("pointerdown", (e) => {
       if (contextPanel || !e.isPrimary || e.button !== 0) return;
       e.preventDefault();
@@ -4053,8 +4044,9 @@ const documentKeydownHandler = (e: KeyboardEvent) => {
   if (widgetMode === "bubble" && pageHasTypingFocus(e.target)) removeWidget();
   if (e.key === "Escape") { removeWidget(); removeCropOverlay(); }
 };
-document.addEventListener("keydown", documentKeydownHandler);
-cleanupTasks.push(() => document.removeEventListener("keydown", documentKeydownHandler));
+// Capture phase so Escape reliably cancels the crop overlay even when the page swallows keydown.
+document.addEventListener("keydown", documentKeydownHandler, true);
+cleanupTasks.push(() => document.removeEventListener("keydown", documentKeydownHandler, true));
 
 const documentInputHandler = (event: Event) => {
   if (widgetMode === "bubble" && pageHasTypingFocus(event.target)) removeWidget();
