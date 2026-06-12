@@ -639,6 +639,9 @@ type ConversationScrollState = {
   autoFollow: boolean;
   streaming: boolean;
   streamBottomFollow: boolean;
+  // Follow-up streaming: follow the answer but never scroll the question above the top edge.
+  streamCapTop: number | null;
+  streamCapFollow: boolean;
   programmaticScroll: boolean;
   lastTouchY: number | null;
 };
@@ -651,6 +654,8 @@ function createConversationScrollState(): ConversationScrollState {
     autoFollow: false,
     streaming: false,
     streamBottomFollow: false,
+    streamCapTop: null,
+    streamCapFollow: false,
     programmaticScroll: false,
     lastTouchY: null,
   };
@@ -663,6 +668,11 @@ function conversationMaxScrollTop(element: HTMLElement) {
 function rememberConversationScroll(state: ConversationScrollState, element: HTMLElement | null) {
   if (!element) return;
   const maxTop = conversationMaxScrollTop(element);
+  // If the user manually scrolls away from the cap-follow target, hand scrolling back to them.
+  if (!state.programmaticScroll && state.streamCapFollow) {
+    const capTarget = state.streamCapTop != null ? Math.min(maxTop, state.streamCapTop) : maxTop;
+    if (Math.abs(element.scrollTop - capTarget) > 24) state.streamCapFollow = false;
+  }
   if (!state.programmaticScroll && state.autoFollow && element.scrollTop + 8 < state.top) {
     state.autoFollow = false;
   }
@@ -689,6 +699,7 @@ function startConversationAutoFollow(state: ConversationScrollState, anchor: Con
 
 function stopConversationAutoFollow(state: ConversationScrollState) {
   state.autoFollow = false;
+  state.streamCapFollow = false;
 }
 
 function beginConversationStream(state: ConversationScrollState, element: HTMLElement | null) {
@@ -702,11 +713,15 @@ function beginConversationStream(state: ConversationScrollState, element: HTMLEl
   state.autoFollow = false;
   state.streaming = true;
   state.streamBottomFollow = false;
+  state.streamCapTop = null;
+  state.streamCapFollow = false;
 }
 
 function endConversationStream(state: ConversationScrollState) {
   state.streaming = false;
   state.streamBottomFollow = false;
+  state.streamCapTop = null;
+  state.streamCapFollow = false;
 }
 
 function trackConversationScroll(state: ConversationScrollState, element: HTMLElement) {
@@ -734,6 +749,14 @@ function restoreConversationScroll(
 ) {
   const maxTop = conversationMaxScrollTop(element);
   const preserveBottom = options.preserveBottom ?? true;
+  // Follow-up streaming: keep scrolling the streamed answer into view, but cap the scroll so the
+  // follow-up question is never pushed above the top edge (max autoscroll = question at top).
+  if (state.streaming && targets.latestUser) {
+    state.streamCapTop = Math.max(0, targets.latestUser.offsetTop - 12);
+    state.streamCapFollow = true;
+    setConversationScrollTop(state, element, Math.min(maxTop, state.streamCapTop));
+    return;
+  }
   const anchorTarget = state.pendingAnchor === "latest-user"
     ? targets.latestUser
     : state.pendingAnchor === "latest-assistant"
@@ -767,8 +790,11 @@ function updateStreamingAssistantBody(
   const renderChips = body.getAttribute("data-cl-stream-chips") === "1";
   body.replaceChildren();
   appendMarkdownText(body, text, renderChips, false);
-  if (state.streamBottomFollow) {
-    setConversationScrollTop(state, list, conversationMaxScrollTop(list));
+  const maxTop = conversationMaxScrollTop(list);
+  if (state.streamCapFollow && state.streamCapTop != null) {
+    setConversationScrollTop(state, list, Math.min(maxTop, state.streamCapTop));
+  } else if (state.streamBottomFollow) {
+    setConversationScrollTop(state, list, maxTop);
   }
   return true;
 }
@@ -787,6 +813,8 @@ const ARABIC_RUN_RE = new RegExp(
   `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
   "gu",
 );
+// Closing bracket/quote -> its opener, used to keep an outer LTR wrapper around an Arabic run.
+const ARABIC_WRAP_OPENER: Record<string, string> = { ")": "(", "]": "[", "}": "{", "»": "«" };
 type HardWordEntry = { term: string; definition: string };
 
 function appendBidiText(container: HTMLElement, text: string) {
@@ -825,7 +853,21 @@ function appendBidiText(container: HTMLElement, text: string) {
       container.appendChild(document.createTextNode(text.slice(start, index)));
     }
 
-    appendArabicRun(match[0]);
+    // BiDi fix: when an Arabic run is wrapped by an outer bracket from the surrounding LTR text
+    // (e.g. the English "(الرَّاحِلَة)"), the run regex pulls the CLOSING bracket into the forced-RTL
+    // <bdi> while the opener stays outside — splitting the pair and producing the mirrored "((" / "))"
+    // artifact. If the char right before the run is the matching opener, move the trailing closer
+    // (plus any sentence punctuation after it) back into the LTR flow so the browser pairs them.
+    // Arabic-internal footnotes like "(٣)" are untouched: their opener isn't immediately before the run.
+    const run = match[0];
+    const before = index > 0 ? text[index - 1] : "";
+    const closer = run.match(/([)\]}»])([.,;:!?]*)$/u);
+    if (closer && ARABIC_WRAP_OPENER[closer[1]] === before) {
+      appendArabicRun(run.slice(0, run.length - closer[0].length));
+      container.appendChild(document.createTextNode(closer[0]));
+    } else {
+      appendArabicRun(run);
+    }
     start = index + match[0].length;
   }
 
@@ -909,10 +951,24 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
 
       appendHardWordRows(hardWordsDiv, [{ term, definition }]);
     } else {
+      const labelMatch = stripped.match(LABEL_RE);
+
+      // Full RTL lines (e.g. an Arabic source line) get their own RTL block so guillemets «»,
+      // brackets, and footnote markers «(٢)» order correctly. Rendered in the body's LTR base
+      // direction, the line-level punctuation gets scrambled; an RTL base direction fixes it.
+      if (!labelMatch && firstStrongTextDirection(stripped) === "rtl") {
+        const rtlLine = document.createElement("div");
+        rtlLine.dir = "rtl";
+        rtlLine.setAttribute("style", "direction:rtl;text-align:right;unicode-bidi:isolate;margin:2px 0;line-height:1.85;");
+        appendInlineMarkdown(rtlLine, stripped);
+        container.appendChild(rtlLine);
+        lastWasInline = false;
+        return;
+      }
+
       if (lastWasInline) container.appendChild(document.createElement("br"));
       lastWasInline = true;
 
-      const labelMatch = stripped.match(LABEL_RE);
       if (labelMatch) {
         const [, label, rawBody] = labelMatch;
         const body = rawBody.trim();
