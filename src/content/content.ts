@@ -591,20 +591,43 @@ function panelWidthFor(maxWidth = 560, minWidth = 220) {
   return Math.max(Math.min(minWidth, available), Math.min(maxWidth, available));
 }
 
-function firstStrongTextDirection(value: string): "ltr" | "rtl" | "auto" {
-  for (const character of value.trim()) {
-    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) return "rtl";
-    if (/[A-Za-z\u00C0-\u024F]/u.test(character)) return "ltr";
-  }
-  return "auto";
-}
-
 function hasRtlText(value: string): boolean {
   return /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(value);
 }
 
+// Direction of a whole line/message by DOMINANT script (not first character): RTL only when Arabic
+// is the clear majority. Keeps "Arabic term + English explanation" lines LTR \u2014 the Arabic sits at
+// the start (left) and the English reads to its right \u2014 while genuinely Arabic lines read RTL.
+// Mirrors the dashboard's dashboardBlockDirection so both surfaces render bidi text identically.
+function textScriptMetrics(value: string) {
+  let arabic = 0;
+  let latin = 0;
+  for (const character of value) {
+    if (/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/u.test(character)) arabic++;
+    else if (/[A-Za-z\u00C0-\u024F]/u.test(character)) latin++;
+  }
+  return { arabic, latin, totalStrong: arabic + latin };
+}
+
+function blockTextDirection(value: string): "ltr" | "rtl" {
+  const m = textScriptMetrics(value);
+  if (m.arabic === 0) return "ltr";
+  if (m.latin === 0) return "rtl";
+  return m.arabic / Math.max(1, m.totalStrong) >= 0.65 ? "rtl" : "ltr";
+}
+
+// User QUESTIONS can't have their dominance predicted mid-typing. A question is either pure Arabic
+// or an English question (often containing an Arabic term used instead of a transliteration), so:
+// any Latin present => treat as an English question => LTR (Arabic term sits left, English reads to
+// its right); pure Arabic => RTL. This flips exactly once (when English starts) instead of swinging
+// on a ratio as the user types, while still keeping Arabic-only questions RTL.
+function questionTextDirection(value: string): "ltr" | "rtl" {
+  const m = textScriptMetrics(value);
+  return m.arabic > 0 && m.latin === 0 ? "rtl" : "ltr";
+}
+
 function syncTextareaDirection(textarea: HTMLTextAreaElement) {
-  const direction = firstStrongTextDirection(textarea.value);
+  const direction = questionTextDirection(textarea.value);
   textarea.dir = direction;
   textarea.style.textAlign = direction === "rtl" ? "right" : "left";
 }
@@ -642,6 +665,8 @@ type ConversationScrollState = {
   // Follow-up streaming: follow the answer but never scroll the question above the top edge.
   streamCapTop: number | null;
   streamCapFollow: boolean;
+  // Set once the user manually scrolls during a stream — after that we never reposition them.
+  streamUserScrolled: boolean;
   programmaticScroll: boolean;
   lastTouchY: number | null;
 };
@@ -656,6 +681,7 @@ function createConversationScrollState(): ConversationScrollState {
     streamBottomFollow: false,
     streamCapTop: null,
     streamCapFollow: false,
+    streamUserScrolled: false,
     programmaticScroll: false,
     lastTouchY: null,
   };
@@ -668,7 +694,14 @@ function conversationMaxScrollTop(element: HTMLElement) {
 function rememberConversationScroll(state: ConversationScrollState, element: HTMLElement | null) {
   if (!element) return;
   const maxTop = conversationMaxScrollTop(element);
-  // If the user manually scrolls away from the cap-follow target, hand scrolling back to them.
+  // A non-programmatic scroll that drifts from where we last placed the view = the user taking
+  // control during a stream. Stop all auto-follow and remember it, so when the stream ends we
+  // leave them exactly where they are instead of yanking them back to the question/top/bottom.
+  if (state.streaming && !state.programmaticScroll && Math.abs(element.scrollTop - state.top) > 12) {
+    state.streamUserScrolled = true;
+    state.streamCapFollow = false;
+    state.autoFollow = false;
+  }
   if (!state.programmaticScroll && state.streamCapFollow) {
     const capTarget = state.streamCapTop != null ? Math.min(maxTop, state.streamCapTop) : maxTop;
     if (Math.abs(element.scrollTop - capTarget) > 24) state.streamCapFollow = false;
@@ -678,7 +711,7 @@ function rememberConversationScroll(state: ConversationScrollState, element: HTM
   }
   state.top = Math.max(0, Math.min(element.scrollTop, maxTop));
   state.atBottom = maxTop > 0 && maxTop - element.scrollTop <= 16;
-  if (state.streaming && !state.programmaticScroll) {
+  if (state.streaming && !state.programmaticScroll && !state.streamUserScrolled) {
     state.streamBottomFollow = state.atBottom;
   }
 }
@@ -715,6 +748,7 @@ function beginConversationStream(state: ConversationScrollState, element: HTMLEl
   state.streamBottomFollow = false;
   state.streamCapTop = null;
   state.streamCapFollow = false;
+  state.streamUserScrolled = false;
 }
 
 function endConversationStream(state: ConversationScrollState) {
@@ -749,6 +783,12 @@ function restoreConversationScroll(
 ) {
   const maxTop = conversationMaxScrollTop(element);
   const preserveBottom = options.preserveBottom ?? true;
+  // The user scrolled during the stream — they own the scroll position now. Keep them exactly
+  // where they are (across this re-render) and never reposition, for normal / deep dive / follow-up.
+  if (state.streamUserScrolled) {
+    setConversationScrollTop(state, element, Math.max(0, Math.min(state.top, maxTop)));
+    return;
+  }
   // Follow-up streaming: keep scrolling the streamed answer into view, but cap the scroll so the
   // follow-up question is never pushed above the top edge (max autoscroll = question at top).
   if (state.streaming && targets.latestUser) {
@@ -956,7 +996,7 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
       // Full RTL lines (e.g. an Arabic source line) get their own RTL block so guillemets «»,
       // brackets, and footnote markers «(٢)» order correctly. Rendered in the body's LTR base
       // direction, the line-level punctuation gets scrambled; an RTL base direction fixes it.
-      if (!labelMatch && firstStrongTextDirection(stripped) === "rtl") {
+      if (!labelMatch && blockTextDirection(stripped) === "rtl") {
         const rtlLine = document.createElement("div");
         rtlLine.dir = "rtl";
         rtlLine.setAttribute("style", "direction:rtl;text-align:right;unicode-bidi:isolate;margin:2px 0;line-height:1.85;");
@@ -1374,7 +1414,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     resize: none;
     font-family: inherit;
     text-align: left;
-    unicode-bidi: plaintext;
+    unicode-bidi: isolate;
   `
   );
   autosizeTextarea(input);
@@ -1647,7 +1687,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     const list = document.createElement("div");
     list.className = "cl-scroll";
     list.setAttribute("data-cl-conversation-list", "widget");
-    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;`);
+    list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;user-select:text;-webkit-user-select:text;cursor:text;`);
     trapScroll(list);
     trackConversationScroll(widgetConversationScroll, list);
 
@@ -1693,8 +1733,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
         }
         appendMessageBody(body, message, index, messages, loading);
         const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
-        const messageDirection = firstStrongTextDirection(message.content);
-        const messageBaseDirection = messageDirection === "auto" ? "ltr" : messageDirection;
+        const messageBaseDirection = questionTextDirection(message.content);
         body.setAttribute("style", `
           color: ${message.role === "assistant" ? colors.text : colors.userText};
           font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
@@ -1705,7 +1744,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           white-space: pre-wrap;
           direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
           text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
-          unicode-bidi: ${message.role === "user" ? "plaintext" : "normal"};
+          unicode-bidi: ${message.role === "user" ? "isolate" : "normal"};
         `);
 
         messageBlock.appendChild(label);
@@ -1751,7 +1790,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
       resize: none;
       font-family: inherit;
       text-align: left;
-      unicode-bidi: plaintext;
+      unicode-bidi: isolate;
     `);
     autosizeTextarea(followupInput);
     syncTextareaDirection(followupInput);
@@ -2739,7 +2778,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
       const list = document.createElement("div");
       list.className = "cl-scroll";
       list.setAttribute("data-cl-conversation-list", "screenshot");
-      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;`);
+      list.setAttribute("style", `flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overflow-anchor:none;scrollbar-gutter:stable;padding:0 12px 0 12px;margin:0 -4px 12px -4px;box-sizing:border-box;user-select:text;-webkit-user-select:text;cursor:text;`);
       trapScroll(list);
       trackConversationScroll(contextPanelConversationScroll, list);
 
@@ -2785,8 +2824,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
           }
           appendMessageBody(body, message, index, messages, loading);
           const aiFontSize = cardFontSize === "sm" ? "14px" : cardFontSize === "lg" ? "19px" : "16px";
-          const messageDirection = firstStrongTextDirection(message.content);
-          const messageBaseDirection = messageDirection === "auto" ? "ltr" : messageDirection;
+          const messageBaseDirection = questionTextDirection(message.content);
           body.setAttribute("style", `
             color: ${message.role === "assistant" ? colors.text : colors.userText};
             font-size: ${message.role === "assistant" ? aiFontSize : "14px"};
@@ -2797,7 +2835,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             white-space: pre-wrap;
             direction: ${message.role === "user" ? messageBaseDirection : "ltr"};
             text-align: ${message.role === "user" && messageBaseDirection === "rtl" ? "right" : "left"};
-            unicode-bidi: ${message.role === "user" ? "plaintext" : "normal"};
+            unicode-bidi: ${message.role === "user" ? "isolate" : "normal"};
           `);
 
           messageBlock.appendChild(label);
@@ -2843,7 +2881,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         resize: none;
         font-family: inherit;
         text-align: left;
-        unicode-bidi: plaintext;
+        unicode-bidi: isolate;
       `);
       autosizeTextarea(input);
       syncTextareaDirection(input);
@@ -3386,7 +3424,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
         font-family: inherit;
         box-sizing: border-box;
         text-align: left;
-        unicode-bidi: plaintext;
+        unicode-bidi: isolate;
       `);
       autosizeTextarea(input);
       syncTextareaDirection(input);
