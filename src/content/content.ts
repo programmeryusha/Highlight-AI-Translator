@@ -667,6 +667,9 @@ type ConversationScrollState = {
   streamCapFollow: boolean;
   // Set once the user manually scrolls during a stream — after that we never reposition them.
   streamUserScrolled: boolean;
+  // The user's genuine scroll position, captured ONLY from real wheel/touch input — immune to the
+  // scroll-clamps that re-renders/resizes fire (which silently corrupt `top`). Restored at stream end.
+  userScrollTop: number | null;
   programmaticScroll: boolean;
   lastTouchY: number | null;
 };
@@ -682,6 +685,7 @@ function createConversationScrollState(): ConversationScrollState {
     streamCapTop: null,
     streamCapFollow: false,
     streamUserScrolled: false,
+    userScrollTop: null,
     programmaticScroll: false,
     lastTouchY: null,
   };
@@ -694,18 +698,10 @@ function conversationMaxScrollTop(element: HTMLElement) {
 function rememberConversationScroll(state: ConversationScrollState, element: HTMLElement | null) {
   if (!element) return;
   const maxTop = conversationMaxScrollTop(element);
-  // A non-programmatic scroll that drifts from where we last placed the view = the user taking
-  // control during a stream. Stop all auto-follow and remember it, so when the stream ends we
-  // leave them exactly where they are instead of yanking them back to the question/top/bottom.
-  if (state.streaming && !state.programmaticScroll && Math.abs(element.scrollTop - state.top) > 12) {
-    state.streamUserScrolled = true;
-    state.streamCapFollow = false;
-    state.autoFollow = false;
-  }
-  if (!state.programmaticScroll && state.streamCapFollow) {
-    const capTarget = state.streamCapTop != null ? Math.min(maxTop, state.streamCapTop) : maxTop;
-    if (Math.abs(element.scrollTop - capTarget) > 24) state.streamCapFollow = false;
-  }
+  // NOTE: "user took control" is detected from real wheel/touch input (see trackConversationScroll),
+  // NOT from scroll-position drift — each streaming re-render briefly collapses the answer body and
+  // the browser clamps the scroll, which a drift check would misread as the user scrolling (and could
+  // creep the view to the very top over several follow-ups).
   if (!state.programmaticScroll && state.autoFollow && element.scrollTop + 8 < state.top) {
     state.autoFollow = false;
   }
@@ -749,6 +745,7 @@ function beginConversationStream(state: ConversationScrollState, element: HTMLEl
   state.streamCapTop = null;
   state.streamCapFollow = false;
   state.streamUserScrolled = false;
+  state.userScrollTop = null;
 }
 
 function endConversationStream(state: ConversationScrollState) {
@@ -760,19 +757,26 @@ function endConversationStream(state: ConversationScrollState) {
 
 function trackConversationScroll(state: ConversationScrollState, element: HTMLElement) {
   element.addEventListener("scroll", () => rememberConversationScroll(state, element), { passive: true });
-  element.addEventListener("wheel", (event) => {
-    if (event.deltaY < 0) stopConversationAutoFollow(state);
-  }, { passive: true });
-  element.addEventListener("touchstart", (event) => {
-    state.lastTouchY = event.touches[0]?.clientY ?? null;
-  }, { passive: true });
-  element.addEventListener("touchmove", (event) => {
-    const currentY = event.touches[0]?.clientY;
-    if (currentY !== undefined && state.lastTouchY !== null && currentY > state.lastTouchY) {
-      stopConversationAutoFollow(state);
+  // Any real scroll input (wheel or a touch drag) during a stream means the user is driving — stop ALL
+  // auto-follow for the rest of that stream so we never fight them, and never reposition them at the end.
+  let captureFrame: number | null = null;
+  const onUserScroll = () => {
+    if (!state.streaming) return;
+    state.streamUserScrolled = true;
+    state.streamCapFollow = false;
+    state.streamBottomFollow = false;
+    state.autoFollow = false;
+    // Record where the user actually settled, one frame after the input is applied, into a field that
+    // re-render/resize scroll-clamps never touch — restoreConversationScroll restores THIS, not `top`.
+    if (captureFrame === null) {
+      captureFrame = requestAnimationFrame(() => {
+        captureFrame = null;
+        if (element.isConnected) state.userScrollTop = element.scrollTop;
+      });
     }
-    state.lastTouchY = currentY ?? state.lastTouchY;
-  }, { passive: true });
+  };
+  element.addEventListener("wheel", onUserScroll, { passive: true });
+  element.addEventListener("touchmove", onUserScroll, { passive: true });
 }
 
 function restoreConversationScroll(
@@ -783,10 +787,12 @@ function restoreConversationScroll(
 ) {
   const maxTop = conversationMaxScrollTop(element);
   const preserveBottom = options.preserveBottom ?? true;
-  // The user scrolled during the stream — they own the scroll position now. Keep them exactly
-  // where they are (across this re-render) and never reposition, for normal / deep dive / follow-up.
+  // The user scrolled during the stream — they own the scroll position now. Restore the position we
+  // captured from their real input (NOT `top`, which a clamp may have corrupted toward 0), so the end
+  // of the stream never yanks them to the top. Applies to normal / deep dive / follow-up alike.
   if (state.streamUserScrolled) {
-    setConversationScrollTop(state, element, Math.max(0, Math.min(state.top, maxTop)));
+    const target = state.userScrollTop ?? state.top;
+    setConversationScrollTop(state, element, Math.max(0, Math.min(target, maxTop)));
     return;
   }
   // Follow-up streaming: keep scrolling the streamed answer into view, but cap the scroll so the
@@ -828,6 +834,7 @@ function updateStreamingAssistantBody(
   // (rather than appending plain-text deltas) keeps formatting correct across chunk boundaries
   // — a half-typed **bold** just stays literal until its closing ** streams in.
   const renderChips = body.getAttribute("data-cl-stream-chips") === "1";
+  const prevTop = list.scrollTop;
   body.replaceChildren();
   appendMarkdownText(body, text, renderChips, false);
   const maxTop = conversationMaxScrollTop(list);
@@ -835,6 +842,10 @@ function updateStreamingAssistantBody(
     setConversationScrollTop(state, list, Math.min(maxTop, state.streamCapTop));
   } else if (state.streamBottomFollow) {
     setConversationScrollTop(state, list, maxTop);
+  } else if (list.scrollTop !== prevTop) {
+    // Not auto-following (the user is driving): undo any scroll shift this re-render caused so they
+    // stay exactly where they put themselves.
+    setConversationScrollTop(state, list, Math.max(0, Math.min(prevTop, maxTop)));
   }
   return true;
 }
@@ -850,12 +861,14 @@ const TERM_DEF_RE = /^\*\*(.+?)\*\*\s*[—–-]\s*(.+)$/;
 const ARABIC_CHAR = "\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF";
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN_RE = new RegExp(
-  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟)]*)`,
+  `([${ARABIC_CHAR}](?:[${ARABIC_CHAR}${ARABIC_RUN_GLUE}]*[${ARABIC_CHAR}\\u0660-\\u0669\\u06F0-\\u06F90-9])?[،؛؟)]*)`,
   "gu",
 );
-// Closing bracket/quote -> its opener, used to keep an outer LTR wrapper around an Arabic run.
-const ARABIC_WRAP_OPENER: Record<string, string> = { ")": "(", "]": "[", "}": "{", "»": "«" };
 type HardWordEntry = { term: string; definition: string };
+
+// An Arabic run's opening bracket sits just before the run; this maps it to its closer so we can tell
+// a bracket pair that WRAPS the run apart from a stray bracket, and choose RTL-together vs LTR-flow.
+const OPENER_TO_CLOSER: Record<string, string> = { "(": ")", "[": "]", "{": "}", "«": "»" };
 
 function appendBidiText(container: HTMLElement, text: string) {
   let start = 0;
@@ -889,26 +902,35 @@ function appendBidiText(container: HTMLElement, text: string) {
 
   for (const match of text.matchAll(ARABIC_RUN_RE)) {
     const index = match.index ?? 0;
-    if (index > start) {
-      container.appendChild(document.createTextNode(text.slice(start, index)));
-    }
-
-    // BiDi fix: when an Arabic run is wrapped by an outer bracket from the surrounding LTR text
-    // (e.g. the English "(الرَّاحِلَة)"), the run regex pulls the CLOSING bracket into the forced-RTL
-    // <bdi> while the opener stays outside — splitting the pair and producing the mirrored "((" / "))"
-    // artifact. If the char right before the run is the matching opener, move the trailing closer
-    // (plus any sentence punctuation after it) back into the LTR flow so the browser pairs them.
-    // Arabic-internal footnotes like "(٣)" are untouched: their opener isn't immediately before the run.
     const run = match[0];
     const before = index > 0 ? text[index - 1] : "";
-    const closer = run.match(/([)\]}»])([.,;:!?]*)$/u);
-    if (closer && ARABIC_WRAP_OPENER[closer[1]] === before) {
-      appendArabicRun(run.slice(0, run.length - closer[0].length));
-      container.appendChild(document.createTextNode(closer[0]));
-    } else {
-      appendArabicRun(run);
+    // Bracket bidi has three shapes (ASCII punctuation/ellipses are never in the run — see
+    // ARABIC_RUN_RE — so they always sit in the surrounding text and render on the correct side):
+    //  1. English wrapper "(الرَّاحِلَة)": the run swallows the trailing ")" but its "(" stays outside,
+    //     splitting the pair. Move that ")" back out so both brackets sit in the LTR flow.
+    //  2. Bracketed phrase that continues INTO more Arabic, e.g. "[يُسْتَحَبُّ] الدُّعَاءُ": the closer is
+    //     glued mid-run while the opener is outside, so the closer mirrors to the wrong spot. Pull the
+    //     opener INTO the run so the whole pair sits in one RTL <bdi> and the browser mirrors/pairs it.
+    //  3. Everything else (incl. "[الدعاء...]" where the closer is past the run, and a footnote "(٣)"
+    //     whose opener is already glued inside the run) needs no adjustment.
+    const closer = OPENER_TO_CLOSER[before];
+    const wrapCloser = before === "(" ? run.match(/\)[،؛؟]*$/u) : null;
+    let precedingEnd = index;
+    let bdiText = run;
+    let trailingText = "";
+    if (wrapCloser && !run.slice(0, run.length - wrapCloser[0].length).includes(")")) {
+      bdiText = run.slice(0, run.length - wrapCloser[0].length);
+      trailingText = wrapCloser[0];
+    } else if (closer && run.includes(closer)) {
+      precedingEnd = index - 1;
+      bdiText = before + run;
     }
-    start = index + match[0].length;
+    if (precedingEnd > start) {
+      container.appendChild(document.createTextNode(text.slice(start, precedingEnd)));
+    }
+    appendArabicRun(bdiText);
+    if (trailingText) container.appendChild(document.createTextNode(trailingText));
+    start = index + run.length;
   }
 
   if (start < text.length) {

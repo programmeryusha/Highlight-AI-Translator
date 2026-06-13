@@ -581,9 +581,13 @@ const EXPL_RENAME: Record<string, string> = { "Direct": "Direct meaning" };
 const ARABIC_RANGE = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 const ARABIC_RUN_GLUE = "\\u0660-\\u0669\\u06F0-\\u06F90-9\\s\\u200c\\u200d.,;:!?،؛؟'\"()[\\]{}\\-–—/\\\\";
 const ARABIC_RUN = new RegExp(
-  `([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿](?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿${ARABIC_RUN_GLUE}]*[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\u0660-\\u0669\\u06F0-\\u06F90-9])?[.,;:!?،؛؟]*)`,
+  `([؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿](?:[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿${ARABIC_RUN_GLUE}]*[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿\\u0660-\\u0669\\u06F0-\\u06F90-9])?[،؛؟)]*)`,
   "gu",
 );
+
+// Opening bracket -> its closer; lets bidiSpan tell a bracket pair that wraps an Arabic run apart from
+// a stray bracket, and choose RTL-together vs LTR-flow. Mirrors content.ts so both render identically.
+const OPENER_TO_CLOSER: Record<string, string> = { "(": ")", "[": "]", "{": "}", "«": "»" };
 
 function bidiSpan(text: string): React.ReactNode {
   const parts: React.ReactNode[] = [];
@@ -634,9 +638,27 @@ function bidiSpan(text: string): React.ReactNode {
     });
   };
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    pushArabicRun(m[0], m.index);
-    last = m.index + m[0].length;
+    const run = m[0];
+    const before = m.index > 0 ? text[m.index - 1] : "";
+    // Same three-shape bracket bidi as content.ts: (1) English wrapper "(الـ)" -> move trailing ")"
+    // out to the LTR flow; (2) bracketed phrase running into more Arabic "[يُسْتَحَبُّ] الدُّعَاءُ" ->
+    // pull the opener INTO the RTL run so the pair mirrors together; (3) everything else unchanged.
+    const closer = OPENER_TO_CLOSER[before];
+    const wrapCloser = before === "(" ? run.match(/\)[،؛؟]*$/u) : null;
+    let precedingEnd = m.index;
+    let bdiText = run;
+    let trailingText = "";
+    if (wrapCloser && !run.slice(0, run.length - wrapCloser[0].length).includes(")")) {
+      bdiText = run.slice(0, run.length - wrapCloser[0].length);
+      trailingText = wrapCloser[0];
+    } else if (closer && run.includes(closer)) {
+      precedingEnd = m.index - 1;
+      bdiText = before + run;
+    }
+    if (precedingEnd > last) parts.push(text.slice(last, precedingEnd));
+    pushArabicRun(bdiText, m.index);
+    if (trailingText) parts.push(trailingText);
+    last = m.index + run.length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return <>{parts}</>;
