@@ -254,7 +254,7 @@ let cameraBtn: HTMLElement | null = null;
 let cameraButtonHoverScale = 1;
 let cameraButtonPositionFrame: number | null = null;
 const CAMERA_BUTTON_SIZE = 44;
-const CAMERA_BUTTON_MARGIN = 18;
+const CAMERA_BUTTON_MARGIN = 12;
 const CAMERA_BUTTON_SELECTOR = '[data-contextlens-ui="true"][title="Screenshot to explain"]';
 
 function appendToPage(element: HTMLElement) {
@@ -1093,6 +1093,8 @@ function appendMarkdownText(container: HTMLElement, text: string, renderChips = 
 function updateCameraButtonPosition() {
   cameraButtonPositionFrame = null;
   if (!cameraBtn) return;
+  // Mid-screenshot the camera is intentionally hidden — don't fight that here.
+  if (cropOverlay || screenshotCapturePending) return;
 
   const viewport = window.visualViewport;
   const scale = Math.max(0.1, viewport?.scale ?? 1);
@@ -1114,6 +1116,9 @@ function updateCameraButtonPosition() {
   cameraBtn.style.left = `${Math.round(left)}px`;
   cameraBtn.style.top = `${Math.round(top)}px`;
   cameraBtn.style.transform = `scale(${inverseScale * cameraButtonHoverScale})`;
+  // Hide rather than cover a real control / another floating overlay sitting in the same spot.
+  cameraBtn.style.display = "";
+  if (cameraObstructed(cameraBtn.getBoundingClientRect())) cameraBtn.style.display = "none";
 }
 
 function queueCameraButtonPosition() {
@@ -1129,6 +1134,7 @@ function removeOrphanCameraButtons() {
 
 function createCameraButton() {
   if (cameraBtn) return;
+  if (isPageFullscreen()) return;
   removeOrphanCameraButtons();
   const colors = uiColors();
   cameraBtn = document.createElement("div");
@@ -1178,6 +1184,34 @@ function removeCameraButton() {
   }
 }
 
+function isPageFullscreen(): boolean {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null };
+  return Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+}
+
+const CAMERA_OBSTRUCTION_SELECTOR =
+  "button, a[href], input, select, textarea, summary, label, [role='button'], [role='link'], [role='tab'], [role='menuitem'], [contenteditable='true'], [contenteditable='']";
+
+// True when the camera's center sits on a real control or another floating overlay (another
+// extension's panel, a chat/cookie widget) — so we hide it instead of covering/blocking that target.
+function cameraObstructed(rect: DOMRect): boolean {
+  if (rect.width === 0 || rect.height === 0) return false;
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return false;
+  const under = document.elementsFromPoint(cx, cy).find((el) => el !== cameraBtn && !isInContextLensUi(el));
+  if (!under) return false;
+  if (under.closest(CAMERA_OBSTRUCTION_SELECTOR)) return true;
+  for (let el: Element | null = under, i = 0; el && i < 6; el = el.parentElement, i++) {
+    const pos = getComputedStyle(el).position;
+    if (pos !== "fixed" && pos !== "sticky") continue;
+    const r = el.getBoundingClientRect();
+    const coversViewport = r.width >= window.innerWidth * 0.85 && r.height >= window.innerHeight * 0.85;
+    if (!coversViewport) return true; // a corner overlay, not a full-page fixed wrapper
+  }
+  return false;
+}
+
 // Show/hide camera button based on settings
 function syncCameraButton() {
   chrome.storage.local.get("screenshot_triggers", (result) => {
@@ -1207,6 +1241,22 @@ cleanupTasks.push(() => {
   window.removeEventListener("resize", cameraViewportHandler);
   window.removeEventListener("scroll", cameraViewportHandler, true);
   window.removeEventListener("orientationchange", cameraViewportHandler);
+});
+
+// Entering fullscreen (e.g. a video) hides our floating UI; exiting restores the camera per settings.
+const fullscreenChangeHandler = () => {
+  if (isPageFullscreen()) {
+    removeWidget();
+    removeCameraButton();
+  } else {
+    syncCameraButton();
+  }
+};
+document.addEventListener("fullscreenchange", fullscreenChangeHandler);
+document.addEventListener("webkitfullscreenchange", fullscreenChangeHandler as EventListener);
+cleanupTasks.push(() => {
+  document.removeEventListener("fullscreenchange", fullscreenChangeHandler);
+  document.removeEventListener("webkitfullscreenchange", fullscreenChangeHandler as EventListener);
 });
 
 function removeWidget() {
@@ -2310,7 +2360,7 @@ function removeCropOverlay(showCamera = true) {
     overlay?.__contextLensCleanup?.();
     overlay?.remove();
   }
-  if (showCamera && cameraBtn) cameraBtn.style.display = "";
+  if (showCamera && cameraBtn) { cameraBtn.style.display = ""; queueCameraButtonPosition(); }
 }
 
 function nextScreenshotCaptureId() {
@@ -3617,6 +3667,14 @@ function isInContextLensUi(target: EventTarget | null) {
   );
 }
 
+// Selecting a control's own label (e.g. double-clicking a button's text) shouldn't pop the Ask
+// bubble over it / over the popup the page opens for that control.
+function selectionInsideInteractive(range: Range): boolean {
+  const node = range.commonAncestorContainer;
+  const el = node instanceof Element ? node : node.parentElement;
+  return Boolean(el?.closest("button, summary, [role='button'], [role='tab'], [role='menuitem'], [role='menuitemcheckbox'], [role='option'], [role='switch']"));
+}
+
 function targetElement(target: EventTarget | null): Element | null {
   if (target instanceof Element) return target;
   if (target instanceof Node) return target.parentElement;
@@ -4066,6 +4124,7 @@ async function resolveQuranText(rawText: string, range: Range): Promise<string> 
 
 function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (saveBubbleSuppressed()) return;
+  if (isPageFullscreen()) { if (widgetMode === "bubble") removeWidget(); return; }
   if (widgetMode === "input" || isInContextLensUi(event?.target ?? null)) return;
   if (pageHasTypingFocus(event?.target ?? null)) {
     if (widgetMode === "bubble") removeWidget();
@@ -4086,6 +4145,7 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
   if (selected) {
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    if (range && selectionInsideInteractive(range)) return;
 
     chrome.storage.local.get("save_triggers", async (result) => {
       const triggers = result.save_triggers ?? { bubble: true, contextMenu: true };
@@ -4169,6 +4229,20 @@ const documentInputHandler = (event: Event) => {
 };
 document.addEventListener("input", documentInputHandler, true);
 cleanupTasks.push(() => document.removeEventListener("input", documentInputHandler, true));
+
+// Focusing any input/textarea/contenteditable (click or keyboard) dismisses the Ask bubble.
+const documentFocusinHandler = (event: FocusEvent) => {
+  if (widgetMode === "bubble" && isPageEditableTarget(event.target)) removeWidget();
+};
+document.addEventListener("focusin", documentFocusinHandler, true);
+cleanupTasks.push(() => document.removeEventListener("focusin", documentFocusinHandler, true));
+
+// Switching tabs / hiding the page drops the Ask bubble so it isn't lingering on return.
+const documentVisibilityHandler = () => {
+  if (document.hidden) removeWidget();
+};
+document.addEventListener("visibilitychange", documentVisibilityHandler);
+cleanupTasks.push(() => document.removeEventListener("visibilitychange", documentVisibilityHandler));
 
 contextLensGlobal.__contextLensCleanup = () => {
   removeWidget();
