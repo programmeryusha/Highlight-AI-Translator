@@ -74,4 +74,5 @@ export type Message =
   | { type: "OPEN_DASHBOARD" }
   | { type: "ANALOGY"; text: string }
   | { type: "FORGOT_PASSWORD"; email: string }
-  | { type: "RESET_PASSWORD"; email: string; code: string; newPassword: string };
+  | { type: "RESET_PASSWORD"; email: string; code: string; newPassword: string }
+  | { type: "GET_USAGE" };

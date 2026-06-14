@@ -173,6 +173,22 @@ function accountFromAuthResponse(data: unknown, fallbackEmail: string): ContextL
   return { email, token };
 }
 
+async function getDeepDiveUsage(): Promise<{ deepDivesUsed: number; deepDiveLimit: number | null; unlimited: boolean }> {
+  const account = await getAccount();
+  if (!account) throw new Error("Sign in to view usage.");
+  const res = await fetch(`${BACKEND_URL}/auth/usage`, { headers: authHeaders(account.token) });
+  if (!res.ok) {
+    if (res.status === 401) return throwStoredTokenRejectedError("Usage", res);
+    return throwResponseError("Usage", res);
+  }
+  const data = await res.json() as { deep_dives_used?: number; deep_dive_limit?: number | null; unlimited?: boolean };
+  return {
+    deepDivesUsed: typeof data.deep_dives_used === "number" ? data.deep_dives_used : 0,
+    deepDiveLimit: typeof data.deep_dive_limit === "number" ? data.deep_dive_limit : null,
+    unlimited: Boolean(data.unlimited),
+  };
+}
+
 function enqueueAuthMutation<T>(task: () => Promise<T>): Promise<T> {
   const run = authMutationQueue.then(task, task);
   authMutationQueue = run.catch(() => undefined);
@@ -438,6 +454,12 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
     })
       .then(sendResponse)
       .catch((err: unknown) => sendResponse({ error: errorMessage(err) }));
+    return true;
+  }
+  if (message.type === "GET_USAGE") {
+    getDeepDiveUsage()
+      .then(sendResponse)
+      .catch((error: unknown) => sendResponse({ error: errorMessage(error) }));
     return true;
   }
   if (message.type === "ANALOGY") {

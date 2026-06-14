@@ -262,6 +262,29 @@ function appendToPage(element: HTMLElement) {
   (document.body ?? document.documentElement).appendChild(element);
 }
 
+// Deep-dive usage meter (the "N left" shown next to the Deep Dive button — the future paywall surface).
+type DeepDiveUsage = { used: number; limit: number | null; unlimited: boolean };
+let cachedDeepDiveUsage: DeepDiveUsage | null = null;
+
+function deepDiveMeterText(u: DeepDiveUsage): string {
+  if (u.unlimited || u.limit == null) return "✦ unlimited";
+  return `${Math.max(0, u.limit - u.used)} left`;
+}
+
+function appendDeepDiveMeter(actionRow: HTMLElement) {
+  const span = document.createElement("span");
+  span.style.cssText = `font-size:11px;color:${uiColors().muted};align-self:center;white-space:nowrap;`;
+  if (cachedDeepDiveUsage) span.textContent = deepDiveMeterText(cachedDeepDiveUsage);
+  actionRow.appendChild(span);
+  // Refresh from the backend; render once it returns. Errors (signed-out/offline) leave it blank.
+  sendRuntimeMessage<{ deepDivesUsed: number; deepDiveLimit: number | null; unlimited: boolean }>({ type: "GET_USAGE" })
+    .then((u) => {
+      cachedDeepDiveUsage = { used: u.deepDivesUsed, limit: u.deepDiveLimit, unlimited: u.unlimited };
+      if (span.isConnected) span.textContent = deepDiveMeterText(cachedDeepDiveUsage);
+    })
+    .catch(() => { /* not signed in / offline — leave blank */ });
+}
+
 function sendRuntimeMessage<T>(message: Message): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -2161,6 +2184,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
           });
       });
       actionRow.appendChild(deepDiveBtn);
+      appendDeepDiveMeter(actionRow);
     }
 
     if (actionRow.childNodes.length > 0) renderChildren.push(actionRow);
@@ -3252,6 +3276,7 @@ function showCropOverlay(screenshotDataUrl: string, restoreScroll?: { x: number;
             });
         });
         actionRow.appendChild(deepDiveBtn);
+        appendDeepDiveMeter(actionRow);
       }
 
       if (actionRow.childNodes.length > 0) panelChildren.push(actionRow);
