@@ -548,35 +548,26 @@ function overlayPositionAwayFromRect(
   target: { left: number; top: number; right: number; bottom: number; width: number; height: number },
   width: number,
   height: number,
-  fallbackX: number,
-  fallbackY: number,
+  _fallbackX: number,
+  _fallbackY: number,
 ) {
   const viewport = getVisualViewportRect();
   const gap = 14;
   const left = fixedViewportX(target.left);
-  const right = fixedViewportX(target.right);
   const top = fixedViewportY(target.top);
   const bottom = fixedViewportY(target.bottom);
-  const centerY = top + target.height / 2;
   const centerX = left + target.width / 2;
 
-  if (viewport.left + viewport.width - right >= width + gap + 8) {
-    return { left: clampLeftToViewport(right + gap, width), top: panelTopFor(centerY - height / 2, height) };
+  // Match the screenshot panel exactly: center on the selection and sit BELOW it (preferred) so the
+  // highlighted text stays visible above the overlay; go ABOVE only when there's no room below; clamp
+  // below as a last resort. (No more "beside" placement — keeps both overlays predictable + identical.)
+  if (bottom + gap + height <= viewport.top + viewport.height - 8) {
+    return { left: clampLeftToViewport(centerX - width / 2, width), top: bottom + gap };
   }
-  if (left - viewport.left >= width + gap + 8) {
-    return { left: clampLeftToViewport(left - width - gap, width), top: panelTopFor(centerY - height / 2, height) };
+  if (top - gap - height >= viewport.top + 8) {
+    return { left: clampLeftToViewport(centerX - width / 2, width), top: top - gap - height };
   }
-  if (viewport.top + viewport.height - bottom >= height + gap + 8) {
-    return { left: clampLeftToViewport(centerX - width / 2, width), top: panelTopFor(bottom + gap, height) };
-  }
-  if (top - viewport.top >= height + gap + 8) {
-    return { left: clampLeftToViewport(centerX - width / 2, width), top: panelTopFor(top - height - gap, height) };
-  }
-
-  return {
-    left: clampLeftToViewport(fallbackX - width / 2, width),
-    top: panelTopFor(fallbackY - height - gap, height),
-  };
+  return { left: clampLeftToViewport(centerX - width / 2, width), top: panelTopFor(bottom + gap, height) };
 }
 
 type DragBounds = { left: number; top: number; width: number; height: number };
@@ -1298,25 +1289,25 @@ function removeWidget() {
 
 function saveBubblePlacement(target: RectLike, bounds: RectLike, anchor: SelectionAnchor | null) {
   const mobile = viewportWidth() <= 600;
-  const width = mobile ? 76 : 86;
-  const height = mobile ? 32 : 34;
-  const gap = 14;
+  const width = mobile ? 70 : 78;
+  const height = mobile ? 28 : 30;
+  const selectionGap = 14;
+  const multilineGap = 20;
   const viewport = getVisualViewportRect();
-  const anchorX = anchor
-    ? Math.max(bounds.left, Math.min(anchor.clientX, bounds.right))
-    : target.left + target.width / 2;
-  const targetCenterY = target.top + target.height / 2;
-  const boundsCenterY = bounds.top + bounds.height / 2;
-  const preferAbove = targetCenterY <= boundsCenterY;
-  const aboveTop = bounds.top - gap - height;
-  const belowTop = bounds.bottom + gap;
   const minTop = viewport.top + 8;
   const maxTop = viewport.top + Math.max(0, viewport.height - height - 8);
-  const canAbove = aboveTop >= minTop;
+  const followsCursor = Boolean(anchor && bounds.height > 60);
+  const gap = followsCursor ? multilineGap : selectionGap;
+  const anchorY = followsCursor && anchor ? anchor.clientY : target.bottom;
+  const belowTop = anchorY + gap;
+  const aboveTop = anchorY - gap - height;
   const canBelow = belowTop <= maxTop;
-  const top = preferAbove
-    ? (canAbove ? aboveTop : canBelow ? belowTop : Math.max(minTop, Math.min(aboveTop, maxTop)))
-    : (canBelow ? belowTop : canAbove ? aboveTop : Math.max(minTop, Math.min(belowTop, maxTop)));
+  const canAbove = aboveTop >= minTop;
+  const placedBelow = canBelow || !canAbove;
+  const top = placedBelow ? Math.min(belowTop, maxTop) : aboveTop;
+
+  const rawX = followsCursor && anchor ? anchor.clientX : target.left + target.width / 2;
+  const anchorX = Math.max(target.left, Math.min(rawX, target.right));
 
   return {
     left: Math.max(viewport.left + 8, Math.min(anchorX - width / 2, viewport.left + viewport.width - width - 8)),
@@ -1324,7 +1315,7 @@ function saveBubblePlacement(target: RectLike, bounds: RectLike, anchor: Selecti
     width,
     height,
     anchorX,
-    anchorY: preferAbove ? bounds.top : bounds.bottom,
+    anchorY,
   };
 }
 
@@ -1336,8 +1327,8 @@ function showSaveBubble(target: RectLike, bounds: RectLike, selectedText: string
   const mobile = viewportWidth() <= 600;
   const placement = saveBubblePlacement(target, bounds, anchor);
   const btnHeight  = placement.height;
-  const btnPad     = mobile ? "0 13px" : "0 15px";
-  const btnFont    = mobile ? "14.5px" : "15.5px";
+  const btnPad     = mobile ? "0 11px" : "0 13px";
+  const btnFont    = mobile ? "13.5px" : "14px";
 
   widget = document.createElement("div");
   widget.textContent = "Ask";
@@ -1404,7 +1395,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
 
   let widgetWidth = panelWidthFor();
   let widgetHeight = 0;
-  const selectionForPlacement = selectedPageText()?.rect ?? null;
+  const selectionForPlacement = selectedPageText()?.bounds ?? null;
   let userPlacedWidget = false;
   let widgetHasSettledFromSelection = false;
   const initialPosition = selectionForPlacement
@@ -1434,8 +1425,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
   );
 
   const preview = document.createElement("div");
-  const previewText = selectedText.length > 60 ? selectedText.slice(0, 60) + "…" : selectedText;
-  preview.textContent = `"${previewText}"`;
+  preview.textContent = "Highlight";
   preview.setAttribute(
     "style",
     `
@@ -1496,7 +1486,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     `
     display: block;
     width: 100%;
-    min-height: 54px;
+    min-height: 82px;
     max-height: 120px;
     background: transparent;
     border: none;
@@ -1504,7 +1494,7 @@ function showContextInput(x: number, y: number, selectedText: string) {
     color: ${colors.text};
     font-size: 18px;
     line-height: 1.4;
-    padding: 14px 16px;
+    padding: 22px 32px;
     box-sizing: border-box;
     resize: none;
     font-family: inherit;
@@ -3680,7 +3670,7 @@ cleanupTasks.push(() => chrome.runtime.onMessage.removeListener(runtimeMessageHa
 
 // Show Ask bubble (or immediate context input) on text selection
 type RectLike = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
-type SelectionAnchor = { clientX: number; clientY: number };
+type SelectionAnchor = { clientX: number; clientY: number; detail?: number };
 type SelectedTextGeometry = { text: string; rect: RectLike; bounds: RectLike };
 
 function isInContextLensUi(target: EventTarget | null) {
@@ -4159,9 +4149,9 @@ function scheduleSelectionCheck(event?: MouseEvent, removeWhenEmpty = false) {
     ? lastSelectionAnchor
     : null;
   const anchor = event
-    ? { clientX: event.clientX, clientY: event.clientY }
+    ? { clientX: event.clientX, clientY: event.clientY, detail: event.detail }
     : recentAnchor
-      ? { clientX: recentAnchor.clientX, clientY: recentAnchor.clientY }
+      ? { clientX: recentAnchor.clientX, clientY: recentAnchor.clientY, detail: recentAnchor.detail }
       : null;
   clearSelectionCheckTimer();
   if (saveBubbleSuppressed()) return;
